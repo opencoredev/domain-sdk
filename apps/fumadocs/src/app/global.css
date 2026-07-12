@@ -163,6 +163,7 @@ html > body[data-scroll-locked] {
   flex-direction: column;
   align-items: center;
   padding: 206px 32px 0;
+  isolation: isolate;
   text-align: center;
 }
 
@@ -357,7 +358,6 @@ html > body[data-scroll-locked] {
   display: flex;
   width: 108%;
   align-items: end;
-  z-index: 0;
   transform-origin: center bottom;
   pointer-events: none;
 }
@@ -367,6 +367,48 @@ html > body[data-scroll-locked] {
   width: 100%;
   height: auto;
   filter: saturate(0.86) contrast(1.04);
+}
+
+/*
+ * Keep the ribbon in its own lower stage on desktop. Its source aspect ratio
+ * otherwise makes it grow upward as the viewport gets wider, eventually
+ * passing behind the subtitle and actions. The artwork is intentionally
+ * stretched horizontally at very wide ratios so its vertical composition
+ * remains stable while still reaching both edges.
+ */
+@media (min-width: 901px) {
+  .editorial-hero {
+    padding-top: clamp(154px, 15vh, 184px);
+  }
+
+  .hero-art {
+    top: clamp(610px, 58%, 650px);
+    right: 0;
+    left: 0;
+    width: 100%;
+    overflow: hidden;
+  }
+
+  .hero-art::before {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    z-index: 1;
+    height: 72px;
+    background: linear-gradient(to bottom, #080807 0%, transparent 100%);
+    content: "";
+  }
+
+  .hero-art img {
+    position: absolute;
+    right: -4%;
+    bottom: 0;
+    left: -4%;
+    width: 108%;
+    height: clamp(500px, 42vw, 590px);
+    object-fit: fill;
+  }
 }
 
 .provider-marquee {
