@@ -5,7 +5,7 @@
   "scripts": {
     "build": "next build",
     "dev": "bun run scripts/stop-stale-next-dev.ts && PORTLESS_PORT=1355 portless run --name domain-sdk --force next dev",
-    "start": "serve out",
+    "start": "next start",
     "check-types": "fumadocs-mdx && next typegen && tsc --noEmit",
     "postinstall": "fumadocs-mdx",
     "lint": "oxlint",
@@ -23,6 +23,7 @@
     "fumadocs-ui": "npm:@fumadocs/base-ui@16.11.3",
     "gsap": "^3.15.0",
     "next": "16.2.10",
+    "posthog-js": "^1.399.2",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
@@ -35,7 +36,6 @@
     "oxlint": "^1.73.0",
     "portless": "^0.15.1",
     "postcss": "^8.5.16",
-    "serve": "^14.2.6",
     "tailwindcss": "^4.3.2",
     "typescript": "^6.0.3"
   }

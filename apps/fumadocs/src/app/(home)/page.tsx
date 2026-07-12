@@ -17,10 +17,11 @@ import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Image from "next/image";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { DomainLogo } from "@/components/domain-logo";
 import { ProviderLogo } from "@/components/provider-logo";
+import { track } from "@/lib/analytics";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
 
@@ -106,9 +107,41 @@ function CodeExample() {
   );
 }
 
+const trackedSections = [
+  ["editorial-hero", "hero"],
+  ["manifesto-section", "manifesto"],
+  ["capability-section", "capabilities"],
+  ["architecture-section", "architecture"],
+  ["lifecycle-section", "lifecycle"],
+  ["closing-section", "closing"],
+] as const;
+
 export default function HomePage() {
   const root = useRef<HTMLElement>(null);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const seen = new Set<string>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const name = trackedSections.find(([className]) =>
+            entry.target.classList.contains(className),
+          )?.[1];
+          if (!name || seen.has(name)) continue;
+          seen.add(name);
+          track("home_section_viewed", { section: name });
+        }
+      },
+      { threshold: 0.4 },
+    );
+    for (const [className] of trackedSections) {
+      const element = root.current?.querySelector(`.${className}`);
+      if (element) observer.observe(element);
+    }
+    return () => observer.disconnect();
+  }, []);
 
   useGSAP(
     () => {
@@ -155,6 +188,10 @@ export default function HomePage() {
 
   async function copyInstall() {
     await navigator.clipboard.writeText("bun add @opencoredev/domain-sdk");
+    track("install_command_copied", {
+      command: "bun add @opencoredev/domain-sdk",
+      location: "home_hero",
+    });
     setCopied(true);
     window.setTimeout(() => setCopied(false), 1400);
   }
@@ -174,10 +211,18 @@ export default function HomePage() {
           <Link href="/docs/installation">Installation</Link>
         </div>
         <div className="nav-actions">
-          <Link className="nav-source" href="https://github.com/opencoredev/domain-sdk">
+          <Link
+            className="nav-source"
+            href="https://github.com/opencoredev/domain-sdk"
+            onClick={() => track("cta_clicked", { cta: "github", location: "home_nav" })}
+          >
             GitHub
           </Link>
-          <Link className="nav-cta" href="/docs/installation">
+          <Link
+            className="nav-cta"
+            href="/docs/installation"
+            onClick={() => track("cta_clicked", { cta: "get_started", location: "home_nav" })}
+          >
             Get started
             <HugeiconsIcon icon={ArrowUpRight01Icon} size={15} strokeWidth={1.8} />
           </Link>
@@ -193,7 +238,11 @@ export default function HomePage() {
           Add, verify, monitor, and remove customer domains with one TypeScript API.
         </p>
         <div className="hero-reveal hero-actions">
-          <Link className="button-light" href="/docs/installation">
+          <Link
+            className="button-light"
+            href="/docs/installation"
+            onClick={() => track("cta_clicked", { cta: "install_domain_sdk", location: "home_hero" })}
+          >
             Install Domain SDK
             <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={1.8} />
           </Link>
@@ -212,7 +261,13 @@ export default function HomePage() {
                 key={`${provider.id}-${index}`}
                 aria-hidden={index >= providers.length}
               >
-                <Link href={provider.href} tabIndex={index >= providers.length ? -1 : undefined}>
+                <Link
+                  href={provider.href}
+                  tabIndex={index >= providers.length ? -1 : undefined}
+                  onClick={() =>
+                    track("provider_link_clicked", { provider: provider.id, location: "home_marquee" })
+                  }
+                >
                   <ProviderLogo provider={provider.id} />
                   <span>{provider.name}</span>
                 </Link>
@@ -298,7 +353,10 @@ export default function HomePage() {
           <article className="capability-card dns-card">
             <div className="dns-card-head">
               <h3>DNS instructions your UI can trust</h3>
-              <Link href="/docs/concepts/dns-records">
+              <Link
+                href="/docs/concepts/dns-records"
+                onClick={() => track("cta_clicked", { cta: "explore_dns_model", location: "home_capabilities" })}
+              >
                 Explore the model
                 <HugeiconsIcon icon={ArrowUpRight01Icon} size={15} strokeWidth={1.8} />
               </Link>
@@ -329,7 +387,10 @@ export default function HomePage() {
             Your application owns tenant authorization and state. Domain SDK talks to the configured
             platform. The provider remains the source of truth.
           </p>
-          <Link href="/docs/providers">
+          <Link
+            href="/docs/providers"
+            onClick={() => track("cta_clicked", { cta: "compare_providers", location: "home_architecture" })}
+          >
             Compare providers
             <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={1.8} />
           </Link>
@@ -361,7 +422,13 @@ export default function HomePage() {
           </div>
           <div className="architecture-providers">
             {providers.map((provider) => (
-              <Link href={provider.href} key={provider.id}>
+              <Link
+                href={provider.href}
+                key={provider.id}
+                onClick={() =>
+                  track("provider_link_clicked", { provider: provider.id, location: "home_architecture" })
+                }
+              >
                 <ProviderLogo provider={provider.id} />
                 <span>{provider.name}</span>
                 <HugeiconsIcon icon={ArrowUpRight01Icon} size={14} strokeWidth={1.5} />
@@ -470,11 +537,19 @@ export default function HomePage() {
         <p>Add the hostname. Show the records. Wait for ready.</p>
         <h2>Ship custom domains without rebuilding the workflow.</h2>
         <div className="closing-actions">
-          <Link className="button-dark" href="/docs/installation">
+          <Link
+            className="button-dark"
+            href="/docs/installation"
+            onClick={() => track("cta_clicked", { cta: "start_building", location: "home_closing" })}
+          >
             Start building
             <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={1.8} />
           </Link>
-          <Link className="button-outline-dark" href="https://github.com/opencoredev/domain-sdk">
+          <Link
+            className="button-outline-dark"
+            href="https://github.com/opencoredev/domain-sdk"
+            onClick={() => track("cta_clicked", { cta: "view_source", location: "home_closing" })}
+          >
             <HugeiconsIcon icon={GitForkIcon} size={15} strokeWidth={1.8} /> View source
           </Link>
         </div>

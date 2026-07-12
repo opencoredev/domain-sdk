@@ -14,6 +14,9 @@ import {
   type SharedProps,
 } from "fumadocs-ui/components/dialog/search";
 import { useI18n } from "fumadocs-ui/contexts/i18n";
+import { useEffect, useRef } from "react";
+
+import { track } from "@/lib/analytics";
 
 function initOrama() {
   return create({
@@ -31,11 +34,41 @@ export default function DefaultSearchDialog(props: SharedProps) {
       locale,
     }),
   });
+  const lastQueried = useRef("");
+
+  useEffect(() => {
+    if (props.open) track("docs_search_opened", { path: window.location.pathname });
+  }, [props.open]);
+
+  const resultsCount = Array.isArray(query.data) ? query.data.length : 0;
+  useEffect(() => {
+    const trimmed = search.trim();
+    if (trimmed.length < 2 || query.isLoading) return;
+    const timeout = window.setTimeout(() => {
+      if (trimmed === lastQueried.current) return;
+      lastQueried.current = trimmed;
+      track("docs_search_queried", {
+        query: trimmed,
+        results_count: resultsCount,
+        has_results: resultsCount > 0,
+      });
+    }, 1000);
+    return () => window.clearTimeout(timeout);
+  }, [search, query.isLoading, resultsCount]);
+
+  function onResultClick(event: React.MouseEvent) {
+    const anchor = (event.target as HTMLElement).closest("a");
+    if (!anchor) return;
+    track("docs_search_result_clicked", {
+      query: search.trim(),
+      result_href: anchor.getAttribute("href"),
+    });
+  }
 
   return (
     <SearchDialog search={search} onSearchChange={setSearch} isLoading={query.isLoading} {...props}>
       <SearchDialogOverlay />
-      <SearchDialogContent>
+      <SearchDialogContent onClickCapture={onResultClick}>
         <SearchDialogHeader>
           <SearchDialogIcon />
           <SearchDialogInput />

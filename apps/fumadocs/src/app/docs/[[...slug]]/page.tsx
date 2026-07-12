@@ -3,16 +3,16 @@ import {
   DocsDescription,
   DocsPage,
   DocsTitle,
-  MarkdownCopyButton,
-  ViewOptionsPopover,
 } from "fumadocs-ui/layouts/docs/page";
 import { createRelativeLink } from "fumadocs-ui/mdx";
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 
+import { DocsPageActions } from "@/components/docs-page-actions";
 import { getMDXComponents } from "@/components/mdx";
 import { gitConfig } from "@/lib/shared";
-import { getPageImage, getPageMarkdownUrl, source } from "@/lib/source";
+import { getPageMarkdownUrl, source } from "@/lib/source";
+import { socialImageAlt, socialImageSize } from "@/lib/social-image";
 
 export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
   const params = await props.params;
@@ -26,13 +26,11 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
     <DocsPage toc={page.data.toc} full={page.data.full}>
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
-      <div className="flex flex-row gap-2 items-center border-b pb-6">
-        <MarkdownCopyButton markdownUrl={markdownUrl} />
-        <ViewOptionsPopover
-          markdownUrl={markdownUrl}
-          githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/apps/fumadocs/content/docs/${page.path}`}
-        />
-      </div>
+      <DocsPageActions
+        markdownUrl={markdownUrl}
+        githubUrl={`https://github.com/${gitConfig.user}/${gitConfig.repo}/blob/${gitConfig.branch}/apps/fumadocs/content/docs/${page.path}`}
+        pagePath={page.url}
+      />
       <DocsBody>
         <MDX
           components={getMDXComponents({
@@ -58,7 +56,30 @@ export async function generateMetadata(props: PageProps<"/docs/[[...slug]]">): P
     title: page.data.title,
     description: page.data.description,
     openGraph: {
-      images: getPageImage(page).url,
+      type: "website",
+      title: page.data.title,
+      description: page.data.description,
+      siteName: "Domain SDK",
+      images: [
+        {
+          url: "/opengraph-image",
+          ...socialImageSize,
+          alt: socialImageAlt,
+          type: "image/png",
+        },
+      ],
+    },
+    twitter: {
+      card: "summary_large_image",
+      title: page.data.title,
+      description: page.data.description,
+      images: [
+        {
+          url: "/twitter-image",
+          ...socialImageSize,
+          alt: socialImageAlt,
+        },
+      ],
     },
   };
 }

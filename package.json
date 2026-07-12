@@ -13,8 +13,15 @@
     "check-types": "turbo run check-types",
     "lint": "turbo run lint",
     "test": "turbo run test",
+    "test:registry": "bun test registry/domain/*.test.ts",
+    "registry:validate": "bunx --bun shadcn@latest registry validate ./registry.json",
+    "registry:build": "bunx --bun shadcn@latest build registry.json --output apps/fumadocs/public/r",
     "format": "oxfmt --write .",
-    "check": "bun run lint && bun run typecheck && oxfmt --check ."
+    "check": "bun run lint && bun run typecheck && oxfmt --check .",
+    "tegami": "node scripts/tegami.mts",
+    "release:check": "bun run --filter @opencoredev/domain-sdk lint && bun run --filter @opencoredev/domain-sdk check-types && bun run --filter @opencoredev/domain-sdk test",
+    "release:build": "bun run --filter @opencoredev/domain-sdk build",
+    "release": "bun run release:check && bun run tegami version && bun run release:build && bun run tegami publish && bun run tegami cleanup"
   },
   "dependencies": {
     "dotenv": "^17.4.2",
@@ -25,6 +32,7 @@
     "@types/node": "^22.13.14",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
+    "tegami": "1.2.5",
     "turbo": "^2.10.2",
     "typescript": "^6"
   },
