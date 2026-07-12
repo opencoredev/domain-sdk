@@ -1,0 +1,10 @@
+---
+title: Security model
+description: Keep provider credentials server-side and tenant ownership in your application.
+---
+
+Domain SDK accepts provider credentials only in adapter configuration and sends them only to fixed HTTPS provider API origins. It does not log tokens, disable TLS, follow provider-returned URLs, execute commands, store domains, or emit telemetry.
+
+Always authorize hostname operations by tenant, normalize before uniqueness checks, rate-limit mutations and verification, and remove provider configuration when a tenant deletes a domain. Protect abandoned hostnames from reassignment and never trust DNS resolution as proof of ownership.
+
+Read next: [Production credential setup](../guides/production-credentials.mdx) and [tenant security](../guides/tenant-security.mdx).

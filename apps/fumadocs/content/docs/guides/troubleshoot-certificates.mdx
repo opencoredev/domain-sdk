@@ -1,0 +1,10 @@
+---
+title: Troubleshoot certificate issuance
+description: Separate certificate validation from routing and hostname ownership.
+---
+
+Confirm routing and ownership first, then render records with `purpose: "certificate"`. Check CAA/DNSSEC and proxy configuration when the provider reports validation errors. Cloudflare may return HTTP validation instead of DNS; the SDK preserves that as a message.
+
+Use `domain.certificate.status` and issues rather than probing HTTPS yourself as the source of truth.
+
+Read next: [Managed certificates](../concepts/managed-certificates.mdx).

@@ -1,0 +1,12 @@
+---
+title: Domain lifecycle
+description: Move a hostname from user input to provider-authoritative activation.
+---
+
+The lifecycle is `add` → configure returned DNS → `verify` when supported → `refresh` or `waitUntilActive` → `remove`.
+
+`add` is safely idempotent when the adapter can prove the hostname already belongs to the configured project, zone, environment, or service. It throws `DOMAIN_CONFLICT` rather than moving a hostname owned elsewhere. `remove` succeeds when the hostname is already absent and never removes a resource from another configured scope.
+
+Your application owns tenant authorization and persistence. The provider owns live domain state.
+
+Read next: [Status model](./status-model.mdx) and [add and remove domains](../guides/add-remove-domains.mdx).

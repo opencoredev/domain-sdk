@@ -1,0 +1,20 @@
+---
+title: Error handling
+description: Handle normalized provider failures without leaking secrets.
+---
+
+```ts title="handle-domain-error.ts"
+import { DomainSdkError } from "@opencoredev/domain-sdk";
+
+try {
+  await domains.add("app.customer.com");
+} catch (error) {
+  if (error instanceof DomainSdkError) {
+    console.error(error.code, error.retryable, error.retryAfter);
+  }
+}
+```
+
+Errors normalize authentication, permission, conflict, not-found, rate-limit, provider availability, timeout, and cancellation states. Response details are bounded and recursively redact credential-shaped fields.
+
+Read next: [`DomainSdkError`](../api-reference/domain-sdk-error.mdx).

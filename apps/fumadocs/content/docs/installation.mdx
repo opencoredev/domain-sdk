@@ -1,0 +1,142 @@
+---
+title: Installation
+description: Install Domain SDK and start managing customer domains from your server.
+---
+
+## 1. Install the package
+
+```bash title="Terminal"
+bun add @opencoredev/domain-sdk
+```
+
+Domain SDK is server-only. Keep it in API routes, server actions, workers, or another trusted backend.
+
+## 2. Choose your provider
+
+Use the platform that currently receives traffic for your application. Each adapter is a separate import and uses credentials scoped to one project, service, site, or zone.
+
+<Cards>
+  <Card
+    title="Vercel"
+    description="Project domains and explicit verification"
+    href="/docs/providers/vercel"
+  />
+  <Card
+    title="Cloudflare for SaaS"
+    description="Custom Hostnames inside one SaaS zone"
+    href="/docs/providers/cloudflare"
+  />
+  <Card
+    title="Railway"
+    description="One project, environment, and service"
+    href="/docs/providers/railway"
+  />
+  <Card title="Render" description="One web service or static site" href="/docs/providers/render" />
+  <Card
+    title="Netlify"
+    description="Domain aliases on one existing site"
+    href="/docs/providers/netlify"
+  />
+</Cards>
+
+## 3. Create the client
+
+Put the client in a server-only module. Pick the tab that matches your provider; its provider page lists the required credentials and platform-specific behavior.
+
+<Tabs items={["Vercel", "Cloudflare", "Railway", "Render", "Netlify"]}>
+  <Tab value="Vercel">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+    export const domains = createDomainClient({
+      provider: vercel({
+        token: process.env.VERCEL_TOKEN!,
+        projectId: process.env.VERCEL_PROJECT_ID!,
+      }),
+    });
+    ```
+
+  </Tab>
+  <Tab value="Cloudflare">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { cloudflareSaaS } from "@opencoredev/domain-sdk/cloudflare";
+
+    export const domains = createDomainClient({
+      provider: cloudflareSaaS({
+        apiToken: process.env.CLOUDFLARE_API_TOKEN!,
+        zoneId: process.env.CLOUDFLARE_ZONE_ID!,
+        cnameTarget: process.env.CLOUDFLARE_CNAME_TARGET!,
+      }),
+    });
+    ```
+
+  </Tab>
+  <Tab value="Railway">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { railway } from "@opencoredev/domain-sdk/railway";
+
+    export const domains = createDomainClient({
+      provider: railway({
+        token: process.env.RAILWAY_TOKEN!,
+        projectId: process.env.RAILWAY_PROJECT_ID!,
+        environmentId: process.env.RAILWAY_ENVIRONMENT_ID!,
+        serviceId: process.env.RAILWAY_SERVICE_ID!,
+      }),
+    });
+    ```
+
+  </Tab>
+  <Tab value="Render">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { render } from "@opencoredev/domain-sdk/render";
+
+    export const domains = createDomainClient({
+      provider: render({
+        apiKey: process.env.RENDER_API_KEY!,
+        serviceId: process.env.RENDER_SERVICE_ID!,
+      }),
+    });
+    ```
+
+  </Tab>
+  <Tab value="Netlify">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { netlify } from "@opencoredev/domain-sdk/netlify";
+
+    export const domains = createDomainClient({
+      provider: netlify({
+        accessToken: process.env.NETLIFY_ACCESS_TOKEN!,
+        siteId: process.env.NETLIFY_SITE_ID!,
+      }),
+    });
+    ```
+
+  </Tab>
+</Tabs>
+
+Never expose provider credentials through `NEXT_PUBLIC_`, `VITE_`, or another browser-accessible environment variable.
+
+## 4. Add and refresh a domain
+
+```ts title="src/server/customer-domain.ts"
+import { domains } from "./domains";
+
+const domain = await domains.add("app.customer.com");
+
+// Show every required record in your customer-facing DNS instructions.
+const requiredRecords = domain.records.filter((record) => record.required);
+
+const latest = await domains.refresh(domain.hostname);
+if (latest.status === "active") {
+  // The configured provider now reports the domain as ready.
+}
+```
+
+Store the hostname's tenant ownership in your own database. Domain SDK is stateless and the configured provider remains the source of truth for readiness.
+
+Read next: [Compare providers](./providers/index.mdx).

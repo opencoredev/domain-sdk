@@ -1,0 +1,35 @@
+---
+title: Cloudflare for SaaS
+description: Manage Cloudflare for SaaS Custom Hostnames, not generic Cloudflare DNS.
+icon: cloudflare
+---
+
+## Scope and credentials
+
+The adapter creates, retrieves, lists, and deletes Custom Hostnames in one zone. It does not create zone DNS records, configure a fallback origin, or manage customer DNS. Set `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ZONE_ID`, and `CLOUDFLARE_CNAME_TARGET`. Use a scoped API token with Custom Hostnames/SSL permissions for only the SaaS zone.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { cloudflareSaaS } from "@opencoredev/domain-sdk/cloudflare";
+
+export const domains = createDomainClient({
+  provider: cloudflareSaaS({
+    apiToken: process.env.CLOUDFLARE_API_TOKEN!,
+    zoneId: process.env.CLOUDFLARE_ZONE_ID!,
+    cnameTarget: process.env.CLOUDFLARE_CNAME_TARGET!,
+  }),
+});
+const domain = await domains.add("app.customer.com");
+```
+
+## DNS, verification, and certificates
+
+The configured CNAME target becomes the routing record. `ownership_verification` becomes ownership DNS; `ssl.validation_records` become certificate DNS. HTTP validation is preserved as a safe message because it is not a DNS record. A hostname becomes active only when both custom-hostname and SSL states are active.
+
+## Errors and limitations
+
+Structured Cloudflare error arrays are sanitized and normalized. Configure a valid fallback/default origin in Cloudflare before adding hostnames; an invalid origin is platform configuration, not customer DNS. v0.1 does not expose wildcards, generic DNS mutation, or apex routing.
+
+Official references: [Custom Hostnames](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/domain-support/), [create hostnames](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/domain-support/create-custom-hostnames/), and [hostname validation](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/domain-support/hostname-validation/).
+
+Read next: [Ownership verification](../concepts/ownership-verification.mdx).

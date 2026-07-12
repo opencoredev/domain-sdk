@@ -1,0 +1,9 @@
+{
+  "extends": "@domain-sdk/config/tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "types": ["bun", "node"],
+    "noEmit": true
+  },
+  "include": ["src", "test"]
+}

@@ -1,0 +1,34 @@
+---
+title: Provider overview
+description: Compare supported platforms and choose the adapter that owns your application's traffic.
+---
+
+Choose the provider where your application already serves traffic. Domain SDK normalizes the lifecycle, but credentials, resource scope, DNS requirements, and platform limits remain provider-specific.
+
+<Cards>
+  <Card title="Vercel" href="/docs/providers/vercel" />
+  <Card title="Cloudflare for SaaS" href="/docs/providers/cloudflare" />
+  <Card title="Railway" href="/docs/providers/railway" />
+  <Card title="Render" href="/docs/providers/render" />
+  <Card title="Netlify" href="/docs/providers/netlify" />
+</Cards>
+
+## Compatibility
+
+| Capability             | Vercel | Cloudflare SaaS | Railway |      Render      | Netlify |
+| ---------------------- | :----: | :-------------: | :-----: | :--------------: | :-----: |
+| Add domain             |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
+| Get status             |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
+| List domains           |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
+| Explicit verification  |   ✓    |        —        |    —    |        ✓         |    —    |
+| Remove domain          |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
+| Managed certificates   |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
+| Apex domains           |   ✓    |        —        |    ✓    |        ✓         |    ✓    |
+| Wildcard domains       |   —    |        —        |    —    |        ✓         |    —    |
+| Ownership records      |   ✓    |        ✓        |    ✓    | wildcard domains |    —    |
+| Routing records        |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
+| Automatic customer DNS |   —    |        —        |    —    |        —         |    —    |
+
+Cloudflare for SaaS requires a CNAME target, so the current adapter does not claim apex support. Render is the only adapter that accepts wildcard hostnames. Netlify manages aliases without replacing the site's primary domain. No adapter edits customer DNS automatically.
+
+Provider credentials belong to your SaaS account, never to the customer. The memory adapter is available separately for [testing](./testing.mdx), not as a production provider.

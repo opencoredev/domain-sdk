@@ -1,0 +1,10 @@
+---
+title: DomainSdkError
+description: Structured, sanitized failures shared by the core and provider adapters.
+---
+
+Fields are `code`, optional `provider`, optional `statusCode`, `retryable`, optional `retryAfter` in milliseconds, bounded sanitized `details`, and optional safe `cause`.
+
+Codes: `AUTHENTICATION_FAILED`, `PERMISSION_DENIED`, `INVALID_CONFIGURATION`, `INVALID_HOSTNAME`, `DOMAIN_CONFLICT`, `DOMAIN_NOT_FOUND`, `UNSUPPORTED_OPERATION`, `VERIFICATION_FAILED`, `RATE_LIMITED`, `PROVIDER_UNAVAILABLE`, `REQUEST_FAILED`, `TIMEOUT`, `ABORTED`, and `UNKNOWN_ERROR`.
+
+Read next: [Error handling](../concepts/error-handling.mdx).

@@ -1,0 +1,14 @@
+{
+  "title": "API Reference",
+  "pages": [
+    "create-domain-client",
+    "domain-client",
+    "domain-provider",
+    "domain",
+    "dns-record",
+    "domain-status",
+    "domain-sdk-error",
+    "wait-until-active",
+    "testing-utilities"
+  ]
+}

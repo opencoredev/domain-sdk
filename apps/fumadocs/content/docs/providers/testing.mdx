@@ -1,0 +1,21 @@
+---
+title: Testing provider
+description: Exercise domain flows without credentials, network calls, or shared state.
+---
+
+The memory provider supports add, get, list, verify, remove, manual transitions, latency, failures, configurable records/certificates, abort signals, and call inspection. Each instance is isolated.
+
+```ts title="domains.test.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { memoryProvider } from "@opencoredev/domain-sdk/testing";
+
+const memory = memoryProvider();
+const domains = createDomainClient({ provider: memory });
+await domains.add("app.customer.com");
+memory.activate("app.customer.com");
+expect((await domains.refresh("app.customer.com")).status).toBe("active");
+```
+
+`createMockDomain`, `createMockDnsRecord`, and `createFailingProvider` are also available only from the testing subpath.
+
+Read next: [Test without external API calls](../guides/test-without-network.mdx).

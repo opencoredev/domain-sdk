@@ -1,0 +1,20 @@
+---
+title: DomainProvider
+description: Implement the adapter contract for a platform provider.
+---
+
+```ts title="Contract"
+interface DomainProvider {
+  readonly id: string;
+  readonly capabilities: DomainProviderCapabilities;
+  add(input, context): Promise<Domain>;
+  get(input, context): Promise<Domain>;
+  list?(input, context): Promise<DomainPage>;
+  verify?(input, context): Promise<Domain>;
+  remove(input, context): Promise<void>;
+}
+```
+
+`ProviderContext` contains only an abort signal and logger. Adapters own fixed API origins and credential-bearing fetch calls.
+
+Read next: [Contributing](../project/contributing.mdx).

@@ -1,0 +1,10 @@
+---
+title: Tenant authorization and domain security
+description: Prevent cross-tenant access and abandoned-domain takeover.
+---
+
+Authorize every add, get, verify, refresh, and remove by tenant. Normalize before uniqueness checks. Rate-limit mutations. Remove provider configuration when a tenant disconnects a hostname. Do not reassign an abandoned hostname until provider ownership is safely re-established.
+
+Never trust current DNS resolution as ownership proof, collect registrar passwords, or expose provider credentials. Provider verification is authoritative.
+
+Read next: [Build a settings page](./custom-domain-settings-page.mdx).

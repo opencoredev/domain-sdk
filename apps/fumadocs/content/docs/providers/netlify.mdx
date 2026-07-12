@@ -1,0 +1,39 @@
+---
+title: Netlify
+description: Manage customer domains as aliases on one existing Netlify site.
+icon: netlify
+---
+
+## Scope and credentials
+
+The adapter manages `domain_aliases` on one Netlify site. It never replaces the site's primary `custom_domain`. Set `NETLIFY_ACCESS_TOKEN` and `NETLIFY_SITE_ID`; use a token that can read and update only the intended site where possible.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { netlify } from "@opencoredev/domain-sdk/netlify";
+
+export const domains = createDomainClient({
+  provider: netlify({
+    accessToken: process.env.NETLIFY_ACCESS_TOKEN!,
+    siteId: process.env.NETLIFY_SITE_ID!,
+  }),
+});
+
+const domain = await domains.add("app.customer.com");
+```
+
+## DNS and certificates
+
+Subdomains return a CNAME pointing to the site's `.netlify.app` hostname. Apex domains return an ALIAS to `apex-loadbalancer.netlify.com`; when the customer's DNS provider cannot create ALIAS, ANAME, or flattened-CNAME records, use an A record to `75.2.60.5` instead.
+
+Netlify does not expose independent DNS-verification state for each alias. The adapter treats an alias covered by the site's issued TLS certificate as verified and active. Until then, it remains `pending_dns`. Netlify manages certificate issuance, so the adapter does not call the certificate provisioning endpoint.
+
+## Mutation and alias limits
+
+Netlify updates aliases as one array. Each add or remove reads the current site, preserves unrelated aliases and the primary domain, then writes the updated alias list. Serialize domain mutations for the same site to avoid lost updates from concurrent read-modify-write requests.
+
+Netlify recommends no more than 50 aliases per site. The adapter does not impose a lower limit than the API, but you should use multiple sites if your product regularly exceeds that recommendation.
+
+Official references: [Netlify API](https://open-api.netlify.com/), [domain aliases](https://docs.netlify.com/manage/domains/configure-domains/add-a-domain-alias/), and [external DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/).
+
+Read next: [Store domain state](../guides/store-domain-state.mdx).

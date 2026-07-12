@@ -1,0 +1,10 @@
+---
+title: Ownership verification
+description: Prove a customer controls a hostname without collecting registrar credentials.
+---
+
+Ownership records have `purpose: "ownership"`. They are separate from routing and certificate validation even when every instruction happens to use TXT or CNAME records.
+
+Vercel exposes project-domain verification challenges. Cloudflare exposes `ownership_verification` and may also offer HTTP validation. Railway requires a TXT verification token in addition to routing records. Render verifies ordinary domains from routing and returns extra ownership and certificate records for wildcards. Netlify does not expose per-alias ownership challenges, so an issued certificate covering the alias is the strongest state available through its site API. Treat provider verification as authoritative; DNS resolution alone does not establish tenant ownership.
+
+Read next: [Tenant authorization and domain security](../guides/tenant-security.mdx).

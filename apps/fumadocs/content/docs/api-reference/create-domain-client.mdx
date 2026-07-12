@@ -1,0 +1,12 @@
+---
+title: createDomainClient
+description: Create a stateless client from a provider and optional silent-by-default logger.
+---
+
+```ts title="Signature"
+createDomainClient(options: { provider: DomainProvider; logger?: DomainLogger }): DomainClient
+```
+
+The returned client exposes stable provider ID and capability metadata. Logger methods receive operational messages and sanitized context; hostnames may appear because they are operational identifiers. The SDK never logs credentials.
+
+Read next: [`DomainClient`](./domain-client.mdx).

@@ -1,0 +1,14 @@
+---
+title: Troubleshoot pending DNS
+description: Diagnose routing and ownership records that remain pending or invalid.
+---
+
+1. Refresh the domain and render the newest required records.
+2. Compare full names and values exactly, including TXT prefixes.
+3. Check that both routing and ownership records exist; Railway requires both.
+4. Disable incompatible CDN proxying where the provider requires direct DNS visibility.
+5. Inspect `domain.issues` and provider-specific limitations.
+
+Do not delete and recreate repeatedly or promise a propagation deadline.
+
+Read next: [Provider pages](../providers/index.mdx).

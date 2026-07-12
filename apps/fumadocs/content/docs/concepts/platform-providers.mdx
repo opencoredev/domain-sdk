@@ -1,0 +1,10 @@
+---
+title: Platform providers
+description: Understand what adapters normalize and what remains provider-specific.
+---
+
+A provider adapter translates one platform's API into the `DomainProvider` contract. Changing adapters keeps your application lifecycle stable, but it does not erase platform limitations or migrate live traffic.
+
+Vercel scopes domains to a project. Cloudflare uses Custom Hostnames inside a SaaS zone. Railway scopes custom domains to a project, environment, and service. Render scopes domains to a web service or static site. Netlify manages additional customer domains as site aliases while preserving the primary domain. The memory provider is isolated, deterministic test infrastructure.
+
+Read next: [Provider overview](../providers/index.mdx).

@@ -1,0 +1,35 @@
+---
+title: Vercel
+description: Manage project domains through Vercel's current REST APIs.
+icon: vercel
+---
+
+## Scope and credentials
+
+The adapter adds, retrieves, lists, verifies, and removes domains for one Vercel project. It does not deploy applications, edit customer DNS, register domains, or move a domain from another project. Set `VERCEL_TOKEN`, `VERCEL_PROJECT_ID`, and optional `VERCEL_TEAM_ID`. Give the token only the project/team access required for domain management.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+export const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+    teamId: process.env.VERCEL_TEAM_ID,
+  }),
+});
+const domain = await domains.add("app.customer.com");
+```
+
+## DNS, verification, and certificates
+
+Routing records come from Vercel's domain-configuration recommendations; ownership challenges become `ownership` records. `verify()` calls the project-domain verification endpoint. The adapter reports active configuration without inventing certificate issuer or expiration metadata unavailable from the project-domain API.
+
+## Errors and limitations
+
+Expired tokens map to `AUTHENTICATION_FAILED`; inaccessible resources map to `PERMISSION_DENIED`; another project/account maps to `DOMAIN_CONFLICT`; rate limits preserve `retryAfter`. Duplicate adds return current state only when `projectId` matches. Wildcards are not supported in v0.1.
+
+Official references: [project domains](https://vercel.com/docs/rest-api/projects/add-a-domain-to-a-project), [verification](https://vercel.com/docs/rest-api/projects/verify-project-domain), and [domain configuration](https://vercel.com/docs/rest-api/domains/get-a-domain-s-configuration).
+
+Read next: [Troubleshoot pending DNS](../guides/troubleshoot-dns.mdx).

@@ -1,0 +1,20 @@
+---
+title: Domain
+description: Provider-independent state returned by every lifecycle read.
+---
+
+| Field                    | Type                 | Notes                                              |
+| ------------------------ | -------------------- | -------------------------------------------------- |
+| `id`                     | `string`             | Provider-resource identifier safe for persistence. |
+| `hostname`               | `string`             | Normalized lowercase ASCII hostname.               |
+| `provider`               | `string`             | Stable adapter ID.                                 |
+| `status`                 | `DomainStatus`       | Overall readiness.                                 |
+| `records`                | `DnsRecord[]`        | Deduplicated actionable DNS.                       |
+| `verification`           | `DomainVerification` | Ownership state and records.                       |
+| `certificate`            | `DomainCertificate`  | Managed certificate state.                         |
+| `issues`                 | `DomainIssue[]`      | Safe actionable failures.                          |
+| `createdAt`, `updatedAt` | `Date?`              | Present only when exposed.                         |
+
+Raw provider bodies and credentials are never included.
+
+Read next: [`DnsRecord`](./dns-record.mdx).

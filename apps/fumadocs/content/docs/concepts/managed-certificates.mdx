@@ -1,0 +1,10 @@
+---
+title: Managed certificates
+description: Track provider-managed TLS issuance separately from DNS and ownership.
+---
+
+`domain.certificate.status` is `pending`, `active`, `expiring`, `failed`, or `unknown`. Domain SDK does not issue certificates itself.
+
+Cloudflare and Railway expose explicit certificate state. Netlify exposes the site's certificate and its covered domains, which lets the adapter confirm when an alias is active. Vercel and Render confirm usable or verified domain configuration without exposing complete certificate metadata, so those adapters avoid inventing issuer or expiration details.
+
+Read next: [Troubleshoot certificate issuance](../guides/troubleshoot-certificates.mdx).

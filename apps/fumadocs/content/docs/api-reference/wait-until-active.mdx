@@ -1,0 +1,17 @@
+---
+title: waitUntilActive
+description: Sequential polling with timeout, cancellation, callback, and retry backoff.
+---
+
+```ts title="Signature"
+waitUntilActive(hostname: string, options?: {
+  timeoutMs?: number;       // default 300000
+  intervalMs?: number;      // default 5000, minimum 250
+  signal?: AbortSignal;
+  onStatus?(domain: Domain): void;
+}): Promise<Domain>
+```
+
+The first check runs immediately. Retryable errors continue with the larger of interval and `retryAfter`; permanent errors stop. The deadline throws retryable `TIMEOUT`.
+
+Read next: [Poll until active](../guides/poll-until-active.mdx).

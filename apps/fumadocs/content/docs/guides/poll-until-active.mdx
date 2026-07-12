@@ -1,0 +1,20 @@
+---
+title: Poll until a domain is active
+description: Wait sequentially with cancellation, timeout, and provider backoff.
+---
+
+```ts title="activate-domain.ts"
+const controller = new AbortController();
+const active = await domains.waitUntilActive("app.customer.com", {
+  timeoutMs: 5 * 60_000,
+  intervalMs: 5_000,
+  signal: controller.signal,
+  onStatus(domain) {
+    console.log(domain.status);
+  },
+});
+```
+
+Polling checks immediately, never overlaps checks, defaults to five-second intervals and a five-minute timeout, honors longer `Retry-After` values, and stops on permanent errors. It throws `TIMEOUT` or `ABORTED`; it does not guarantee DNS propagation time.
+
+Read next: [`waitUntilActive`](../api-reference/wait-until-active.mdx).

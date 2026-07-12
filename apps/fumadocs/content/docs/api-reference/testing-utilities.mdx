@@ -1,0 +1,10 @@
+---
+title: Testing utilities
+description: Reference for the isolated testing-only subpath.
+---
+
+`memoryProvider(options?)` supports initial status, records, certificate state, activation delay, latency, and per-operation failures. Instances expose `activate`, `transition`, `reset`, and immutable call inspection.
+
+`createMockDomain`, `createMockDnsRecord`, and `createFailingProvider` generate focused test values. Import all of them from `@opencoredev/domain-sdk/testing`; production root imports remain unaffected.
+
+Read next: [Test without external API calls](../guides/test-without-network.mdx).

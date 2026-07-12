@@ -1,0 +1,19 @@
+---
+title: DnsRecord
+description: Exact DNS instruction normalized for a SaaS settings UI.
+---
+
+```ts title="Type"
+interface DnsRecord {
+  type: "A" | "AAAA" | "CNAME" | "TXT" | "CAA" | "ALIAS" | "ANAME";
+  name: string;
+  value: string;
+  ttl?: number;
+  purpose: "routing" | "ownership" | "certificate" | "other";
+  required: boolean;
+  status: "pending" | "valid" | "invalid" | "unknown";
+  description?: string;
+}
+```
+
+Read next: [Display DNS records correctly](../guides/display-dns-records.mdx).

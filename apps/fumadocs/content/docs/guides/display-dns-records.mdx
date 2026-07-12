@@ -1,0 +1,21 @@
+---
+title: Display DNS records correctly
+description: Give customers complete instructions without registrar-specific assumptions.
+---
+
+Display type, full name, value, purpose, required status, current status, and description. Preserve multiple verification methods. Offer a copy button per value, but do not convert full names to `@` in stored data.
+
+```ts title="dns-table.ts"
+const rows = domain.records.map(({ type, name, value, purpose, required, status }) => ({
+  type,
+  name,
+  value,
+  purpose,
+  required,
+  status,
+}));
+```
+
+Explain that registrar UIs may automatically append the zone and that proxying can interfere with provider checks.
+
+Read next: [DNS records](../concepts/dns-records.mdx).

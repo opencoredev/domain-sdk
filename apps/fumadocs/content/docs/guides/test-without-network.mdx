@@ -1,0 +1,17 @@
+---
+title: Test without external API calls
+description: Simulate latency, failures, transitions, and calls with isolated memory providers.
+---
+
+```ts title="domain-flow.test.ts"
+const memory = memoryProvider({ latencyMs: 5, initialStatus: "pending_dns" });
+const domains = createDomainClient({ provider: memory });
+await domains.add("app.customer.com");
+memory.transition("app.customer.com", "pending_certificate");
+memory.activate("app.customer.com");
+expect(memory.calls.map((call) => call.operation)).toContain("add");
+```
+
+Use `createFailingProvider(new DomainSdkError(...))` for application error paths. Normal package tests never require credentials or internet access.
+
+Read next: [Testing provider](../providers/testing.mdx).

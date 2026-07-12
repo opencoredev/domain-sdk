@@ -1,0 +1,18 @@
+---
+title: DomainStatus
+description: Exhaustive overall lifecycle status union.
+---
+
+```ts title="Type"
+type DomainStatus =
+  | "pending"
+  | "pending_dns"
+  | "pending_verification"
+  | "pending_certificate"
+  | "active"
+  | "misconfigured"
+  | "failed"
+  | "unknown";
+```
+
+Treat only `active` as production-ready. See [Status model](../concepts/status-model.mdx) for semantics.

@@ -1,0 +1,19 @@
+---
+title: Status model
+description: Use overall, verification, certificate, and DNS-record states without false precision.
+---
+
+| Status                 | Meaning                                                    |
+| ---------------------- | ---------------------------------------------------------- |
+| `pending`              | Work has started but the provider gives no narrower state. |
+| `pending_dns`          | Required routing DNS is incomplete.                        |
+| `pending_verification` | Ownership verification is incomplete.                      |
+| `pending_certificate`  | DNS and ownership are ready but TLS is not.                |
+| `active`               | The provider reports the hostname ready.                   |
+| `misconfigured`        | DNS conflicts with provider requirements.                  |
+| `failed`               | A permanent provider-side step failed.                     |
+| `unknown`              | The provider does not expose enough detail.                |
+
+Do not infer activation from a CNAME lookup. Enable traffic only for `active`.
+
+Read next: [`DomainStatus`](../api-reference/domain-status.mdx).

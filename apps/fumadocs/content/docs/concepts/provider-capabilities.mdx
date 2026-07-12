@@ -1,0 +1,14 @@
+---
+title: Provider capabilities
+description: Detect optional list, verification, certificate, apex, and wildcard behavior.
+---
+
+```ts title="verify-if-supported.ts"
+if (domains.capabilities.explicitVerification) {
+  await domains.verify("app.customer.com");
+}
+```
+
+Basic `add`, `get`, `refresh`, and `remove` do not require capability checks. Calling an unsupported optional operation throws `UNSUPPORTED_OPERATION` with the provider ID.
+
+Read next: [Provider overview](../providers/index.mdx).

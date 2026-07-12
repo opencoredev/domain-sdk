@@ -1,0 +1,46 @@
+---
+title: Build a custom-domain settings page
+description: Connect an authenticated tenant endpoint to Domain SDK without exposing credentials.
+---
+
+The secure flow is: authorize the tenant, add the normalized hostname on the server, store normalized state, render DNS records, refresh in a background job, and enable traffic only after `active`.
+
+```ts title="app/api/domains/route.ts"
+import { domains } from "@/server/domains";
+import { requireTenant } from "@/server/auth";
+import { database } from "@/server/database";
+
+export async function POST(request: Request) {
+  const tenant = await requireTenant(request);
+  const { hostname } = (await request.json()) as { hostname: string };
+  await tenant.assertCanManageDomains();
+
+  const domain = await domains.add(hostname);
+  await database.customDomains.upsert({
+    tenantId: tenant.id,
+    hostname: domain.hostname,
+    provider: domain.provider,
+    providerDomainId: domain.id,
+    status: domain.status,
+  });
+  return Response.json(domain);
+}
+```
+
+Suggested framework-neutral storage:
+
+```text title="Database model"
+CustomDomain
+- id
+- tenantId
+- hostname (unique after normalization)
+- provider
+- providerDomainId
+- status
+- createdAt
+- updatedAt
+```
+
+Never let a tenant query or remove another tenant's hostname. Rate-limit add and verify endpoints, archive or delete local state after provider removal, and defend abandoned hostnames from takeover.
+
+Read next: [Store domain state](./store-domain-state.mdx) and [tenant security](./tenant-security.mdx).

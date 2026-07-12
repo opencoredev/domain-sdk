@@ -1,0 +1,14 @@
+{
+  "title": "Concepts",
+  "pages": [
+    "domain-lifecycle",
+    "platform-providers",
+    "dns-records",
+    "ownership-verification",
+    "managed-certificates",
+    "status-model",
+    "error-handling",
+    "provider-capabilities",
+    "security-model"
+  ]
+}

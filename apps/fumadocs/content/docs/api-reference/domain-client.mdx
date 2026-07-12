@@ -1,0 +1,20 @@
+---
+title: DomainClient
+description: Reference for normalized custom-domain lifecycle methods.
+---
+
+| Member                                | Returns      | Behavior                                 |
+| ------------------------------------- | ------------ | ---------------------------------------- |
+| `provider`                            | `string`     | Stable provider ID.                      |
+| `capabilities`                        | metadata     | Optional-operation support.              |
+| `add(hostname, options?)`             | `Domain`     | Add or safely return an existing domain. |
+| `get(hostname, options?)`             | `Domain`     | Retrieve current provider state.         |
+| `refresh(hostname, options?)`         | `Domain`     | Alias for a fresh get.                   |
+| `list(options?)`                      | `DomainPage` | List with `limit` 1–100 and cursor.      |
+| `verify(hostname, options?)`          | `Domain`     | Explicitly verify when supported.        |
+| `remove(hostname, options?)`          | `void`       | Safely remove; absent is success.        |
+| `waitUntilActive(hostname, options?)` | `Domain`     | Sequentially poll until active.          |
+
+Network-aware options accept `signal?: AbortSignal`.
+
+Read next: [`Domain`](./domain.mdx).

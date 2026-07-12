@@ -1,0 +1,36 @@
+---
+title: Railway
+description: Manage custom domains for one Railway project, environment, and service.
+icon: railway
+---
+
+## Scope and credentials
+
+The adapter checks availability, creates, retrieves, lists, and deletes Railway custom domains. It does not deploy services or edit customer DNS. Set `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, and `RAILWAY_SERVICE_ID`. Use a project/workspace token with access only to the target resources.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { railway } from "@opencoredev/domain-sdk/railway";
+
+export const domains = createDomainClient({
+  provider: railway({
+    token: process.env.RAILWAY_TOKEN!,
+    projectId: process.env.RAILWAY_PROJECT_ID!,
+    environmentId: process.env.RAILWAY_ENVIRONMENT_ID!,
+    serviceId: process.env.RAILWAY_SERVICE_ID!,
+  }),
+});
+const domain = await domains.add("app.customer.com");
+```
+
+## DNS, verification, and certificates
+
+`status.dnsRecords` becomes routing DNS. `status.verificationToken` becomes the required `_railway-verify` TXT record. Both are required; valid routing alone never becomes active. Certificate `ISSUED` confirms readiness. Root domains use an ALIAS/ANAME or CNAME-flattening instruction because Railway does not publish a static A record.
+
+## Errors and limitations
+
+GraphQL errors are detected even with HTTP 200. Unavailable domains map to `DOMAIN_CONFLICT`. The current public API has no explicit verification mutation, so refresh state with `refresh()`. Wildcards remain disabled in v0.1.
+
+Official references: [Public API](https://docs.railway.com/integrations/api), [manage domains](https://docs.railway.com/integrations/api/manage-domains), and [working with domains](https://docs.railway.com/networking/domains/working-with-domains).
+
+Read next: [Poll until active](../guides/poll-until-active.mdx).

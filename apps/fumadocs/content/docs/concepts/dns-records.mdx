@@ -1,0 +1,16 @@
+---
+title: DNS records
+description: Render exact normalized routing, ownership, and certificate instructions.
+---
+
+Every `DnsRecord` has a `type`, full `name`, `value`, `purpose`, `required` flag, and normalized `status`. Identical records are deduplicated; multiple valid verification methods remain available.
+
+```ts title="render-records.ts"
+for (const record of domain.records.filter((item) => item.required)) {
+  console.log(record.type, record.name, record.value, record.purpose, record.status);
+}
+```
+
+Names are full hostnames where the provider supplies enough context. Your UI may additionally explain registrar shorthand, but it should not replace the authoritative value stored by your application.
+
+Read next: [Display DNS records correctly](../guides/display-dns-records.mdx).

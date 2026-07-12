@@ -1,0 +1,13 @@
+---
+title: Add and remove customer domains
+description: Use safe idempotency without silently claiming domains from another resource.
+---
+
+```ts title="domain-lifecycle.ts"
+const domain = await domains.add("app.customer.com");
+await domains.remove(domain.hostname);
+```
+
+Repeated adds return current state only when the adapter can prove the domain belongs to the configured project, zone, environment, or service. Another owner throws `DOMAIN_CONFLICT`. Repeated removal succeeds when already absent and does not cross provider scope.
+
+Read next: [Error handling](../concepts/error-handling.mdx).

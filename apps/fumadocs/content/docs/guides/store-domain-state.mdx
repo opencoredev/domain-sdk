@@ -1,0 +1,10 @@
+---
+title: Store domain state in your database
+description: Persist tenant ownership and cached UI state while keeping the provider authoritative.
+---
+
+Store the normalized hostname as a unique value together with tenant ID, provider ID, provider-domain ID, cached status, and timestamps. Optionally cache records for UI display, but replace them on every refresh.
+
+Do not use your cache to authorize a provider removal without first authorizing the tenant. Domain SDK itself remains stateless and requires no database.
+
+Read next: [Status model](../concepts/status-model.mdx).

@@ -1,0 +1,27 @@
+---
+title: Introduction
+description: Add, verify, monitor, and remove customer domains with one TypeScript API.
+---
+
+Domain SDK handles the custom-domain lifecycle across Vercel, Cloudflare for SaaS, Railway, Render, and Netlify. Add a hostname, show your customer the exact DNS records, and track provider state until the domain is ready.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+export const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+  }),
+});
+```
+
+Use Domain SDK when your SaaS needs to show exact DNS instructions, track provider-authoritative status, and keep provider-specific APIs out of the rest of your application. It does not register domains, host DNS, deploy apps, proxy traffic, or store tenant data.
+
+## Read next
+
+<Cards>
+  <Card title="Install Domain SDK" href="/docs/installation" />
+  <Card title="Compare providers" href="/docs/providers" />
+</Cards>

@@ -1,0 +1,37 @@
+---
+title: Render
+description: Manage custom domains for one Render web service or static site.
+icon: render
+---
+
+## Scope and credentials
+
+The adapter creates, retrieves, lists, verifies, and removes custom domains for one Render service. Set `RENDER_API_KEY` and `RENDER_SERVICE_ID`. The service must be a web service or static site, and the API key must have access to it.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { render } from "@opencoredev/domain-sdk/render";
+
+export const domains = createDomainClient({
+  provider: render({
+    apiKey: process.env.RENDER_API_KEY!,
+    serviceId: process.env.RENDER_SERVICE_ID!,
+  }),
+});
+
+const domain = await domains.add("app.customer.com");
+```
+
+## DNS, verification, and certificates
+
+Subdomains return a CNAME pointing to the service's `onrender.com` hostname. Apex domains return Render's `216.24.57.1` load-balancer address and explain the preferred ALIAS, ANAME, or flattened-CNAME alternative. Wildcards also return Render's certificate and hostname-validation CNAME records.
+
+Call `verify()` after the customer configures DNS. Render also verifies new domains automatically, so polling with `waitUntilActive()` remains useful. A verified domain becomes active; Render manages its TLS certificate but does not expose certificate metadata through the custom-domain response.
+
+## Errors and limitations
+
+Adding a root or `www` hostname can cause Render to create its companion hostname automatically. The adapter returns the hostname you requested, while `list()` includes every domain Render created. Domain limits and charges depend on the Render workspace plan.
+
+Official references: [Custom Domain API](https://api-docs.render.com/reference/create-custom-domain), [custom domains](https://render.com/docs/custom-domains), and [external DNS](https://render.com/docs/configure-other-dns).
+
+Read next: [Poll until active](../guides/poll-until-active.mdx).
