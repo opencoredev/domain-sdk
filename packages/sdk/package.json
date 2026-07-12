@@ -12,6 +12,7 @@
     "vercel"
   ],
   "homepage": "https://domain-sdk.dev",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/opencoredev/domain-sdk.git"

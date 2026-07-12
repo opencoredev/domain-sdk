@@ -73,4 +73,8 @@ bun run build
 
 The docs run at `http://domain-sdk.localhost:1355` through the sudo-free Portless proxy. Use `PORTLESS=0 bun run dev` to bypass the proxy.
 
+## License
+
+[MIT](./LICENSE)
+
 <p align="center"><sub>Built by <a href="https://x.com/leodev">@leodev</a></sub></p>
