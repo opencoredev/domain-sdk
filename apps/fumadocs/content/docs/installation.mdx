@@ -11,6 +11,16 @@ bun add @opencoredev/domain-sdk
 
 Domain SDK is server-only. Keep it in API routes, server actions, workers, or another trusted backend.
 
+### Install the agent skill
+
+Give Codex, Claude Code, Cursor, and other compatible coding agents the Domain SDK workflow and safety rules:
+
+```bash title="Terminal"
+npx skills add opencoredev/domain-sdk --skill domain-sdk
+```
+
+The skills CLI asks which detected agents should receive the skill. Add `-g` to make it available across all of your projects.
+
 ## 2. Choose your provider
 
 Use the platform that currently receives traffic for your application. Each adapter is a separate import and uses credentials scoped to one project, service, site, or zone.
