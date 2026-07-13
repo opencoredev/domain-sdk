@@ -1,6 +1,6 @@
 {
   "name": "@opencoredev/domain-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Add, verify, monitor, and remove customer domains with one TypeScript API.",
   "keywords": [
     "cloudflare",
