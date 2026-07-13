@@ -1,18 +1,4 @@
 {
   "title": "Guides",
-  "pages": [
-    "custom-domain-settings-page",
-    "managed-subdomains",
-    "store-domain-state",
-    "add-remove-domains",
-    "poll-until-active",
-    "display-dns-records",
-    "apex-and-subdomains",
-    "production-credentials",
-    "tenant-security",
-    "troubleshoot-dns",
-    "troubleshoot-certificates",
-    "switch-providers",
-    "test-without-network"
-  ]
+  "pages": ["managed-subdomains"]
 }
