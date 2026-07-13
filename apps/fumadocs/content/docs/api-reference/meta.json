@@ -2,6 +2,7 @@
   "title": "API Reference",
   "pages": [
     "create-domain-client",
+    "create-subdomain-client",
     "domain-client",
     "domain-provider",
     "domain",

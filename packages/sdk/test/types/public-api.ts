@@ -1,5 +1,6 @@
 import {
   createDomainClient,
+  createSubdomainClient,
   DomainSdkError,
   type Domain,
   type DomainProvider,
@@ -22,8 +23,11 @@ const providers: DomainProvider[] = [
 ];
 
 const client = createDomainClient({ provider: providers[3]! });
+const subdomains = createSubdomainClient({ domainClient: client, baseDomain: "example.com" });
 const result: Promise<Domain> = client.add("app.customer.com");
+const tenantHostname: string = subdomains.toHostname("tenant");
 const mock: Domain = createMockDomain();
 void result;
+void tenantHostname;
 void mock;
 void DomainSdkError;
