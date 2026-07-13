@@ -3,6 +3,20 @@ import { createDomainClient, DomainSdkError } from "../../src";
 import { createMockDnsRecord, memoryProvider } from "../../src/testing";
 
 describe("domain client and memory provider", () => {
+  test("rejects initialization in a browser environment", () => {
+    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+    Object.defineProperty(globalThis, "window", { value: {}, configurable: true });
+
+    try {
+      expect(() => createDomainClient({ provider: memoryProvider() })).toThrow(
+        "Domain SDK is server-side only",
+      );
+    } finally {
+      if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+      else Reflect.deleteProperty(globalThis, "window");
+    }
+  });
+
   test("supports the lifecycle and duplicate add", async () => {
     const memory = memoryProvider({ records: [createMockDnsRecord(), createMockDnsRecord()] });
     const domains = createDomainClient({ provider: memory });
