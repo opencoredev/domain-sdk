@@ -79,7 +79,7 @@
     },
     "packages/sdk": {
       "name": "@opencoredev/domain-sdk",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "dependencies": {
         "tldts": "^7.0.19",
       },
