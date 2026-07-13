@@ -76,8 +76,15 @@ describe("subdomain client", () => {
     expect((await supported.provisionWildcard()).hostname).toBe("*.example.com");
     memory.activate("*.example.com");
     expect((await supported.getWildcard()).status).toBe("active");
+    expect((await supported.refreshWildcard()).status).toBe("active");
     expect((await supported.verifyWildcard()).status).toBe("active");
     expect((await supported.waitUntilWildcardActive({ timeoutMs: 0 })).status).toBe("active");
+    wildcardProvider.capabilities.wildcardDomains = false;
+    expect(supported.supportsWildcard).toBe(false);
+    expect(() => supported.refreshWildcard()).toThrow(
+      expect.objectContaining({ code: "UNSUPPORTED_OPERATION" }),
+    );
+    wildcardProvider.capabilities.wildcardDomains = true;
     await supported.removeWildcard();
   });
 });

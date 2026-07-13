@@ -20,7 +20,7 @@ createSubdomainClient(options: {
 | `fromHostname(hostname)`                             | `string`  | Validate the parent boundary and return its normalized label. |
 | `add/get/refresh/verify/remove(label)`               | lifecycle | Run the matching operation for one tenant hostname.           |
 | `waitUntilActive(label)`                             | `Domain`  | Poll one tenant hostname until active.                        |
-| `provisionWildcard()` and wildcard lifecycle methods | lifecycle | Run the matching operation for the wildcard hostname.         |
+| `provisionWildcard()` and wildcard lifecycle methods | lifecycle | Add, get, refresh, verify, or remove the wildcard hostname.   |
 | `waitUntilWildcardActive()`                          | `Domain`  | Poll the wildcard hostname until active.                      |
 
 Labels must contain exactly one DNS label. Reserved labels, wildcards, nested subdomains, and hostnames outside `baseDomain` are rejected before any provider request.

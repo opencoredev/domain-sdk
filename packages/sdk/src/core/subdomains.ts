@@ -33,6 +33,7 @@ export interface SubdomainClient {
   /** Attach `*.baseDomain` once so the application can route every tenant label. */
   provisionWildcard(options?: RequestOptions): Promise<Domain>;
   getWildcard(options?: RequestOptions): Promise<Domain>;
+  refreshWildcard(options?: RequestOptions): Promise<Domain>;
   verifyWildcard(options?: RequestOptions): Promise<Domain>;
   removeWildcard(options?: RequestOptions): Promise<void>;
   waitUntilWildcardActive(options?: WaitUntilActiveOptions): Promise<Domain>;
@@ -103,7 +104,9 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
   return {
     baseDomain,
     wildcardHostname,
-    supportsWildcard: domainClient.capabilities.wildcardDomains,
+    get supportsWildcard() {
+      return domainClient.capabilities.wildcardDomains;
+    },
     toHostname,
     fromHostname(input) {
       const hostname = normalizeHostname(input);
@@ -135,6 +138,9 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
     },
     getWildcard(advanced) {
       return withWildcard((hostname) => domainClient.get(hostname, advanced));
+    },
+    refreshWildcard(advanced) {
+      return withWildcard((hostname) => domainClient.refresh(hostname, advanced));
     },
     verifyWildcard(advanced) {
       return withWildcard((hostname) => domainClient.verify(hostname, advanced));
