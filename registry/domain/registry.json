@@ -1,0 +1,40 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry.json",
+  "items": [
+    {
+      "name": "dns-records-table",
+      "type": "registry:ui",
+      "title": "DNS Records Table",
+      "description": "A compact, copy-ready DNS record table for customer-domain setup.",
+      "dependencies": ["@hugeicons/core-free-icons", "@hugeicons/react", "@opencoredev/domain-sdk"],
+      "registryDependencies": ["badge", "button", "native-select", "table"],
+      "files": [
+        {
+          "path": "dns-records-table.tsx",
+          "type": "registry:ui",
+          "target": "components/domain/dns-records-table.tsx"
+        },
+        {
+          "path": "domain-registry-utils.ts",
+          "type": "registry:lib",
+          "target": "components/domain/domain-registry-utils.ts"
+        }
+      ]
+    },
+    {
+      "name": "one-click-dns-setup",
+      "type": "registry:ui",
+      "title": "One-click DNS Setup",
+      "description": "A controlled Domain Connect handoff with manual DNS fallback.",
+      "dependencies": ["@hugeicons/core-free-icons", "@hugeicons/react", "@opencoredev/domain-sdk"],
+      "registryDependencies": ["button", "separator"],
+      "files": [
+        {
+          "path": "one-click-dns-setup.tsx",
+          "type": "registry:ui",
+          "target": "components/domain/one-click-dns-setup.tsx"
+        }
+      ]
+    }
+  ]
+}

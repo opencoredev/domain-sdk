@@ -1,0 +1,51 @@
+---
+title: One-click DNS Setup
+description: Hand customers from your domain settings to a supported DNS provider for reviewed, automatic record setup.
+---
+
+<OneClickDnsPreview />
+
+## Install
+
+```bash title="Terminal"
+bunx --bun shadcn@latest add https://domain-sdk.dev/r/one-click-dns-setup.json
+```
+
+## Usage
+
+Render this component only after your server has discovered that the hostname and Domain Connect template are supported. The callback should request a short-lived, signed authorization URL from your backend and then redirect the browser.
+
+```tsx title="domain-settings.tsx"
+import { OneClickDnsSetup } from "@/components/domain/one-click-dns-setup";
+
+<OneClickDnsSetup
+  domain={domain}
+  dnsProvider="Cloudflare"
+  isConnecting={isConnecting}
+  error={connectError}
+  onConnect={async (domain) => {
+    const response = await fetch(`/api/domains/${domain.id}/dns-authorization`, {
+      method: "POST",
+    });
+    const { authorizationUrl } = await response.json();
+    window.location.assign(authorizationUrl);
+  }}
+  onManualSetup={() => setSetupMode("manual")}
+/>;
+```
+
+Credentials, DNS discovery, template support checks, request signing, authorization URL generation, callback validation, and post-return refresh belong on the server. Do not construct or sign Domain Connect requests in this component.
+
+## Confirmed provider paths
+
+| Application provider | Customer DNS provider | Setup                                                       |
+| -------------------- | --------------------- | ----------------------------------------------------------- |
+| Vercel               | Cloudflare            | Domain Connect                                              |
+| Railway              | Cloudflare            | Domain Connect                                              |
+| Cloudflare for SaaS  | Any                   | Manual unless your own Domain Connect template is onboarded |
+| Render               | Any                   | Manual records                                              |
+| Netlify              | External DNS          | Manual records                                              |
+
+Cloudflare is the authoritative DNS provider in the confirmed one-click paths above. Eligibility is per hostname and template, so the UI intentionally does not infer support from `domain.provider`.
+
+Provider references: [Vercel Domain Connect](https://vercel.com/changelog/automated-dns-configuration-with-domain-connect), [Railway one-click domains](https://blog.railway.com/p/one-click-domains), [Cloudflare Domain Connect](https://developers.cloudflare.com/dns/reference/domain-connect/), [Render custom domains](https://render.com/docs/custom-domains), and [Netlify external DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/).

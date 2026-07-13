@@ -1,0 +1,26 @@
+---
+title: DNS Records
+description: A copy-ready DNS setup surface for activating customer domains.
+---
+
+<DnsRecordsPreview />
+
+## Install
+
+```bash title="Terminal"
+bunx --bun shadcn@latest add https://domain-sdk.dev/r/dns-records-table.json
+```
+
+## Usage
+
+Pass the normalized records returned by Domain SDK. Your application owns refreshing and persistence.
+
+```tsx title="domain-settings.tsx"
+import { DnsRecordsTable } from "@/components/domain/dns-records-table";
+
+<DnsRecordsTable records={domain.records} issues={domain.issues} defaultFilter="required" />;
+```
+
+The component uses shadcn `Table`, `Badge`, `Button`, and `NativeSelect` with Hugeicons. Names and values are full-cell copy targets, optional records can be filtered, and every copy is confirmed through a polite live region.
+
+When your server discovers a supported Domain Connect path, place the separately installable [One-click DNS Setup](./one-click-dns-setup.mdx) component before this manual fallback.

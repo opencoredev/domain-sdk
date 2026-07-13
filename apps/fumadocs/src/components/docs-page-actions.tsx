@@ -16,13 +16,13 @@ export function DocsPageActions({
   return (
     <div className="flex flex-row gap-2 items-center border-b pb-6">
       <span
-        onClickCapture={() => track("docs_markdown_copied", { page: pagePath, markdown_url: markdownUrl })}
+        onClickCapture={() =>
+          track("docs_markdown_copied", { page: pagePath, markdown_url: markdownUrl })
+        }
       >
         <MarkdownCopyButton markdownUrl={markdownUrl} />
       </span>
-      <span
-        onClickCapture={() => track("docs_view_options_opened", { page: pagePath })}
-      >
+      <span onClickCapture={() => track("docs_view_options_opened", { page: pagePath })}>
         <ViewOptionsPopover markdownUrl={markdownUrl} githubUrl={githubUrl} />
       </span>
     </div>

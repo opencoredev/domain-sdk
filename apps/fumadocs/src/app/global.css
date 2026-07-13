@@ -2,13 +2,84 @@
 @import "fumadocs-ui/css/neutral.css";
 @import "fumadocs-ui/css/preset.css";
 
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
 html {
   scrollbar-gutter: stable;
+}
+
+html:has(.domain-home) {
+  scrollbar-gutter: auto;
 }
 
 html > body[data-scroll-locked] {
   margin-right: 0px !important;
   --removed-body-scroll-bar-size: 0px !important;
+}
+
+.dns-records-preview {
+  --background: var(--color-fd-card);
+  --foreground: var(--color-fd-foreground);
+  --primary: var(--color-fd-primary);
+  --primary-foreground: var(--color-fd-primary-foreground);
+  --secondary: var(--color-fd-secondary);
+  --secondary-foreground: var(--color-fd-secondary-foreground);
+  --muted: var(--color-fd-muted);
+  --muted-foreground: var(--color-fd-muted-foreground);
+  --accent: var(--color-fd-accent);
+  --accent-foreground: var(--color-fd-foreground);
+  --destructive: #ef4444;
+  --border: var(--color-fd-border);
+  --input: var(--color-fd-border);
+  --ring: var(--color-fd-primary);
+  --radius: 0.625rem;
+}
+
+.dns-records-preview h2,
+.dns-records-preview p,
+.dns-records-preview dl,
+.dns-records-preview dd {
+  margin: 0;
+}
+
+.dns-records-preview [data-slot="table-container"],
+.dns-records-preview table {
+  margin: 0;
+}
+
+.dns-records-preview [data-slot="table-head"],
+.dns-records-preview [data-slot="table-cell"] {
+  border-inline: 0;
+}
+
+.dns-records-preview code {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--foreground);
+  padding: 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
 }
 
 .domain-home-shell {
@@ -252,6 +323,20 @@ html > body[data-scroll-locked] {
   color: #c8d6ff;
 }
 
+.domain-docs-shell:has(.dns-records-preview) article h1 {
+  font-size: clamp(2.65rem, 3.4vw, 3.5rem);
+  letter-spacing: -0.045em;
+}
+
+.domain-docs-shell article .dns-records-preview code {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--foreground);
+  padding: 0;
+}
+
 .domain-docs-shell article pre {
   border-color: #34342f;
   background: #0e0e0c;
@@ -351,13 +436,13 @@ html > body[data-scroll-locked] {
 
 .hero-art {
   position: absolute;
-  right: -4%;
   bottom: 74px;
-  left: -4%;
+  left: 0;
+  right: 0;
   z-index: 0;
-  display: flex;
-  width: 108%;
-  align-items: end;
+  width: 100%;
+  height: 260px;
+  overflow: hidden;
   transform-origin: center bottom;
   pointer-events: none;
 }
@@ -365,7 +450,9 @@ html > body[data-scroll-locked] {
 .hero-art img {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: cover;
+  object-position: center bottom;
   filter: saturate(0.86) contrast(1.04);
 }
 
@@ -382,11 +469,7 @@ html > body[data-scroll-locked] {
   }
 
   .hero-art {
-    top: clamp(610px, 58%, 650px);
-    right: 0;
-    left: 0;
-    width: 100%;
-    overflow: hidden;
+    height: clamp(360px, 32vw, 500px);
   }
 
   .hero-art::before {
@@ -401,13 +484,7 @@ html > body[data-scroll-locked] {
   }
 
   .hero-art img {
-    position: absolute;
-    right: -4%;
-    bottom: 0;
-    left: -4%;
-    width: 108%;
-    height: clamp(500px, 42vw, 590px);
-    object-fit: fill;
+    object-position: center bottom;
   }
 }
 
@@ -1154,9 +1231,7 @@ html > body[data-scroll-locked] {
   }
   .hero-art {
     bottom: 74px;
-    width: 150%;
-    left: -25%;
-    right: auto;
+    height: 320px;
   }
   .manifesto-section {
     padding: 170px 24px;
@@ -1269,9 +1344,8 @@ html > body[data-scroll-locked] {
     font-size: 11px;
   }
   .hero-art {
-    bottom: 54px;
-    width: 188%;
-    left: -44%;
+    bottom: 74px;
+    height: 260px;
   }
   .provider-item {
     min-width: 190px;

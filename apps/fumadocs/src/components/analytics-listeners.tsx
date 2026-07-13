@@ -35,10 +35,7 @@ export function AnalyticsListeners() {
         const code = button.closest("figure")?.querySelector("code");
         track("docs_code_copied", {
           path: window.location.pathname,
-          language:
-            code
-              ?.getAttribute("class")
-              ?.match(/language-([\w-]+)/)?.[1] ?? null,
+          language: code?.getAttribute("class")?.match(/language-([\w-]+)/)?.[1] ?? null,
         });
       }
     }

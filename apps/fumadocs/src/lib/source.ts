@@ -4,7 +4,7 @@ import { createElement } from "react";
 
 import { isProviderId, ProviderLogo } from "@/components/provider-logo";
 
-import { docsContentRoute, docsImageRoute, docsRoute } from "./shared";
+import { docsContentRoute, docsRoute } from "./shared";
 
 // See https://fumadocs.dev/docs/headless/source-api for more info
 export const source = loader({
@@ -15,15 +15,6 @@ export const source = loader({
     return icon && isProviderId(icon) ? createElement(ProviderLogo, { provider: icon }) : undefined;
   },
 });
-
-export function getPageImage(page: (typeof source)["$inferPage"]) {
-  const segments = [...page.slugs, "image.png"];
-
-  return {
-    segments,
-    url: `${docsImageRoute}/${segments.join("/")}`,
-  };
-}
 
 export function getPageMarkdownUrl(page: (typeof source)["$inferPage"]) {
   const segments = [...page.slugs, "content.md"];

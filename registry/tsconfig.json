@@ -1,0 +1,12 @@
+{
+  "extends": "../packages/config/tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "paths": {
+      "@/components/domain/*": ["domain/*"],
+      "@/components/ui/*": ["test-support/ui"],
+      "@/lib/utils": ["test-support/utils.ts"]
+    }
+  }
+}

@@ -1,4 +1,4 @@
 {
   "title": "Domain SDK",
-  "pages": ["index", "installation", "providers", "...project"]
+  "pages": ["index", "installation", "components", "providers", "...project"]
 }

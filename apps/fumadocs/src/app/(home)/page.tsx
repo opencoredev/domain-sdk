@@ -201,7 +201,7 @@ export default function HomePage() {
       <nav className="home-nav" aria-label="Main navigation">
         <Link className="home-brand" href="/">
           <span className="brand-mark">
-            <DomainLogo />
+            <DomainLogo priority />
           </span>
           <span>Domain SDK</span>
         </Link>
@@ -241,7 +241,9 @@ export default function HomePage() {
           <Link
             className="button-light"
             href="/docs/installation"
-            onClick={() => track("cta_clicked", { cta: "install_domain_sdk", location: "home_hero" })}
+            onClick={() =>
+              track("cta_clicked", { cta: "install_domain_sdk", location: "home_hero" })
+            }
           >
             Install Domain SDK
             <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={1.8} />
@@ -265,7 +267,10 @@ export default function HomePage() {
                   href={provider.href}
                   tabIndex={index >= providers.length ? -1 : undefined}
                   onClick={() =>
-                    track("provider_link_clicked", { provider: provider.id, location: "home_marquee" })
+                    track("provider_link_clicked", {
+                      provider: provider.id,
+                      location: "home_marquee",
+                    })
                   }
                 >
                   <ProviderLogo provider={provider.id} />
@@ -355,7 +360,9 @@ export default function HomePage() {
               <h3>DNS instructions your UI can trust</h3>
               <Link
                 href="/docs/concepts/dns-records"
-                onClick={() => track("cta_clicked", { cta: "explore_dns_model", location: "home_capabilities" })}
+                onClick={() =>
+                  track("cta_clicked", { cta: "explore_dns_model", location: "home_capabilities" })
+                }
               >
                 Explore the model
                 <HugeiconsIcon icon={ArrowUpRight01Icon} size={15} strokeWidth={1.8} />
@@ -389,7 +396,9 @@ export default function HomePage() {
           </p>
           <Link
             href="/docs/providers"
-            onClick={() => track("cta_clicked", { cta: "compare_providers", location: "home_architecture" })}
+            onClick={() =>
+              track("cta_clicked", { cta: "compare_providers", location: "home_architecture" })
+            }
           >
             Compare providers
             <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={1.8} />
@@ -426,7 +435,10 @@ export default function HomePage() {
                 href={provider.href}
                 key={provider.id}
                 onClick={() =>
-                  track("provider_link_clicked", { provider: provider.id, location: "home_architecture" })
+                  track("provider_link_clicked", {
+                    provider: provider.id,
+                    location: "home_architecture",
+                  })
                 }
               >
                 <ProviderLogo provider={provider.id} />
@@ -540,7 +552,9 @@ export default function HomePage() {
           <Link
             className="button-dark"
             href="/docs/installation"
-            onClick={() => track("cta_clicked", { cta: "start_building", location: "home_closing" })}
+            onClick={() =>
+              track("cta_clicked", { cta: "start_building", location: "home_closing" })
+            }
           >
             Start building
             <HugeiconsIcon icon={ArrowUpRight01Icon} size={16} strokeWidth={1.8} />

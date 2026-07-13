@@ -73,6 +73,18 @@ bun run build
 
 The docs run at `http://domain-sdk.localhost:1355` through the sudo-free Portless proxy. Use `PORTLESS=0 bun run dev` to bypass the proxy.
 
+## Releasing
+
+Add a Tegami changelog under `.tegami/`, then run the complete local release:
+
+```bash
+bun run release
+```
+
+The release tooling requires Node.js 24 or newer.
+
+The command lints, type-checks, and tests the SDK; versions it with Tegami; builds the package; publishes it to npm; and removes the completed publish lock. If publishing fails, Tegami keeps the lock so `bun run tegami publish` can retry safely.
+
 ## License
 
 [MIT](./LICENSE)

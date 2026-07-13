@@ -17,8 +17,8 @@ function lockHolders(): number[] {
 for (const pid of lockHolders()) {
   const cwd = spawnSync("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], {
     encoding: "utf8",
-  }).stdout
-    .split("\n")
+  })
+    .stdout.split("\n")
     .find((line) => line.startsWith("n"))
     ?.slice(1);
   const command = spawnSync("ps", ["-p", String(pid), "-o", "command="], {

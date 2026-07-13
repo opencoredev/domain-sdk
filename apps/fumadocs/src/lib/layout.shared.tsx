@@ -10,7 +10,7 @@ export function baseOptions(): BaseLayoutProps {
       title: (
         <span className="docs-brand">
           <span className="brand-mark" aria-hidden="true">
-            <DomainLogo />
+            <DomainLogo priority />
           </span>
           <span>Domain SDK</span>
         </span>

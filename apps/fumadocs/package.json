@@ -12,11 +12,13 @@
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
+    "@base-ui/react": "^1.6.0",
     "@gsap/react": "^2.1.2",
     "@hugeicons/core-free-icons": "^4.2.2",
     "@hugeicons/react": "^1.1.9",
     "@opencoredev/domain-sdk": "workspace:*",
     "@orama/orama": "^3.1.18",
+    "class-variance-authority": "^0.7.1",
     "cnfast": "^0.0.8",
     "fumadocs-core": "16.11.3",
     "fumadocs-mdx": "15.1.0",

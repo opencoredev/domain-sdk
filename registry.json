@@ -1,0 +1,6 @@
+{
+  "$schema": "https://ui.shadcn.com/schema/registry.json",
+  "name": "domain-sdk",
+  "homepage": "https://domain-sdk.dev",
+  "include": ["registry/domain/registry.json"]
+}

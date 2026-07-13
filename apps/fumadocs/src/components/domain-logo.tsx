@@ -1,6 +1,9 @@
+import Image from "next/image";
+
 type DomainLogoProps = {
   className?: string;
   title?: string;
+  priority?: boolean;
 };
 
 /**
@@ -9,9 +12,9 @@ type DomainLogoProps = {
  * The split outer loop creates the over/under illusion without relying on
  * background-colored masks, so the mark remains truly one-color everywhere.
  */
-export function DomainLogo({ className, title }: DomainLogoProps) {
+export function DomainLogo({ className, title, priority = false }: DomainLogoProps) {
   return (
-    <img
+    <Image
       className={className}
       src="/images/domain-sdk-mark.png"
       width={1254}
@@ -19,6 +22,7 @@ export function DomainLogo({ className, title }: DomainLogoProps) {
       alt={title ?? ""}
       aria-hidden={title ? undefined : true}
       draggable={false}
+      priority={priority}
     />
   );
 }
