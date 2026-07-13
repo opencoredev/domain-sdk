@@ -3,8 +3,10 @@ title: Handle apex domains and subdomains
 description: Respect adapter capabilities without guessing public-suffix boundaries.
 ---
 
-Domain SDK validates full hostnames but does not guess registrable apex domains with a two-label rule and does not bundle a public-suffix database. Use `domains.capabilities.apexDomains` for provider support.
+Domain SDK validates full hostnames but does not guess registrable apex domains with a two-label rule. Use `domains.capabilities.apexDomains` for provider support.
 
-Railway apex instructions use ALIAS/ANAME or CNAME flattening. Vercel supports apex configuration. Cloudflare for SaaS v0.1 exposes CNAME routing and reports apex support unavailable. Wildcards are rejected everywhere in v0.1.
+Railway apex instructions use ALIAS/ANAME or CNAME flattening. Vercel supports apex configuration. Cloudflare for SaaS exposes CNAME routing and reports apex support unavailable. Render accepts wildcard domains; other current adapters reject them.
+
+For tenant hostnames under a domain you own, use [`createSubdomainClient`](./managed-subdomains.mdx) to constrain direct-child labels and choose wildcard or individual provisioning.
 
 Read next: [Provider overview](../providers/index.mdx).

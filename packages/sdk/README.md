@@ -21,6 +21,25 @@ const domains = createDomainClient({
 const domain = await domains.add("app.customer.com");
 ```
 
+Give tenants subdomains under a parent domain you own:
+
+```ts
+import { createSubdomainClient } from "@opencoredev/domain-sdk";
+
+const subdomains = createSubdomainClient({
+  domainClient: domains,
+  baseDomain: "mydomain.com",
+  reservedLabels: ["www", "api", "admin"],
+});
+
+const hostname = subdomains.toHostname("customer"); // customer.mydomain.com
+
+// Provision once when the selected adapter supports wildcards.
+const wildcard = await subdomains.provisionWildcard();
+```
+
+Store the normalized label and hostname with the tenant in your own database. Configure the required DNS records returned by wildcard provisioning once; otherwise use `subdomains.add("customer")` to attach each hostname separately.
+
 Switch providers by changing the adapter:
 
 ```ts

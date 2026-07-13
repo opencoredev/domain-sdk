@@ -2,6 +2,7 @@
   "title": "Guides",
   "pages": [
     "custom-domain-settings-page",
+    "managed-subdomains",
     "store-domain-state",
     "add-remove-domains",
     "poll-until-active",

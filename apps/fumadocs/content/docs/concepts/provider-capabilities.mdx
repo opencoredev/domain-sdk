@@ -11,4 +11,6 @@ if (domains.capabilities.explicitVerification) {
 
 Basic `add`, `get`, `refresh`, and `remove` do not require capability checks. Calling an unsupported optional operation throws `UNSUPPORTED_OPERATION` with the provider ID.
 
+`createSubdomainClient` exposes the same wildcard check as `supportsWildcard`. Its `provisionWildcard` methods fail with `UNSUPPORTED_OPERATION` before calling a provider that cannot attach wildcard hostnames.
+
 Read next: [Provider overview](../providers/index.mdx).

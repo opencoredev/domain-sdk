@@ -1,0 +1,30 @@
+---
+title: createSubdomainClient
+description: Scope tenant hostname operations to direct children of one owned parent domain.
+---
+
+```ts title="Signature"
+createSubdomainClient(options: {
+  domainClient: DomainClient;
+  baseDomain: string;
+  reservedLabels?: readonly string[];
+}): SubdomainClient
+```
+
+| Member                                               | Returns   | Behavior                                                      |
+| ---------------------------------------------------- | --------- | ------------------------------------------------------------- |
+| `baseDomain`                                         | `string`  | Normalized parent hostname.                                   |
+| `wildcardHostname`                                   | `string`  | Normalized `*.baseDomain` hostname.                           |
+| `supportsWildcard`                                   | `boolean` | Selected provider's wildcard capability.                      |
+| `toHostname(label)`                                  | `string`  | Normalize and constrain a direct-child label.                 |
+| `fromHostname(hostname)`                             | `string`  | Validate the parent boundary and return its normalized label. |
+| `add/get/refresh/verify/remove(label)`               | lifecycle | Run the matching operation for one tenant hostname.           |
+| `waitUntilActive(label)`                             | `Domain`  | Poll one tenant hostname until active.                        |
+| `provisionWildcard()` and wildcard lifecycle methods | lifecycle | Add, get, refresh, verify, or remove the wildcard hostname.   |
+| `waitUntilWildcardActive()`                          | `Domain`  | Poll the wildcard hostname until active.                      |
+
+Labels must contain exactly one DNS label. Reserved labels, wildcards, nested subdomains, and hostnames outside `baseDomain` are rejected before any provider request.
+
+The client does not allocate labels or store tenant ownership. Claim the normalized label with a unique database constraint and authorize all changes in the application layer.
+
+Read next: [Give tenants managed subdomains](../guides/managed-subdomains.mdx).

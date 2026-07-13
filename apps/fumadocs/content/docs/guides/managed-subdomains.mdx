@@ -1,0 +1,71 @@
+---
+title: Give tenants managed subdomains
+description: Safely map tenant labels to subdomains under a parent domain you own.
+---
+
+Use `createSubdomainClient` when tenants choose hostnames such as `acme.mydomain.com` under a parent domain controlled by your application. It accepts direct-child labels only, normalizes them, enforces the parent-domain boundary, and blocks labels you reserve.
+
+```ts title="server/subdomains.ts"
+import { createDomainClient, createSubdomainClient } from "@opencoredev/domain-sdk";
+import { render } from "@opencoredev/domain-sdk/render";
+
+const domains = createDomainClient({
+  provider: render({
+    apiKey: process.env.RENDER_API_KEY!,
+    serviceId: process.env.RENDER_SERVICE_ID!,
+  }),
+});
+
+export const subdomains = createSubdomainClient({
+  domainClient: domains,
+  baseDomain: "mydomain.com",
+  reservedLabels: ["www", "api", "admin", "mail"],
+});
+```
+
+## Provision one wildcard
+
+When `subdomains.supportsWildcard` is true, attach the wildcard once and configure every required record it returns. After the wildcard becomes active, creating a tenant does not require another platform-domain or DNS mutation.
+
+```ts title="scripts/provision-tenant-domain.ts"
+const wildcard = await subdomains.provisionWildcard();
+
+// Show or apply every record where record.required is true.
+console.log(wildcard.records);
+
+await subdomains.waitUntilWildcardActive();
+```
+
+Render is currently the only adapter that exposes wildcard provisioning through Domain SDK. Provider-specific DNS and certificate requirements still apply.
+
+## Claim a tenant label
+
+Generate the hostname inside the same database transaction that claims the unique label. Domain SDK remains stateless and does not decide which tenant owns it.
+
+```ts title="app/api/tenant-subdomain/route.ts"
+const label = "acme";
+const hostname = subdomains.toHostname(label); // acme.mydomain.com
+const normalizedLabel = subdomains.fromHostname(hostname);
+
+await database.tenants.update({
+  id: tenant.id,
+  subdomainLabel: normalizedLabel, // unique
+  hostname,
+});
+```
+
+Authorize the tenant, rate-limit changes, and route requests only after looking up the exact normalized hostname. Do not route an unknown hostname to a default tenant.
+
+## Fall back to individual hostnames
+
+If wildcard provisioning is unavailable, attach each tenant hostname separately. Configure the returned required DNS records in the parent zone you control, then wait for it to become active.
+
+```ts
+const domain = await subdomains.add("acme");
+// Apply domain.records in your authoritative DNS provider.
+const active = await subdomains.waitUntilActive("acme");
+```
+
+The SDK does not edit the parent DNS zone automatically. This keeps DNS credentials and destructive record ownership outside the normalized custom-domain lifecycle.
+
+Read next: [Tenant authorization and domain security](./tenant-security.mdx).
