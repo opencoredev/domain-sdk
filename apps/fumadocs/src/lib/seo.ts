@@ -20,9 +20,17 @@ export function absoluteUrl(path: string) {
   return new URL(path, siteConfig.url).toString();
 }
 
+const acronyms: Record<string, string> = {
+  api: "API",
+  dns: "DNS",
+  mdx: "MDX",
+  sdk: "SDK",
+  url: "URL",
+};
+
 export function pageNameFromSlug(slug: string) {
   return slug
     .split("-")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .map((word) => acronyms[word.toLowerCase()] ?? word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");
 }
