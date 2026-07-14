@@ -1,4 +1,4 @@
 {
   "title": "Components",
-  "pages": ["dns-records-table", "one-click-dns-setup"]
+  "pages": ["index", "dns-records-table", "one-click-dns-setup"]
 }
