@@ -22,8 +22,21 @@ const defaultClock = {
   },
 };
 
+function assertServerEnvironment(): void {
+  const isBrowser =
+    typeof window !== "undefined" ||
+    typeof document !== "undefined";
+
+  if (isBrowser) {
+    throw new Error(
+      "Domain SDK is server-side only. Initialize it in a server route, server action, or backend service.",
+    );
+  }
+}
+
 /** Create a stateless custom-domain client backed by one provider adapter. */
 export function createDomainClient(options: DomainClientOptions): DomainClient {
+  assertServerEnvironment();
   if (!options?.provider)
     throw new DomainSdkError("INVALID_CONFIGURATION", "A domain provider is required.");
   const { provider } = options;
