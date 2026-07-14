@@ -20,8 +20,10 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import { DomainLogo } from "@/components/domain-logo";
+import { JsonLd } from "@/components/json-ld";
 import { ProviderLogo } from "@/components/provider-logo";
 import { track } from "@/lib/analytics";
+import { absoluteUrl, siteConfig } from "@/lib/seo";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
 
@@ -37,6 +39,28 @@ const providerLoop = Array.from({ length: 4 }, () => providers).flat();
 
 const manifestoLead = "Add the hostname. Return the exact DNS.";
 const manifestoClose = "Track it until the domain is ready.";
+
+const softwareSchema = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareSourceCode",
+  "@id": absoluteUrl("/#software"),
+  name: siteConfig.name,
+  description: siteConfig.description,
+  url: absoluteUrl("/"),
+  codeRepository: siteConfig.githubUrl,
+  downloadUrl: siteConfig.npmUrl,
+  license: `${siteConfig.githubUrl}/blob/main/LICENSE`,
+  programmingLanguage: "TypeScript",
+  runtimePlatform: "Node.js 20+ or Bun",
+  author: { "@id": absoluteUrl("/#organization") },
+  keywords: [
+    "custom domains SDK",
+    "TypeScript domain API",
+    "SaaS custom domains",
+    "DNS verification",
+    "managed TLS certificates",
+  ],
+};
 
 function HeroArtwork() {
   return (
@@ -198,6 +222,7 @@ export default function HomePage() {
 
   return (
     <main ref={root} className="domain-home">
+      <JsonLd data={softwareSchema} />
       <nav className="home-nav" aria-label="Main navigation">
         <Link className="home-brand" href="/">
           <span className="brand-mark">
@@ -578,6 +603,7 @@ export default function HomePage() {
         </Link>
         <div>
           <Link href="/docs">Documentation</Link>
+          <Link href="/sitemap">Sitemap</Link>
           <Link href="/docs/project/contributing">Contributing</Link>
           <Link href="https://github.com/sponsors/opencoredev">Sponsor</Link>
         </div>

@@ -1,0 +1,32 @@
+---
+title: Custom domain implementation guides
+description: Build secure SaaS custom-domain workflows with practical TypeScript guides for setup, DNS, polling, persistence, testing, and troubleshooting.
+---
+
+These implementation guides show how to turn Domain SDK's provider-independent API into a complete custom-domain workflow for a multi-tenant SaaS application. Start with the settings-page guide, then follow the focused guide for the part of the lifecycle you are building.
+
+## Build the workflow
+
+<Cards>
+  <Card
+    title="Build a custom-domain settings page"
+    href="/docs/guides/custom-domain-settings-page"
+  />
+  <Card title="Add and remove customer domains" href="/docs/guides/add-remove-domains" />
+  <Card title="Display DNS records correctly" href="/docs/guides/display-dns-records" />
+  <Card title="Store domain state" href="/docs/guides/store-domain-state" />
+  <Card title="Poll until active" href="/docs/guides/poll-until-active" />
+</Cards>
+
+## Handle edge cases safely
+
+<Cards>
+  <Card title="Troubleshoot pending DNS" href="/docs/guides/troubleshoot-dns" />
+  <Card title="Troubleshoot certificate issuance" href="/docs/guides/troubleshoot-certificates" />
+  <Card title="Handle apex domains and subdomains" href="/docs/guides/apex-and-subdomains" />
+  <Card title="Give tenants managed subdomains" href="/docs/guides/managed-subdomains" />
+  <Card title="Secure tenant domain operations" href="/docs/guides/tenant-security" />
+  <Card title="Configure production credentials" href="/docs/guides/production-credentials" />
+  <Card title="Switch providers safely" href="/docs/guides/switch-providers" />
+  <Card title="Test without external API calls" href="/docs/guides/test-without-network" />
+</Cards>

@@ -1,6 +1,7 @@
 {
   "title": "Concepts",
   "pages": [
+    "index",
     "domain-lifecycle",
     "platform-providers",
     "dns-records",
