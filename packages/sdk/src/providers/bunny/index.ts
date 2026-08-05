@@ -274,12 +274,14 @@ export function bunny(options: BunnyOptions): BunnyProvider {
     },
     get,
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
-      // Match the whole cursor: Number.parseInt would read "1junk" as offset 1.
-      if (input.cursor !== undefined && !/^\d+$/.test(input.cursor))
+      // Match the whole cursor and keep it exact: Number.parseInt reads "1junk" as 1,
+      // and Number() rounds digit strings past the safe-integer range.
+      const cursor = input.cursor;
+      const offset = cursor === undefined ? 0 : Number(cursor);
+      if (cursor !== undefined && (!/^\d+$/.test(cursor) || !Number.isSafeInteger(offset)))
         throw new DomainSdkError("REQUEST_FAILED", "Invalid bunny.net list cursor.", {
           provider: "bunny",
         });
-      const offset = input.cursor ? Number(input.cursor) : 0;
       const zone = await getPullZone(context);
       const hostnames = customHostnames(zone);
       const page = hostnames.slice(offset, offset + input.limit);
