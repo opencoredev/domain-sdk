@@ -291,9 +291,11 @@ describe("bunny.net adapter", () => {
       }).get("app.customer.com"),
     ).rejects.toMatchObject({ code: "REQUEST_FAILED" });
 
-    await expect(client(setup()).list({ cursor: "nope" })).rejects.toMatchObject({
-      code: "REQUEST_FAILED",
-    });
+    for (const cursor of ["nope", "1junk", "-1", "1.5", ""]) {
+      await expect(client(setup()).list({ cursor })).rejects.toMatchObject({
+        code: "REQUEST_FAILED",
+      });
+    }
   });
 
   test("authenticates with the AccessKey header", async () => {
