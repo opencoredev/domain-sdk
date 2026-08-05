@@ -211,7 +211,7 @@ export function bunny(options: BunnyOptions): BunnyProvider {
         status: certified ? "verified" : "pending",
         records: [],
         message: certified
-          ? "bunny.net issued a certificate for this hostname, which confirms the routing record resolved."
+          ? "bunny.net issued a certificate for this hostname, which confirms the routing record resolved at issuance. bunny.net does not re-check the record afterwards, so this does not prove the hostname still resolves to the pull zone."
           : "bunny.net validates the hostname while issuing its certificate. Call verify() once the routing record resolves.",
       },
       certificate: {

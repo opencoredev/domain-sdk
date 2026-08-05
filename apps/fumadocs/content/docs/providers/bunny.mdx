@@ -38,6 +38,12 @@ await domains.verify("app.customer.com");
 
 `verify()` requests a free Let's Encrypt certificate over HTTP-01, which only succeeds once the routing record resolves to the pull zone. A failure comes back as a retryable `VERIFICATION_FAILED` error; when the certificate already exists the adapter skips the call so repeated verification cannot trip Let's Encrypt rate limits.
 
+### What `active` proves
+
+bunny.net reports whether a hostname has a certificate, not whether its DNS still resolves. Certificate issuance is the strongest evidence the API offers, so the adapter reports `active` once a certificate exists — but that evidence is from issuance time. If a customer later points the record elsewhere, bunny.net keeps reporting the certificate and the domain keeps reading as `active`.
+
+Treat `active` as "bunny.net accepted this hostname", not as a live reachability check. `domain.verification.message` states the same caveat. If your product needs to detect a customer breaking their DNS after setup, monitor the hostname itself; no bunny.net API field reports it.
+
 ## Validation and SSL options
 
 | Option               | Effect                                                                               |
