@@ -1,0 +1,58 @@
+---
+title: bunny.net custom domains
+description: Add, verify, monitor, and remove customer hostnames on a bunny.net CDN pull zone with a typed server-side TypeScript adapter.
+icon: bunny
+---
+
+## Scope and credentials
+
+The adapter manages the custom hostnames of one bunny.net CDN pull zone. Set `BUNNY_API_KEY` and `BUNNY_PULL_ZONE_ID`; the pull zone ID is the numeric ID shown in the bunny.net dashboard URL, not the pull zone name.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { bunny } from "@opencoredev/domain-sdk/bunny";
+
+export const domains = createDomainClient({
+  provider: bunny({
+    apiKey: process.env.BUNNY_API_KEY!,
+    pullZoneId: process.env.BUNNY_PULL_ZONE_ID!,
+  }),
+});
+
+const domain = await domains.add("app.customer.com");
+```
+
+bunny.net account API keys are account-wide, so they can reach every zone on the account. Keep the key in server-only configuration and restrict who can read it.
+
+## DNS and certificates
+
+Subdomains return a CNAME pointing at the pull zone's system hostname, normally `<zone>.b-cdn.net`. The adapter reads that target from the pull zone rather than assuming it, so a renamed zone still produces correct instructions.
+
+Apex domains return an ALIAS to the same target. bunny.net publishes no fixed A record for pull zones, so the customer's DNS host must support ALIAS, ANAME, or CNAME flattening — Bunny DNS does, as do Cloudflare and Route 53.
+
+Adding a hostname does not issue a certificate. bunny.net validates the hostname while issuing one, so the domain stays `pending_dns` until you call `verify()`:
+
+```ts title="verify.ts"
+await domains.verify("app.customer.com");
+```
+
+`verify()` requests a free Let's Encrypt certificate over HTTP-01, which only succeeds once the routing record resolves to the pull zone. A failure comes back as a retryable `VERIFICATION_FAILED` error; when the certificate already exists the adapter skips the call so repeated verification cannot trip Let's Encrypt rate limits.
+
+## Validation and SSL options
+
+| Option               | Effect                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------ |
+| `allowDnsValidation` | Permits DNS-01 validation when a Bunny DNS zone exists for the hostname              |
+| `forceSsl`           | Redirects HTTP to HTTPS for the hostname after `verify()` has issued its certificate |
+
+Wildcard hostnames such as `*.customer.com` can only be validated over DNS-01, so the adapter always uses it for them and they require the domain to be hosted on Bunny DNS.
+
+`forceSsl` is applied during `verify()` rather than `add()`, because forcing HTTPS before a certificate exists would break the hostname.
+
+## Pull zone limits
+
+The pull zone's own `.b-cdn.net` system hostname is excluded from `get()`, `list()`, and `remove()`, so customer domains never collide with it. bunny.net updates hostnames one request at a time and the adapter re-reads the pull zone after each mutation, so serialize domain changes for the same pull zone.
+
+Official references: [bunny.net API](https://bunny.net/docs/api-reference/core/pull-zone/get-pull-zone), [add hostname](https://bunny.net/docs/reference/pullzonepublic_addhostname), and [SSL for custom domains](https://docs.bunny.net/cdn/ssl-setup).
+
+Read next: [Store domain state](../guides/store-domain-state.mdx).

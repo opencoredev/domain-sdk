@@ -1,6 +1,6 @@
 ---
 title: Custom domain provider comparison
-description: Compare custom domain support across Vercel, Cloudflare for SaaS, Railway, Render, and Netlify before choosing a TypeScript adapter.
+description: Compare custom domain support across Vercel, Cloudflare for SaaS, Railway, Render, Netlify, and bunny.net before choosing a TypeScript adapter.
 ---
 
 Choose the provider where your application already serves traffic. Domain SDK normalizes the lifecycle, but credentials, resource scope, DNS requirements, and platform limits remain provider-specific.
@@ -11,24 +11,25 @@ Choose the provider where your application already serves traffic. Domain SDK no
   <Card title="Railway" href="/docs/providers/railway" />
   <Card title="Render" href="/docs/providers/render" />
   <Card title="Netlify" href="/docs/providers/netlify" />
+  <Card title="bunny.net" href="/docs/providers/bunny" />
 </Cards>
 
 ## Compatibility
 
-| Capability             | Vercel | Cloudflare SaaS | Railway |      Render      | Netlify |
-| ---------------------- | :----: | :-------------: | :-----: | :--------------: | :-----: |
-| Add domain             |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
-| Get status             |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
-| List domains           |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
-| Explicit verification  |   ✓    |        —        |    —    |        ✓         |    —    |
-| Remove domain          |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
-| Managed certificates   |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
-| Apex domains           |   ✓    |        —        |    ✓    |        ✓         |    ✓    |
-| Wildcard domains       |   —    |        —        |    —    |        ✓         |    —    |
-| Ownership records      |   ✓    |        ✓        |    ✓    | wildcard domains |    —    |
-| Routing records        |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |
-| Automatic customer DNS |   —    |        —        |    —    |        —         |    —    |
+| Capability             | Vercel | Cloudflare SaaS | Railway |      Render      | Netlify | bunny.net |
+| ---------------------- | :----: | :-------------: | :-----: | :--------------: | :-----: | :-------: |
+| Add domain             |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |     ✓     |
+| Get status             |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |     ✓     |
+| List domains           |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |     ✓     |
+| Explicit verification  |   ✓    |        —        |    —    |        ✓         |    —    |     ✓     |
+| Remove domain          |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |     ✓     |
+| Managed certificates   |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |     ✓     |
+| Apex domains           |   ✓    |        —        |    ✓    |        ✓         |    ✓    |     ✓     |
+| Wildcard domains       |   —    |        —        |    —    |        ✓         |    —    |     ✓     |
+| Ownership records      |   ✓    |        ✓        |    ✓    | wildcard domains |    —    |     —     |
+| Routing records        |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |     ✓     |
+| Automatic customer DNS |   —    |        —        |    —    |        —         |    —    |     —     |
 
-Cloudflare for SaaS requires a CNAME target, so the current adapter does not claim apex support. Render is the only adapter that accepts wildcard hostnames. Netlify manages aliases without replacing the site's primary domain. No adapter edits customer DNS automatically.
+Cloudflare for SaaS requires a CNAME target, so the current adapter does not claim apex support. Render and bunny.net are the adapters that accept wildcard hostnames, and bunny.net wildcards require the domain to be hosted on Bunny DNS. Netlify manages aliases without replacing the site's primary domain. bunny.net is the CDN option rather than an application host: it fronts an origin you already run. No adapter edits customer DNS automatically.
 
 Provider credentials belong to your SaaS account, never to the customer. The memory adapter is available separately for [testing](./testing.mdx), not as a production provider.

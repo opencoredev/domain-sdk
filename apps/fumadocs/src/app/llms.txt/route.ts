@@ -10,7 +10,7 @@ export function GET() {
     .replace(/^# Domain SDK\s*/, "");
   const content = `# Domain SDK
 
-> Add, verify, monitor, and remove customer domains across Vercel, Cloudflare for SaaS, Railway, Render, and Netlify with one server-side TypeScript API.
+> Add, verify, monitor, and remove customer domains across Vercel, Cloudflare for SaaS, Railway, Render, Netlify, and bunny.net with one server-side TypeScript API.
 
 ## Agent resources
 
@@ -25,7 +25,7 @@ export function GET() {
 - License: MIT
 - Runtime: Server-side Node.js 20+ or Bun
 - Language: TypeScript
-- Providers: Vercel, Cloudflare for SaaS, Railway, Render, and Netlify
+- Providers: Vercel, Cloudflare for SaaS, Railway, Render, Netlify, and bunny.net
 - Cost: The open-source SDK is free; infrastructure provider charges are separate.
 - Scope: Domain SDK manages domain lifecycle calls and normalized DNS instructions. It does not register domains, host DNS, proxy traffic, or store tenant data.
 

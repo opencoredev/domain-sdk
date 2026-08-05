@@ -43,6 +43,7 @@ Store the normalized label and hostname with the tenant in your own database. Co
 Switch providers by changing the adapter:
 
 ```ts
+import { bunny } from "@opencoredev/domain-sdk/bunny";
 import { cloudflareSaaS } from "@opencoredev/domain-sdk/cloudflare";
 import { netlify } from "@opencoredev/domain-sdk/netlify";
 import { railway } from "@opencoredev/domain-sdk/railway";
@@ -69,6 +70,11 @@ const renderProvider = render({
 const netlifyProvider = netlify({
   accessToken: process.env.NETLIFY_ACCESS_TOKEN!,
   siteId: process.env.NETLIFY_SITE_ID!,
+});
+
+const bunnyProvider = bunny({
+  apiKey: process.env.BUNNY_API_KEY!,
+  pullZoneId: process.env.BUNNY_PULL_ZONE_ID!,
 });
 ```
 

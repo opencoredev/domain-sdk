@@ -9,6 +9,7 @@ describe("published package exports", () => {
     expect(await import("@opencoredev/domain-sdk/railway")).toHaveProperty("railway");
     expect(await import("@opencoredev/domain-sdk/render")).toHaveProperty("render");
     expect(await import("@opencoredev/domain-sdk/netlify")).toHaveProperty("netlify");
+    expect(await import("@opencoredev/domain-sdk/bunny")).toHaveProperty("bunny");
     expect(await import("@opencoredev/domain-sdk/testing")).toHaveProperty("memoryProvider");
   });
 });

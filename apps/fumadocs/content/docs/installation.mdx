@@ -1,6 +1,6 @@
 ---
 title: Install Domain SDK for TypeScript
-description: Install the server-side TypeScript SDK and start managing SaaS customer domains with Vercel, Cloudflare, Railway, Render, or Netlify.
+description: Install the server-side TypeScript SDK and start managing SaaS customer domains with Vercel, Cloudflare, Railway, Render, Netlify, or bunny.net.
 ---
 
 ## 1. Install the package
@@ -47,13 +47,18 @@ Use the platform that currently receives traffic for your application. Each adap
     description="Domain aliases on one existing site"
     href="/docs/providers/netlify"
   />
+  <Card
+    title="bunny.net"
+    description="Custom hostnames on one CDN pull zone"
+    href="/docs/providers/bunny"
+  />
 </Cards>
 
 ## 3. Create the client
 
 Put the client in a server-only module. Pick the tab that matches your provider; its provider page lists the required credentials and platform-specific behavior.
 
-<Tabs items={["Vercel", "Cloudflare", "Railway", "Render", "Netlify"]}>
+<Tabs items={["Vercel", "Cloudflare", "Railway", "Render", "Netlify", "bunny.net"]}>
   <Tab value="Vercel">
     ```ts title="src/server/domains.ts"
     import { createDomainClient } from "@opencoredev/domain-sdk";
@@ -122,6 +127,20 @@ Put the client in a server-only module. Pick the tab that matches your provider;
       provider: netlify({
         accessToken: process.env.NETLIFY_ACCESS_TOKEN!,
         siteId: process.env.NETLIFY_SITE_ID!,
+      }),
+    });
+    ```
+
+  </Tab>
+  <Tab value="bunny.net">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { bunny } from "@opencoredev/domain-sdk/bunny";
+
+    export const domains = createDomainClient({
+      provider: bunny({
+        apiKey: process.env.BUNNY_API_KEY!,
+        pullZoneId: process.env.BUNNY_PULL_ZONE_ID!,
       }),
     });
     ```

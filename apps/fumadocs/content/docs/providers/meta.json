@@ -1,5 +1,5 @@
 {
   "title": "Providers",
   "defaultOpen": true,
-  "pages": ["index", "vercel", "cloudflare", "railway", "render", "netlify", "testing"]
+  "pages": ["index", "vercel", "cloudflare", "railway", "render", "netlify", "bunny", "testing"]
 }
