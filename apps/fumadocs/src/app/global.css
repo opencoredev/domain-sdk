@@ -117,7 +117,7 @@ html > body[data-scroll-locked] {
 .home-nav {
   position: absolute;
   z-index: 20;
-  top: 0;
+  top: var(--fd-banner-height, 0px);
   left: 50%;
   display: grid;
   grid-template-columns: 1fr auto auto;
@@ -1301,7 +1301,6 @@ html > body[data-scroll-locked] {
 
 @media (max-width: 560px) {
   .home-nav {
-    top: 0;
     min-height: 78px;
     padding: 0;
   }

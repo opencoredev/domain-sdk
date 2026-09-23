@@ -11,6 +11,8 @@ export type AnalyticsEvent =
   | "install_command_copied"
   | "provider_link_clicked"
   | "outbound_link_clicked"
+  | "cross_promo_clicked"
+  | "cross_promo_dismissed"
   | "home_section_viewed"
   | "docs_search_opened"
   | "docs_search_queried"
