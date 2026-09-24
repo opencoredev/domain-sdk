@@ -14,8 +14,8 @@ export function GET() {
 
 ## Agent resources
 
-- [Complete documentation](https://domain-sdk.dev/llms-full.txt): All documentation in one file.
-- [Human-readable sitemap](https://domain-sdk.dev/sitemap): Every canonical documentation page grouped by topic.
+- [Complete documentation](https://www.domain-sdk.dev/llms-full.txt): All documentation in one file.
+- [Human-readable sitemap](https://www.domain-sdk.dev/sitemap): Every canonical documentation page grouped by topic.
 - [Install the Domain SDK skill](https://github.com/opencoredev/domain-sdk/tree/main/skills/domain-sdk): \`npx skills add opencoredev/domain-sdk --skill domain-sdk\`
 - [Source code](https://github.com/opencoredev/domain-sdk): Package source, providers, tests, and examples.
 

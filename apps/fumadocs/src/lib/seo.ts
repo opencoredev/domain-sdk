@@ -1,6 +1,6 @@
 export const siteConfig = {
   name: "Domain SDK",
-  url: "https://domain-sdk.dev",
+  url: "https://www.domain-sdk.dev",
   title: "Custom Domains SDK for TypeScript | Domain SDK",
   description:
     "Open-source TypeScript SDK for adding, verifying, and monitoring customer domains across Vercel, Cloudflare, Railway, Render, Netlify, and bunny.net.",
