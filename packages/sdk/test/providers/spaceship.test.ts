@@ -295,6 +295,34 @@ describe("spaceship DNS", () => {
     expect(fake.calls[0]?.url).toBe("https://spaceship.dev/api/v1/domains/example.com");
   });
 
+  test("treats every API name as relative to the zone", async () => {
+    const fake = fakeApi([
+      { type: "TXT", name: "example.com", value: "child", ttl: 300, group: { type: "custom" } },
+      { type: "TXT", name: "@", value: "apex", ttl: 300, group: { type: "custom" } },
+    ]);
+    const records = await fake.provider.listRecords({ zone: "example.com" }, context);
+    expect(records.map((record) => record.name)).toEqual([
+      "example.com.example.com",
+      "example.com",
+    ]);
+  });
+
+  test("reads a full page of maximum-length values", async () => {
+    const items = Array.from({ length: 100 }, (_, index) => ({
+      type: "TXT",
+      name: `r${index}`,
+      value: "x".repeat(65_535),
+      ttl: 300,
+      group: { type: "custom" },
+    }));
+    const mock = mockFetch(() => json({ items, total: 100 }));
+    const records = await spaceship({ ...credentials, fetch: mock.fetch }).listRecords(
+      { zone: "example.com" },
+      context,
+    );
+    expect(records).toHaveLength(100);
+  });
+
   test("honors a base URL, default TTL, and empty writes", async () => {
     const mock = mockFetch(() => new Response(null, { status: 204 }));
     const provider = spaceship({

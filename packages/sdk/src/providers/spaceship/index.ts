@@ -1,5 +1,4 @@
 import {
-  absoluteRecordName,
   formatCaaValue,
   parseCaaValue,
   relativeRecordName,
@@ -61,6 +60,15 @@ function recordFields(record: SpaceshipRecord): Record<string, unknown> {
   return fields;
 }
 
+// A full page holds 100 records whose values may reach 65,535 characters each.
+const MAX_RESPONSE_LENGTH = 8_000_000;
+
+/** Spaceship names are always zone-relative, so `example.com` in `example.com` is a child label. */
+function absoluteName(name: string, zone: string): string {
+  const clean = name.trim().toLowerCase().replace(/\.$/, "");
+  return !clean || clean === "@" ? zone : `${clean}.${zone}`;
+}
+
 function recordName(record: SpaceshipRecord, zone: string): string {
   let prefix: unknown[] = [];
   switch (record.type.toUpperCase()) {
@@ -77,7 +85,7 @@ function recordName(record: SpaceshipRecord, zone: string): string {
   }
   return [
     ...prefix.filter((part) => typeof part === "string" && part),
-    absoluteRecordName(record.name, zone),
+    absoluteName(record.name, zone),
   ]
     .join(".")
     .toLowerCase();
@@ -152,7 +160,7 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
     }
     let body: unknown;
     try {
-      body = await readJson(response, 1_000_000);
+      body = await readJson(response, MAX_RESPONSE_LENGTH);
     } catch (error) {
       if (context.signal?.aborted || (error instanceof Error && error.name === "AbortError"))
         throw new DomainSdkError("ABORTED", "The Spaceship request was cancelled.", {
