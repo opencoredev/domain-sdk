@@ -1,0 +1,62 @@
+---
+title: Porkbun DNS
+description: Write hosting and verification records to a Porkbun DNS zone with the server-side Domain SDK.
+---
+
+## Credentials and scope
+
+Create an API key and secret API key in Porkbun's account API settings. Enable **API Access** for each domain you want to manage. Store both keys in server-only configuration as `PORKBUN_API_KEY` and `PORKBUN_SECRET_API_KEY`.
+
+The adapter writes DNS records, not hosting-provider domains or certificates. A Porkbun DNS zone must already exist for the domain. Writes to a zone delegated to another DNS host do not change public DNS.
+
+## Apply a hosting provider's records
+
+Use a hosting provider to add the domain, then pass its result to `applyDomainRecords()`. This example uses Vercel:
+
+```ts title="domains.ts"
+import { createDnsClient, createDomainClient } from "@opencoredev/domain-sdk";
+import { porkbun } from "@opencoredev/domain-sdk/porkbun";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+  }),
+});
+const dns = createDnsClient({
+  provider: porkbun({
+    apiKey: process.env.PORKBUN_API_KEY!,
+    secretApiKey: process.env.PORKBUN_SECRET_API_KEY!,
+  }),
+});
+
+const zone = await dns.getZone("customer.com");
+if (!zone.authoritative) {
+  throw new Error("Delegate customer.com to Porkbun before applying records.");
+}
+const domain = await domains.add("app.customer.com");
+await dns.applyDomainRecords(domain, { zone: "customer.com" });
+```
+
+`applyDomainRecords()` writes required records by default and leaves unrelated records alone. Repeating the call does not create records already present. Conflicting routing records produce `DOMAIN_CONFLICT`; pass `onConflict: "replace"` only when you intend to delete those conflicting records. Use `includeOptional: true` to include optional records returned by the hosting provider.
+
+Inspect `await dns.listRecords("customer.com")` to check the saved records. DNS propagation takes time; use the hosting provider's verification flow afterward to check routing and certificate readiness.
+
+## Supported records and limits
+
+The adapter creates A, AAAA, CNAME, ALIAS, TXT, and CAA records. It does not create ANAME records. Apex names and wildcards are supported. CAA values use presentation format, such as `0 issue "letsencrypt.org"`.
+
+The default TTL is 600 seconds. Set `ttl` on the adapter to change the default, or set it on an individual input record. The adapter accepts TTLs from 600 to 86400 seconds. Porkbun's usual minimum is 600 seconds, but account settings can impose a different minimum.
+
+Record retrieval uses one request, not pagination. The adapter returns every record the API includes, even types it does not create, and deletes only selected record IDs. Porkbun's retrieve endpoint excludes SOA and default Porkbun NS records. If an apex NS record pointing at a Porkbun nameserver is returned, the adapter marks it non-editable.
+
+The nameserver check uses `/domain/getNameServers/{domain}` and considers the zone authoritative only when every returned nameserver ends in `.porkbun.com`. It reports delegation, not an independent public DNS lookup.
+
+## Errors and testing
+
+Invalid keys produce `AUTHENTICATION_FAILED`. Missing domain API access or insufficient permissions produce `PERMISSION_DENIED` with guidance to enable API Access. A missing domain produces `DOMAIN_NOT_FOUND`. Rate limits and service outages are retryable; `retryAfter` is exposed when Porkbun supplies a `Retry-After` header.
+
+Each create request carries a fresh `Idempotency-Key`. A `DUPLICATE_RECORD` response with HTTP 400 is accepted as a successful create. The adapter does not automatically retry requests.
+
+Sandbox API keys beginning with `pk1_sb_` use the same endpoint. For tests, pass a custom `fetch` implementation or override `baseUrl`. Do not send production credentials to an untrusted endpoint.
