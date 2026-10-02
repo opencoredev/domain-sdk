@@ -25,7 +25,7 @@ describe("DNS record helpers", () => {
         { type: "txt", name: "a.example.com", value: '"Token"' },
         { type: "TXT", name: "a.example.com", value: "Token" },
       ),
-    ).toBe(true);
+    ).toBe(false);
     expect(
       sameRecord(
         { type: "TXT", name: "a.example.com", value: "token" },
@@ -81,6 +81,48 @@ describe("createDnsClient", () => {
     const written = await dns.applyDomainRecords(domain);
     const required = [...domain.records, ...domain.verification.records].filter((r) => r.required);
     expect(written).toHaveLength(required.length);
+  });
+
+  test("replace keeps existing records that are part of the request", async () => {
+    const provider = memoryDnsProvider({
+      zones: { "example.com": [{ type: "A", name: "example.com", value: "192.0.2.1" }] },
+    });
+    const dns = createDnsClient({ provider });
+    const written = await dns.ensureRecords(
+      [
+        { type: "A", name: "example.com", value: "192.0.2.1" },
+        { type: "A", name: "example.com", value: "192.0.2.2" },
+      ],
+      { onConflict: "replace" },
+    );
+    expect(written.map((record) => record.value).sort()).toEqual(["192.0.2.1", "192.0.2.2"]);
+    expect(provider.records("example.com")).toHaveLength(2);
+  });
+
+  test("rejects a self-contradicting request before touching the zone", async () => {
+    const provider = memoryDnsProvider({
+      zones: { "example.com": [{ type: "A", name: "app.example.com", value: "192.0.2.1" }] },
+    });
+    const dns = createDnsClient({ provider });
+    await expect(
+      dns.ensureRecords(
+        [
+          { type: "CNAME", name: "app.example.com", value: "cname.vercel-dns.com" },
+          { type: "TXT", name: "app.example.com", value: "token" },
+        ],
+        { onConflict: "replace" },
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_CONFIGURATION" });
+    expect(provider.records("example.com")).toHaveLength(1);
+  });
+
+  test("keeps TXT quotes and spacing as data", async () => {
+    const provider = memoryDnsProvider({
+      zones: { "example.com": [{ type: "TXT", name: "example.com", value: '"token"' }] },
+    });
+    const dns = createDnsClient({ provider });
+    await dns.removeRecords([{ type: "TXT", name: "example.com", value: "token" }]);
+    expect(provider.records("example.com")).toHaveLength(1);
   });
 
   test("reports zone delegation", async () => {

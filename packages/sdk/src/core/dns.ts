@@ -195,8 +195,9 @@ export function formatCaaValue(flag: number, tag: string, value: string): string
 /** Canonical form of a record value for comparison. */
 export function canonicalRecordValue(type: string, value: string): string {
   const upper = type.toUpperCase();
+  // TXT values are raw text on every supported host; quotes and spacing are part of the data.
+  if (upper === "TXT") return value;
   const trimmed = value.trim();
-  if (upper === "TXT") return trimmed.replace(/^"(.*)"$/s, "$1");
   if (upper === "CAA") {
     const caa = parseCaaValue(trimmed);
     return formatCaaValue(caa.flag, caa.tag, caa.value);
@@ -220,6 +221,13 @@ export function sameRecord(
   } catch {
     return false;
   }
+}
+
+/** Whether two requested records can never coexist, such as a CNAME beside any other type. */
+function incompatible(a: DnsRecordInput, b: DnsRecordInput): boolean {
+  if (a.name !== b.name || sameRecord(a, b)) return false;
+  if (a.type === "CNAME" || b.type === "CNAME") return true;
+  return SINGLETON_TYPES.has(a.type) && SINGLETON_TYPES.has(b.type);
 }
 
 function conflictsWith(existing: ZoneRecord, wanted: DnsRecordInput): boolean {
@@ -298,7 +306,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       const next: DnsRecordInput = {
         type,
         name: normalizeRecordName(record.name, zone),
-        value: type === "CAA" ? canonicalRecordValue(type, record.value) : record.value.trim(),
+        value:
+          type === "CAA"
+            ? canonicalRecordValue(type, record.value)
+            : type === "TXT"
+              ? record.value
+              : record.value.trim(),
         ttl: record.ttl,
       };
       if (!normalized.some((existing) => sameRecord(existing, next))) normalized.push(next);
@@ -311,11 +324,23 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     return run("ensureRecords", zone, async () => {
       const wanted = normalizeRecords(records, zone);
       if (!wanted.length) return [];
+      // Reject a self-contradicting request before anything in the zone is touched.
+      for (const [index, record] of wanted.entries()) {
+        const clash = wanted.slice(index + 1).find((other) => incompatible(record, other));
+        if (clash)
+          throw new DomainSdkError(
+            "INVALID_CONFIGURATION",
+            `${record.type} and ${clash.type} records cannot share the name ${record.name}.`,
+            { provider: provider.id, details: { name: record.name } },
+          );
+      }
       const ctx = context(ensure.signal);
       const existing = await provider.listRecords({ zone }, ctx);
+      const isWanted = (item: ZoneRecord) => wanted.some((record) => sameRecord(item, record));
       const missing = wanted.filter((record) => !existing.some((item) => sameRecord(item, record)));
-      const conflicts = existing.filter((item) =>
-        missing.some((record) => conflictsWith(item, record)),
+      // Records that are already part of the requested set are never conflicts.
+      const conflicts = existing.filter(
+        (item) => !isWanted(item) && missing.some((record) => conflictsWith(item, record)),
       );
       if (conflicts.length) {
         const locked = conflicts.filter((item) => !item.editable);
