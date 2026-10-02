@@ -228,6 +228,15 @@ describe("namecheap DNS adapter", () => {
     expect(await provider.listRecords({ zone: "example.com" }, context)).toEqual(records);
   });
 
+  test("deletes one of several identical hosts that lack host ids", async () => {
+    const twin = { HostId: "", Name: "@", Type: "TXT", Address: "token", TTL: "1800" };
+    const api = fake([twin, { ...twin }]);
+    const provider = namecheap({ ...credentials, fetch: api.fetch });
+    const [first] = await provider.listRecords({ zone: "example.com" }, context);
+    await provider.deleteRecords({ zone: "example.com", records: [first!] }, context);
+    expect(await provider.listRecords({ zone: "example.com" }, context)).toHaveLength(1);
+  });
+
   test("verifies additions and preserved records after writing", async () => {
     for (const settings of [{ ignoreWrites: true }, { corruptPreserved: true }]) {
       const api = fake(

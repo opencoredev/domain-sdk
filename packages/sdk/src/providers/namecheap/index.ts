@@ -331,23 +331,28 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
     },
     deleteRecords({ zone, records }, context) {
       if (!records.length) return Promise.resolve();
-      return write(zone, context, (hosts) =>
-        hosts.filter(
-          (host) =>
-            !records.some((record) => {
-              const current = zoneRecord(host, zone);
-              return (
-                record.id === current.id &&
-                record.type === current.type &&
-                record.name === current.name &&
-                record.value === current.value &&
-                record.ttl === current.ttl &&
-                record.priority === current.priority
-              );
-            }),
-        ),
-      );
+      return write(zone, context, (hosts) => {
+        // Consume matches one-for-one so one requested deletion removes at most one host,
+        // even when identical hosts share a missing HostId.
+        const pending = [...records];
+        return hosts.filter((host) => {
+          const current = zoneRecord(host, zone);
+          const index = pending.findIndex(
+            (record) =>
+              record.id === current.id &&
+              record.type === current.type &&
+              record.name === current.name &&
+              record.value === current.value &&
+              record.ttl === current.ttl &&
+              record.priority === current.priority,
+          );
+          if (index === -1) return true;
+          pending.splice(index, 1);
+          return false;
+        });
+      });
     },
+
     async getZone({ zone }, context) {
       const payload = result(await request(zone, "getList", context), "DomainDNSGetListResult");
       if (!["true", "false"].includes(payload.attributes.IsUsingOurDNS ?? "")) malformed();
