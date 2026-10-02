@@ -1,0 +1,60 @@
+---
+title: Spaceship DNS
+description: Write routing and verification records in Spaceship DNS with the Domain SDK.
+---
+
+## Credentials and scope
+
+Create an API key and secret in your Spaceship account's API Manager. Enable the **DNS Records** permission to list, save, and delete records. Enable **Domain Management** if you use `getZone()` to inspect nameserver delegation. Keep both credentials in server-only configuration.
+
+The adapter manages DNS records, not hosting domains or certificates. The domain must already exist in your Spaceship account. Records saved to Spaceship only resolve publicly when the domain uses Spaceship's basic nameservers.
+
+## Apply a hosting domain's records
+
+Use your hosting adapter to add a domain, then pass the returned `Domain` to `applyDomainRecords()`. This example connects Vercel routing and verification records to a Spaceship zone:
+
+```ts title="domains.ts"
+import { createDnsClient, createDomainClient } from "@opencoredev/domain-sdk";
+import { spaceship } from "@opencoredev/domain-sdk/spaceship";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+  }),
+});
+const dns = createDnsClient({
+  provider: spaceship({
+    apiKey: process.env.SPACESHIP_API_KEY!,
+    apiSecret: process.env.SPACESHIP_API_SECRET!,
+  }),
+});
+
+const zone = await dns.getZone("example.com");
+if (!zone.authoritative) {
+  throw new Error("Delegate example.com to Spaceship before applying records.");
+}
+
+const domain = await domains.add("app.example.com");
+await dns.applyDomainRecords(domain, { zone: "example.com" });
+await domains.verify(domain.hostname);
+```
+
+`applyDomainRecords()` writes required records by default and leaves unrelated records alone. Repeating it does not duplicate matching records. DNS propagation can take time, so retry hosting verification after the records become visible if the first attempt does not succeed.
+
+Conflicting records raise `DOMAIN_CONFLICT`. Pass `onConflict: "replace"` only when your application intends to remove conflicting custom records. Records managed by Spaceship products or personal nameservers are never replaced or removed by the DNS client.
+
+## Options and limits
+
+The adapter writes A, AAAA, CNAME, ALIAS, TXT, and CAA records. It lists every record type, including MX and NS, and reports their editability. CAA values use presentation format such as `0 issue "letsencrypt.org"`. Records have no API IDs.
+
+TTL values must be integers between 60 and 3600 seconds. The default is 3600; set the adapter's `ttl` option to change that default, or supply a TTL on an individual record. The `fetch` and `baseUrl` options allow a custom transport or API endpoint.
+
+Lists are fetched in pages of 100 records. Saves merge only the supplied records with `force: false`, and deletes send only the selected record identities. Spaceship accepts at most 500 records in a save or delete request; keep individual mutations within that limit. These are not whole-zone replacements, but concurrent edits can still conflict.
+
+`getZone()` uses the domain-details endpoint, which allows only five calls per domain per five minutes. Avoid calling it on every record operation. It reports `authoritative: true` when Spaceship identifies the nameserver provider as `basic`, rather than performing a live DNS lookup.
+
+HTTP 429 errors report `RATE_LIMITED`, are retryable, and include `retryAfter` when Spaceship sends a `Retry-After` header. Network and server failures are retryable `PROVIDER_UNAVAILABLE` errors. The adapter maps a save rejected with HTTP 422 to `DOMAIN_CONFLICT`; other HTTP 422 responses map to `INVALID_CONFIGURATION`.
+
+Official reference: [Spaceship API documentation](https://docs.spaceship.dev/).
