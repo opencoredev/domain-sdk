@@ -51,7 +51,7 @@ The default TTL is 600 seconds. Set `ttl` on the adapter to change the default, 
 
 Record retrieval uses one request, not pagination. The adapter returns every record the API includes, even types it does not create, and deletes only selected record IDs. Porkbun's retrieve endpoint excludes SOA and default Porkbun NS records. If an apex NS record pointing at a Porkbun nameserver is returned, the adapter marks it non-editable.
 
-The nameserver check uses `/domain/getNameServers/{domain}` and considers the zone authoritative only when every returned nameserver ends in `.porkbun.com`. It reports delegation, not an independent public DNS lookup.
+The nameserver check uses `/domain/getNs/{domain}` and considers the zone authoritative only when every returned nameserver ends in `.porkbun.com`. It reports delegation, not an independent public DNS lookup.
 
 ## Errors and testing
 

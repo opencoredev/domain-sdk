@@ -201,7 +201,7 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
         );
     },
     async getZone({ zone }, context) {
-      const body = await request(`/domain/getNameServers/${encodeURIComponent(zone)}`, context);
+      const body = await request(`/domain/getNs/${encodeURIComponent(zone)}`, context);
       if (!Array.isArray(body.ns) || body.ns.some((name) => typeof name !== "string"))
         throw malformedResponse();
       const nameservers = body.ns.map(normalizeNameserver);

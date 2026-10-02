@@ -27,7 +27,7 @@ function fakeApi(initial: FakeRecord[] = []) {
     expect(body.secretapikey).toBe(credentials.secretApiKey);
     const path = url.pathname.replace("/api/json/v3", "");
     if (path === "/dns/retrieve/example.com") return json({ status: "SUCCESS", records });
-    if (path === "/domain/getNameServers/example.com")
+    if (path === "/domain/getNs/example.com")
       return json({ status: "SUCCESS", ns: ["Curitiba.NS.Porkbun.com.", "maceio.ns.porkbun.com"] });
     if (path === "/dns/create/example.com") {
       const name = body.name ? `${body.name}.example.com` : "example.com";
@@ -201,7 +201,7 @@ describe("porkbun DNS", () => {
       nameservers: ["curitiba.ns.porkbun.com", "maceio.ns.porkbun.com"],
     });
     expect(api.calls[0]?.url).toBe(
-      "https://api.porkbun.com/api/json/v3/domain/getNameServers/example.com",
+      "https://api.porkbun.com/api/json/v3/domain/getNs/example.com",
     );
     for (const ns of [
       [],
