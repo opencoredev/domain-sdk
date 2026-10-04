@@ -386,13 +386,20 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               { provider: provider.id, details: { name: record.name } },
             );
         }
-        // Optional records are often alternatives, so keep only those that fit the required set.
-        for (const record of normalizeRecords(optional, zone))
-          if (!wanted.some((other) => sameRecord(other, record) || incompatible(other, record)))
-            wanted.push(record);
-        if (!wanted.length) return [];
+        const alternatives = normalizeRecords(optional, zone);
+        if (!wanted.length && !alternatives.length) return [];
         const ctx = context(options.signal);
         const existing = await provider.listRecords({ zone }, ctx);
+        // Optional records are often alternatives. Prefer ones already in the zone, then keep only
+        // those that fit the records chosen so far.
+        const present = (record: DnsRecordInput) =>
+          existing.some((item) => sameRecord(item, record));
+        for (const record of [
+          ...alternatives.filter(present),
+          ...alternatives.filter((record) => !present(record)),
+        ])
+          if (!wanted.some((other) => sameRecord(other, record) || incompatible(other, record)))
+            wanted.push(record);
         const isWanted = (item: ZoneRecord) => wanted.some((record) => sameRecord(item, record));
         const missing = wanted.filter(
           (record) => !existing.some((item) => sameRecord(item, record)),
@@ -420,16 +427,13 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 },
               },
             );
-          await provider.deleteRecords({ zone, records: conflicts }, ctx);
-        }
-        if (missing.length) {
           try {
-            await provider.createRecords({ zone, records: missing }, ctx);
+            await provider.deleteRecords({ zone, records: conflicts }, ctx);
+            if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
           } catch (error) {
-            if (conflicts.length) await restore(zone, conflicts, error);
-            throw error;
+            return restore(zone, conflicts, missing, error);
           }
-        }
+        } else if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
         const after =
           missing.length || conflicts.length ? await provider.listRecords({ zone }, ctx) : existing;
         return after.filter((item) => wanted.some((record) => sameRecord(item, record)));
@@ -437,24 +441,43 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     );
   };
 
-  /** Put back records a failed replacement deleted, then report the original failure. */
-  const restore = async (zone: string, deleted: ZoneRecord[], error: unknown): Promise<never> => {
+  /**
+   * Roll back a failed replacement, then report the original failure. Deletes and creates may
+   * have partly succeeded, so the zone is read again: requested records that now exist are
+   * removed, and replaced records that are gone are created again.
+   */
+  const restore = async (
+    zone: string,
+    replaced: ZoneRecord[],
+    requested: DnsRecordInput[],
+    error: unknown,
+  ): Promise<never> => {
     const cause = normalizeUnknownError(error, provider.id);
-    const records = deleted
-      .filter((item) => provider.capabilities.recordTypes.includes(item.type as DnsRecordType))
-      .map(({ type, name, value, ttl }) => ({ type: type as DnsRecordType, name, value, ttl }));
-    let restored = records.length === deleted.length;
+    // Roll back even when the caller's signal aborted the replacement.
+    const ctx: DnsProviderContext = { logger };
+    let restored = false;
     try {
-      // Restore even when the caller's signal aborted the replacement.
-      if (records.length) await provider.createRecords({ zone, records }, { logger });
+      const current = await provider.listRecords({ zone }, ctx);
+      const created = current.filter(
+        (item) => item.editable && requested.some((record) => sameRecord(item, record)),
+      );
+      if (created.length) await provider.deleteRecords({ zone, records: created }, ctx);
+      const gone = replaced
+        .map(({ type, name, value, ttl }) => ({ type: type as DnsRecordType, name, value, ttl }))
+        .filter((record) => !current.some((item) => sameRecord(item, record)));
+      const records = gone.filter((record) =>
+        provider.capabilities.recordTypes.includes(record.type),
+      );
+      if (records.length) await provider.createRecords({ zone, records }, ctx);
+      restored = records.length === gone.length;
     } catch {
       restored = false;
     }
     throw new DomainSdkError(
       cause.code,
       restored
-        ? `${cause.message} The replaced records were restored.`
-        : `${cause.message} Some replaced records could not be restored.`,
+        ? `${cause.message} The zone was rolled back to its previous records.`
+        : `${cause.message} The zone could not be fully rolled back.`,
       {
         provider: provider.id,
         statusCode: cause.statusCode,
@@ -463,7 +486,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         cause,
         details: {
           restored,
-          deleted: deleted.map(({ type, name, value }) => ({ type, name, value })),
+          replaced: replaced.map(({ type, name, value }) => ({ type, name, value })),
         },
       },
     );
