@@ -466,14 +466,24 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       );
       if (created.length) await provider.deleteRecords({ zone, records: created }, ctx);
       const unmatched = [...current];
-      const gone = replaced
-        .map(({ type, name, value, ttl }) => ({ type: type as DnsRecordType, name, value, ttl }))
-        // Match one for one, so a deleted copy of an identical record is still restored.
-        .filter((record) => {
-          const index = unmatched.findIndex((item) => sameRecord(item, record));
+      const asInput = ({ type, name, value, ttl }: ZoneRecord): DnsRecordInput => ({
+        type: type as DnsRecordType,
+        name,
+        value,
+        ttl,
+      });
+      // Match one for one, exact TTL matches first, so a deleted copy of an identical record is
+      // restored with its own TTL. Ids are not used because whole-zone hosts reissue them.
+      let pending = replaced;
+      for (const exact of [true, false])
+        pending = pending.filter((record) => {
+          const index = unmatched.findIndex(
+            (item) => sameRecord(item, asInput(record)) && (!exact || item.ttl === record.ttl),
+          );
           if (index >= 0) unmatched.splice(index, 1);
           return index < 0;
         });
+      const gone = pending.map(asInput);
       const records = gone.filter((record) =>
         provider.capabilities.recordTypes.includes(record.type),
       );
