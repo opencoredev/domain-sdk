@@ -231,8 +231,8 @@ describe("createDnsClient", () => {
 
   test("rollback restores a deleted copy of an identical record", async () => {
     const seeded = [
-      { type: "TXT" as const, name: "example.com", value: "same" },
-      { type: "TXT" as const, name: "example.com", value: "same" },
+      { type: "TXT" as const, name: "example.com", value: "same", ttl: 300 },
+      { type: "TXT" as const, name: "example.com", value: "same", ttl: 60 },
       { type: "CNAME" as const, name: "www.example.com", value: "old.example.net" },
     ];
     const provider = memoryDnsProvider({ zones: { "example.com": seeded } });
@@ -241,7 +241,7 @@ describe("createDnsClient", () => {
     provider.deleteRecords = async (input, context) => {
       if (fail) {
         fail = false;
-        const copy = input.records.find((record) => record.type === "TXT")!;
+        const copy = input.records.find((record) => record.ttl === 300)!;
         await deleteRecords({ ...input, records: [copy] }, context);
         throw new DomainSdkError("PROVIDER_UNAVAILABLE", "Down.", { retryable: true });
       }
@@ -253,9 +253,13 @@ describe("createDnsClient", () => {
         onConflict: "replace",
       }),
     ).rejects.toMatchObject({ details: { restored: true } });
-    expect(provider.records("example.com").filter((record) => record.type === "TXT")).toHaveLength(
-      2,
-    );
+    expect(
+      provider
+        .records("example.com")
+        .filter((record) => record.type === "TXT")
+        .map((record) => record.ttl)
+        .sort(),
+    ).toEqual([300, 60]);
   });
 
   test("a failed delete never removes requested records written by someone else", async () => {
