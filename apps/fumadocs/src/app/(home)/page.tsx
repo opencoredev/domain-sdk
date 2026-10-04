@@ -34,6 +34,7 @@ const providers = [
   { id: "render", name: "Render", href: "/docs/providers/render" },
   { id: "netlify", name: "Netlify", href: "/docs/providers/netlify" },
   { id: "bunny", name: "bunny.net", href: "/docs/providers/bunny" },
+  { id: "spaceship", name: "Spaceship", href: "/docs/providers/spaceship" },
 ] as const;
 
 const providerLoop = Array.from({ length: 4 }, () => providers).flat();

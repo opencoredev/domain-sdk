@@ -78,6 +78,25 @@ const bunnyProvider = bunny({
 });
 ```
 
+When the zone is at Spaceship, write the required records with the DNS adapter:
+
+```ts
+import { createDnsClient } from "@opencoredev/domain-sdk";
+import { spaceship } from "@opencoredev/domain-sdk/spaceship";
+
+const dns = createDnsClient({
+  provider: spaceship({
+    apiKey: process.env.SPACESHIP_API_KEY!,
+    apiSecret: process.env.SPACESHIP_API_SECRET!,
+  }),
+});
+
+const domain = await domains.add("app.customer.com");
+await dns.applyDomainRecords(domain);
+```
+
+The DNS client lists the zone first, adds only missing records, and rejects conflicting records with `DOMAIN_CONFLICT` unless you pass `onConflict: "replace"`.
+
 The lifecycle is `add`, `get`/`refresh`, optional `verify`, `list`, `waitUntilActive`, and `remove`. Duplicate adds return the existing domain only when it belongs to the configured provider resource; conflicts are never silently moved.
 
 ```ts
