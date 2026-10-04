@@ -29,7 +29,13 @@ export function memoryDnsProvider(options: MemoryDnsProviderOptions = {}): Memor
   let next = 0;
   let zones = new Map<string, ZoneRecord[]>();
   const seed = () => {
-    next = 0;
+    // Start generated ids after any seeded `rec_<n>` id so they never collide.
+    next = Math.max(
+      0,
+      ...Object.values(options.zones ?? {})
+        .flat()
+        .map((record) => Number(/^rec_(\d+)$/.exec((record as ZoneRecord).id ?? "")?.[1] ?? 0)),
+    );
     zones = new Map(
       Object.entries(options.zones ?? {}).map(([zone, records]) => [
         zone,
