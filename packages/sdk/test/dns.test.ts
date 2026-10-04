@@ -182,6 +182,70 @@ describe("createDnsClient", () => {
     expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.1"]);
   });
 
+  test("rolls back partial deletes and creates", async () => {
+    const seeded = [
+      { type: "A" as const, name: "example.com", value: "192.0.2.1" },
+      { type: "A" as const, name: "example.com", value: "192.0.2.2" },
+    ];
+    const provider = memoryDnsProvider({ zones: { "example.com": seeded } });
+    const { createRecords, deleteRecords } = provider;
+    let failDelete = true;
+    provider.deleteRecords = async (input, context) => {
+      if (failDelete) {
+        failDelete = false;
+        await deleteRecords({ ...input, records: input.records.slice(0, 1) }, context);
+        throw new DomainSdkError("PROVIDER_UNAVAILABLE", "Down.", { retryable: true });
+      }
+      return deleteRecords(input, context);
+    };
+    const dns = createDnsClient({ provider });
+    const wanted = [
+      { type: "A" as const, name: "example.com", value: "76.76.21.21" },
+      { type: "A" as const, name: "example.com", value: "76.76.21.22" },
+    ];
+    await expect(dns.ensureRecords(wanted, { onConflict: "replace" })).rejects.toMatchObject({
+      details: { restored: true },
+    });
+    const values = () =>
+      provider
+        .records("example.com")
+        .map((record) => record.value)
+        .sort();
+    expect(values()).toEqual(["192.0.2.1", "192.0.2.2"]);
+
+    let failCreate = true;
+    provider.createRecords = async (input, context) => {
+      if (failCreate) {
+        failCreate = false;
+        await createRecords({ ...input, records: input.records.slice(0, 1) }, context);
+        throw new DomainSdkError("RATE_LIMITED", "Slow down.", { retryable: true });
+      }
+      return createRecords(input, context);
+    };
+    await expect(dns.ensureRecords(wanted, { onConflict: "replace" })).rejects.toMatchObject({
+      code: "RATE_LIMITED",
+      details: { restored: true },
+    });
+    expect(values()).toEqual(["192.0.2.1", "192.0.2.2"]);
+  });
+
+  test("prefers an optional route that is already in the zone", async () => {
+    const provider = memoryDnsProvider({
+      zones: { "example.com": [{ type: "A", name: "app.example.com", value: "76.76.21.21" }] },
+    });
+    const dns = createDnsClient({ provider });
+    const domain = createMockDomain({ hostname: "app.example.com" });
+    const optional = { required: false, purpose: "routing" as const, status: "pending" as const };
+    domain.records = [
+      { type: "CNAME", name: "app.example.com", value: "cname.vercel-dns.com", ...optional },
+      { type: "A", name: "app.example.com", value: "76.76.21.21", ...optional },
+    ];
+    domain.verification.records = [];
+    const written = await dns.applyDomainRecords(domain, { includeOptional: true });
+    expect(written.map((record) => record.type)).toEqual(["A"]);
+    expect(provider.records("example.com")).toHaveLength(1);
+  });
+
   test("removes record types the provider cannot create", async () => {
     const provider = memoryDnsProvider({
       capabilities: { recordTypes: ["A"], ttl: { min: 60, max: 3600 } },
