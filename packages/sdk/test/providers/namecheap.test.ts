@@ -448,6 +448,17 @@ describe("namecheap DNS adapter", () => {
       "not xml",
       '<ApiResponse Status="OK"><CommandResponse/></ApiResponse>',
       '<ApiResponse Status="OK"><CommandResponse><DomainDNSGetHostsResult><host Name="@" Type="A" Address="1.2.3.4" TTL="oops"/></DomainDNSGetHostsResult></CommandResponse></ApiResponse>',
+      '<ApiResponse Status="OK"><CommandResponse><DomainDNSGetHostsResult><host Name="@" Type="A" Address="1.2.3.4" TTL="1800"/></DomainDNSGetHostsResult></CommandResponse></ApiResponse>',
+      '<ApiResponse Status="OK"><CommandResponse><DomainDNSGetHostsResult IsUsingOurDNS="maybe"/></CommandResponse></ApiResponse>',
+      new Uint8Array([
+        ...new TextEncoder().encode(
+          '<ApiResponse Status="OK"><CommandResponse><DomainDNSGetHostsResult IsUsingOurDNS="true"><host Name="@" Type="TXT" Address="',
+        ),
+        0xff,
+        ...new TextEncoder().encode(
+          '" TTL="1800"/></DomainDNSGetHostsResult></CommandResponse></ApiResponse>',
+        ),
+      ]),
     ]) {
       const api = mockFetch(() => new Response(response));
       await expect(

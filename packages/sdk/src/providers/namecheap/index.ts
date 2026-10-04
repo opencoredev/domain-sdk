@@ -46,7 +46,15 @@ function malformed(): never {
 async function readXmlResponse(response: Response): Promise<string> {
   if (!response.body) return "";
   const reader = response.body.getReader();
-  const decoder = new TextDecoder();
+  // Reject invalid UTF-8 instead of silently replacing bytes in record values.
+  const decoder = new TextDecoder("utf-8", { fatal: true });
+  const decode = (value?: Uint8Array) => {
+    try {
+      return value ? decoder.decode(value, { stream: true }) : decoder.decode();
+    } catch {
+      return malformed();
+    }
+  };
   const chunks: string[] = [];
   let length = 0;
   try {
@@ -58,9 +66,9 @@ async function readXmlResponse(response: Response): Promise<string> {
         void reader.cancel().catch(() => {});
         malformed();
       }
-      chunks.push(decoder.decode(value, { stream: true }));
+      chunks.push(decode(value));
     }
-    chunks.push(decoder.decode());
+    chunks.push(decode());
     return chunks.join("");
   } finally {
     reader.releaseLock();
@@ -226,6 +234,9 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
 
   const readHosts = async (zone: string, context: DnsProviderContext): Promise<HostSnapshot> => {
     const payload = result(await request(zone, "getHosts", context), "DomainDNSGetHostsResult");
+    // Only a zone confirmed on BasicDNS is safe to replace with setHosts.
+    if (payload.attributes.IsUsingOurDNS !== "true" && payload.attributes.IsUsingOurDNS !== "false")
+      malformed();
     if (payload.attributes.IsUsingOurDNS === "false")
       throw new DomainSdkError(
         "INVALID_CONFIGURATION",
