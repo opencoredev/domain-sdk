@@ -248,6 +248,17 @@ describe("createDnsClient", () => {
     expect(new Set(ids).size).toBe(2);
   });
 
+  test("serializes concurrent writes to one zone", async () => {
+    const provider = memoryDnsProvider();
+    const dns = createDnsClient({ provider });
+    const results = await Promise.allSettled([
+      dns.ensureRecords([{ type: "A", name: "example.com", value: "192.0.2.1" }]),
+      dns.ensureRecords([{ type: "A", name: "example.com", value: "192.0.2.2" }]),
+    ]);
+    expect(results.map((result) => result.status)).toEqual(["fulfilled", "rejected"]);
+    expect(provider.records("example.com")).toHaveLength(1);
+  });
+
   test("reports zone delegation", async () => {
     const dns = createDnsClient({ provider: memoryDnsProvider({ authoritative: false }) });
     expect(await dns.getZone("Example.com")).toMatchObject({
