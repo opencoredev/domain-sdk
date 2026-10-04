@@ -427,11 +427,14 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 },
               },
             );
+          let creating = false;
           try {
             await provider.deleteRecords({ zone, records: conflicts }, ctx);
+            creating = true;
             if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
           } catch (error) {
-            return restore(zone, conflicts, missing, error);
+            // Nothing was created when the delete failed, so leave every requested record alone.
+            return restore(zone, conflicts, creating ? missing : [], error);
           }
         } else if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
         const after =
@@ -462,9 +465,15 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         (item) => item.editable && requested.some((record) => sameRecord(item, record)),
       );
       if (created.length) await provider.deleteRecords({ zone, records: created }, ctx);
+      const unmatched = [...current];
       const gone = replaced
         .map(({ type, name, value, ttl }) => ({ type: type as DnsRecordType, name, value, ttl }))
-        .filter((record) => !current.some((item) => sameRecord(item, record)));
+        // Match one for one, so a deleted copy of an identical record is still restored.
+        .filter((record) => {
+          const index = unmatched.findIndex((item) => sameRecord(item, record));
+          if (index >= 0) unmatched.splice(index, 1);
+          return index < 0;
+        });
       const records = gone.filter((record) =>
         provider.capabilities.recordTypes.includes(record.type),
       );
