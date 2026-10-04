@@ -1,5 +1,15 @@
 {
   "title": "Providers",
   "defaultOpen": true,
-  "pages": ["index", "vercel", "cloudflare", "railway", "render", "netlify", "bunny", "testing"]
+  "pages": [
+    "index",
+    "vercel",
+    "cloudflare",
+    "railway",
+    "render",
+    "netlify",
+    "bunny",
+    "namecheap",
+    "testing"
+  ]
 }

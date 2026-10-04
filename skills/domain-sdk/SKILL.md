@@ -1,6 +1,6 @@
 ---
 name: domain-sdk
-description: This skill should be used when the user asks to "add custom domains", "manage customer domains", "integrate Domain SDK", "set up Vercel domains", "set up Cloudflare custom hostnames", "set up Railway domains", "set up Render domains", "set up Netlify domain aliases", "set up bunny.net pull zone hostnames", "show DNS records", "verify a customer domain", or "test domain flows without network calls" in a TypeScript application.
+description: This skill should be used when the user asks to "add custom domains", "manage customer domains", "integrate Domain SDK", "set up Vercel domains", "set up Cloudflare custom hostnames", "set up Railway domains", "set up Render domains", "set up Netlify domain aliases", "set up bunny.net pull zone hostnames", "write DNS records to Namecheap", "show DNS records", "verify a customer domain", or "test domain flows without network calls" in a TypeScript application.
 version: 0.1.0
 ---
 
@@ -27,7 +27,13 @@ Select the adapter for the platform that currently receives application traffic:
 | Netlify             | `@opencoredev/domain-sdk/netlify`    | Domain aliases on one existing site   |
 | bunny.net           | `@opencoredev/domain-sdk/bunny`      | Custom hostnames on one CDN pull zone |
 
-Do not use the Cloudflare adapter for generic DNS record management. Do not choose a provider based only on where DNS is hosted; choose the platform that attaches the hostname to the deployed application.
+To write the returned records into a zone you control, use the DNS adapter with `createDnsClient()` and `applyDomainRecords(domain)`:
+
+| Registrar | Import                              | Writes                               |
+| --------- | ----------------------------------- | ------------------------------------ |
+| Namecheap | `@opencoredev/domain-sdk/namecheap` | Hosts in one Namecheap BasicDNS zone |
+
+The DNS client rejects conflicting records with `DOMAIN_CONFLICT` unless `onConflict: "replace"` is passed. Do not use the Cloudflare adapter for generic DNS record management. Do not choose a provider based only on where DNS is hosted; choose the platform that attaches the hostname to the deployed application.
 
 ## Install and create a server-only client
 
