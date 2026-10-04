@@ -60,8 +60,18 @@ function recordFields(record: SpaceshipRecord): Record<string, unknown> {
   return fields;
 }
 
-// A full page holds 100 records whose values may reach 65,535 characters each.
-const MAX_RESPONSE_LENGTH = 8_000_000;
+// A full page holds 100 records whose values may reach 65,535 characters each, and JSON escaping
+// can double quotes and backslashes.
+const MAX_RESPONSE_LENGTH = 16_000_000;
+/** Spaceship accepts at most 500 records per save or delete request. */
+const MAX_BATCH = 500;
+
+function batches<T>(items: readonly T[]): T[][] {
+  const result: T[][] = [];
+  for (let index = 0; index < items.length; index += MAX_BATCH)
+    result.push(items.slice(index, index + MAX_BATCH));
+  return result;
+}
 
 /** Spaceship names are always zone-relative, so `example.com` in `example.com` is a child label. */
 function absoluteName(name: string, zone: string): string {
@@ -181,9 +191,13 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
             ? problem.title
             : "Spaceship rejected the request.";
       const error = httpError("spaceship", response, { message: safeMessage(message) }, message);
+      // With force: false, Spaceship answers a save that clashes with existing records with 422.
+      // Other 422s are validation errors.
       if (response.status === 422)
         throw new DomainSdkError(
-          init?.method === "PUT" ? "DOMAIN_CONFLICT" : "INVALID_CONFIGURATION",
+          init?.method === "PUT" && /conflict|exist/i.test(message)
+            ? "DOMAIN_CONFLICT"
+            : "INVALID_CONFIGURATION",
           error.message,
           { provider: "spaceship", statusCode: 422 },
         );
@@ -215,7 +229,8 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
           !Array.isArray(page.items) ||
           !Number.isInteger(page.total) ||
           page.total < 0 ||
-          (!page.items.length && skip < page.total)
+          (!page.items.length && skip < page.total) ||
+          skip + page.items.length > page.total
         )
           throw new DomainSdkError(
             "REQUEST_FAILED",
@@ -254,19 +269,17 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
       }
     },
     async createRecords({ zone, records }, context) {
-      if (!records.length) return;
-      await request(recordsPath(zone), context, {
-        method: "PUT",
-        body: JSON.stringify({
-          force: false,
-          items: records.map((record) => ({
-            type: record.type,
-            name: relativeRecordName(record.name, zone),
-            ttl: record.ttl ?? ttl,
-            ...inputFields(record),
-          })),
-        }),
-      });
+      const items = records.map((record) => ({
+        type: record.type,
+        name: relativeRecordName(record.name, zone),
+        ttl: record.ttl ?? ttl,
+        ...inputFields(record),
+      }));
+      for (const batch of batches(items))
+        await request(recordsPath(zone), context, {
+          method: "PUT",
+          body: JSON.stringify({ force: false, items: batch }),
+        });
     },
     async deleteRecords({ zone, records }, context) {
       const items = records
@@ -283,8 +296,11 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
             );
           return identity;
         });
-      if (!items.length) return;
-      await request(recordsPath(zone), context, { method: "DELETE", body: JSON.stringify(items) });
+      for (const batch of batches(items))
+        await request(recordsPath(zone), context, {
+          method: "DELETE",
+          body: JSON.stringify(batch),
+        });
     },
     async getZone({ zone }, context) {
       const domain = await request<{ nameservers: { provider: string; hosts: string[] } }>(

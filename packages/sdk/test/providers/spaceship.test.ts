@@ -33,6 +33,7 @@ function fakeApi(initial: ApiRecord[] = [], delegation = "basic") {
     const body = JSON.parse(String(init.body));
     if (init.method === "PUT") {
       expect(body.force).toBe(false);
+      expect(body.items.length).toBeLessThanOrEqual(500);
       for (const item of body.items as ApiRecord[]) {
         if (!records.some((existing) => identity(existing) === identity(item)))
           records.push({ ...item, group: { type: "custom" } });
@@ -40,6 +41,7 @@ function fakeApi(initial: ApiRecord[] = [], delegation = "basic") {
     } else {
       expect(init.method).toBe("DELETE");
       expect(Array.isArray(body)).toBe(true);
+      expect(body.length).toBeLessThanOrEqual(500);
       const removed = body.map(identity);
       records = records.filter((record) => !removed.includes(identity(record)));
     }
@@ -381,6 +383,29 @@ describe("spaceship DNS", () => {
       code: "INVALID_CONFIGURATION",
       statusCode: 422,
     });
+    const invalid = mockFetch(() => json({ detail: "Invalid address" }, 422));
+    await expect(
+      spaceship({ ...credentials, fetch: invalid.fetch }).createRecords(
+        { zone: "example.com", records: [{ type: "A", name: "example.com", value: "192.0.2.1" }] },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "INVALID_CONFIGURATION", statusCode: 422 });
+  });
+
+  test("splits saves and deletes into batches of 500", async () => {
+    const fake = fakeApi();
+    const records = Array.from({ length: 1201 }, (_, index) => ({
+      type: "TXT" as const,
+      name: `t${index}.example.com`,
+      value: "token",
+    }));
+    await fake.provider.createRecords({ zone: "example.com", records }, context);
+    expect(fake.calls.filter(({ init }) => init?.method === "PUT")).toHaveLength(3);
+    const listed = await fake.provider.listRecords({ zone: "example.com" }, context);
+    expect(listed).toHaveLength(1201);
+    await fake.provider.deleteRecords({ zone: "example.com", records: listed }, context);
+    expect(fake.calls.filter(({ init }) => init?.method === "DELETE")).toHaveLength(3);
+    expect(await fake.provider.listRecords({ zone: "example.com" }, context)).toHaveLength(0);
   });
 
   test("does not expose credentials echoed by the provider or network", async () => {
@@ -448,6 +473,13 @@ describe("spaceship DNS", () => {
     { items: "invalid", total: 0 },
     { items: [], total: -1 },
     { items: [{}], total: 1 },
+    {
+      items: [
+        { type: "TXT", name: "a", value: "x", ttl: 3600 },
+        { type: "TXT", name: "b", value: "x", ttl: 3600 },
+      ],
+      total: 1,
+    },
   ])("rejects malformed record pages", async (page) => {
     const mock = mockFetch(() => json(page));
     await expect(
