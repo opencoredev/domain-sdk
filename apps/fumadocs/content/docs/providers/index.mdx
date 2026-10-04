@@ -1,6 +1,6 @@
 ---
 title: Custom domain provider comparison
-description: Compare custom domain support across Vercel, Cloudflare for SaaS, Railway, Render, Netlify, and bunny.net before choosing a TypeScript adapter.
+description: Compare custom domain support across Vercel, Cloudflare for SaaS, Railway, Render, Netlify, and bunny.net, plus the Porkbun DNS adapter.
 ---
 
 Choose the provider where your application already serves traffic. Domain SDK normalizes the lifecycle, but credentials, resource scope, DNS requirements, and platform limits remain provider-specific.
@@ -30,6 +30,16 @@ Choose the provider where your application already serves traffic. Domain SDK no
 | Routing records        |   ✓    |        ✓        |    ✓    |        ✓         |    ✓    |     ✓     |
 | Automatic customer DNS |   —    |        —        |    —    |        —         |    —    |     —     |
 
-Cloudflare for SaaS requires a CNAME target, so the current adapter does not claim apex support. Vercel, Render and bunny.net are the adapters that accept wildcard hostnames. Vercel wildcard TLS requires DNS-01 validation, normally through Vercel nameservers; A/CNAME routing alone is insufficient. Eligible delegated subdomains can retain third-party DNS by following Vercel's [qualified `_acme-challenge` NS delegation guide](https://vercel.com/kb/guide/wildcard-domain-without-vercel-nameservers); the adapter does not configure that delegation. bunny.net wildcards require the domain to be hosted on Bunny DNS. Netlify manages aliases without replacing the site's primary domain. bunny.net is the CDN option rather than an application host: it fronts an origin you already run. No adapter edits customer DNS automatically.
+Cloudflare for SaaS requires a CNAME target, so the current adapter does not claim apex support. Vercel, Render and bunny.net are the adapters that accept wildcard hostnames. Vercel wildcard TLS requires DNS-01 validation, normally through Vercel nameservers; A/CNAME routing alone is insufficient. Eligible delegated subdomains can retain third-party DNS by following Vercel's [qualified `_acme-challenge` NS delegation guide](https://vercel.com/kb/guide/wildcard-domain-without-vercel-nameservers); the adapter does not configure that delegation. bunny.net wildcards require the domain to be hosted on Bunny DNS. Netlify manages aliases without replacing the site's primary domain. bunny.net is the CDN option rather than an application host: it fronts an origin you already run. No hosting adapter edits DNS. When you control the zone, a [DNS adapter](#dns-adapters) can write the records for you.
+
+## DNS adapters
+
+A DNS adapter writes the records a hosting provider asks for into a zone at your registrar. Pass it to `createDnsClient()`, then call `applyDomainRecords()` with the `Domain` a hosting adapter returned. The adapter writes A, AAAA, CNAME, ALIAS, TXT, and CAA records. It does not register domains, change nameservers, or issue certificates.
+
+<Cards>
+  <Card title="Porkbun" href="/docs/providers/porkbun" />
+</Cards>
+
+Porkbun accepts TTLs from 600 to 86400 seconds and writes each record individually.
 
 Provider credentials belong to your SaaS account, never to the customer. The memory adapter is available separately for [testing](./testing.mdx), not as a production provider.

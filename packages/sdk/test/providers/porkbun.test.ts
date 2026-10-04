@@ -200,9 +200,7 @@ describe("porkbun DNS", () => {
       authoritative: true,
       nameservers: ["curitiba.ns.porkbun.com", "maceio.ns.porkbun.com"],
     });
-    expect(api.calls[0]?.url).toBe(
-      "https://api.porkbun.com/api/json/v3/domain/getNs/example.com",
-    );
+    expect(api.calls[0]?.url).toBe("https://api.porkbun.com/api/json/v3/domain/getNs/example.com");
     for (const ns of [
       [],
       ["ns.other.net"],
