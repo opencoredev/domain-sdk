@@ -136,11 +136,23 @@ export interface DnsClient {
 const SINGLETON_TYPES = new Set(["CNAME", "ALIAS", "ANAME"]);
 /** Types whose existing values at the same name are replaced rather than added to. */
 const ROUTING_TYPES = new Set(["A", "AAAA", "CNAME", "ALIAS", "ANAME"]);
+/** Types that publish addresses at a name: A and AAAA directly, ALIAS and ANAME by flattening. */
+const ADDRESS_TYPES = new Set(["A", "AAAA"]);
+const FLATTENED_TYPES = new Set(["ALIAS", "ANAME"]);
 const HOSTNAME_VALUE_TYPES = new Set(["CNAME", "ALIAS", "ANAME", "NS", "MX", "PTR"]);
 const RECORD_NAME_LABEL = /^(?:\*|_?[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?|_[a-z0-9_-]{1,62})$/;
 
 function invalidRecord(message: string, details: Record<string, unknown>): never {
   throw new DomainSdkError("INVALID_HOSTNAME", message, { details });
+}
+
+/** Convert one internationalized label to its punycode form. */
+function asciiLabel(label: string, name: string, zone: string): string {
+  try {
+    const ascii = new URL(`http://${label}`).hostname;
+    if (!ascii.includes(".")) return ascii;
+  } catch {}
+  return invalidRecord(`DNS record name ${name} is malformed.`, { name, zone });
 }
 
 /** Normalize a zone apex such as `Example.com.` to `example.com`. */
@@ -153,7 +165,13 @@ export function normalizeZone(zone: string): string {
  * underscore labels such as `_vercel`, and a leading `*` label.
  */
 export function normalizeRecordName(name: string, zone: string): string {
-  const clean = name.trim().toLowerCase().replace(/\.$/, "");
+  const clean = name
+    .trim()
+    .toLowerCase()
+    .replace(/\.$/, "")
+    .split(".")
+    .map((label) => (/[^\p{ASCII}]/u.test(label) ? asciiLabel(label, name, zone) : label))
+    .join(".");
   if (!clean || clean === "@") return zone;
   if (clean !== zone && !clean.endsWith(`.${zone}`))
     invalidRecord(`DNS record ${name} is outside the ${zone} zone.`, { name, zone });
@@ -223,10 +241,19 @@ export function sameRecord(
   }
 }
 
+/** Whether a flattened route and direct addresses would both answer for one name. */
+function mixedRouting(a: string, b: string): boolean {
+  return (
+    (ADDRESS_TYPES.has(a) && FLATTENED_TYPES.has(b)) ||
+    (FLATTENED_TYPES.has(a) && ADDRESS_TYPES.has(b))
+  );
+}
+
 /** Whether two requested records can never coexist, such as a CNAME beside any other type. */
 function incompatible(a: DnsRecordInput, b: DnsRecordInput): boolean {
   if (a.name !== b.name || sameRecord(a, b)) return false;
   if (a.type === "CNAME" || b.type === "CNAME") return true;
+  if (mixedRouting(a.type, b.type)) return true;
   return SINGLETON_TYPES.has(a.type) && SINGLETON_TYPES.has(b.type);
 }
 
@@ -235,6 +262,7 @@ function conflictsWith(existing: ZoneRecord, wanted: DnsRecordInput): boolean {
   const type = existing.type.toUpperCase();
   if (type === "CNAME" || wanted.type === "CNAME") return true;
   if (type === wanted.type) return ROUTING_TYPES.has(type);
+  if (mixedRouting(type, wanted.type)) return true;
   return SINGLETON_TYPES.has(type) && SINGLETON_TYPES.has(wanted.type);
 }
 
@@ -279,11 +307,16 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     return normalizeZone(inferred);
   };
 
-  const normalizeRecords = (records: readonly DnsRecordInput[], zone: string) => {
+  /** Validate records for writing, or with `forRemoval` only well enough to match them. */
+  const normalizeRecords = (
+    records: readonly DnsRecordInput[],
+    zone: string,
+    forRemoval = false,
+  ) => {
     const normalized: DnsRecordInput[] = [];
     for (const record of records) {
       const type = record.type.toUpperCase() as DnsRecordType;
-      if (!provider.capabilities.recordTypes.includes(type))
+      if (!forRemoval && !provider.capabilities.recordTypes.includes(type))
         throw new DomainSdkError(
           "UNSUPPORTED_OPERATION",
           `${provider.id} does not support ${type} records.`,
@@ -291,6 +324,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         );
       const { min, max } = provider.capabilities.ttl;
       if (
+        !forRemoval &&
         record.ttl !== undefined &&
         (!Number.isInteger(record.ttl) || record.ttl < min || record.ttl > max)
       )
@@ -319,11 +353,15 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     return normalized;
   };
 
-  const ensureRecords: DnsClient["ensureRecords"] = (records, ensure = {}) => {
-    const zone = resolveZone(records, ensure.zone);
+  const ensure = (
+    records: readonly DnsRecordInput[],
+    optional: readonly DnsRecordInput[],
+    options: EnsureRecordsOptions,
+  ): Promise<ZoneRecord[]> => {
+    if (!records.length && !optional.length) return Promise.resolve([]);
+    const zone = resolveZone(records.length ? records : optional, options.zone);
     return run("ensureRecords", zone, async () => {
       const wanted = normalizeRecords(records, zone);
-      if (!wanted.length) return [];
       // Reject a self-contradicting request before anything in the zone is touched.
       for (const [index, record] of wanted.entries()) {
         const clash = wanted.slice(index + 1).find((other) => incompatible(record, other));
@@ -334,17 +372,23 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             { provider: provider.id, details: { name: record.name } },
           );
       }
-      const ctx = context(ensure.signal);
+      // Optional records are often alternatives, so keep only those that fit the required set.
+      for (const record of normalizeRecords(optional, zone))
+        if (!wanted.some((other) => sameRecord(other, record) || incompatible(other, record)))
+          wanted.push(record);
+      if (!wanted.length) return [];
+      const ctx = context(options.signal);
       const existing = await provider.listRecords({ zone }, ctx);
       const isWanted = (item: ZoneRecord) => wanted.some((record) => sameRecord(item, record));
       const missing = wanted.filter((record) => !existing.some((item) => sameRecord(item, record)));
-      // Records that are already part of the requested set are never conflicts.
+      // Records that are already part of the requested set are never conflicts. Every requested
+      // record is checked, so a stale address beside a requested one is still reported.
       const conflicts = existing.filter(
-        (item) => !isWanted(item) && missing.some((record) => conflictsWith(item, record)),
+        (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
       );
       if (conflicts.length) {
         const locked = conflicts.filter((item) => !item.editable);
-        if (locked.length || (ensure.onConflict ?? "error") === "error")
+        if (locked.length || (options.onConflict ?? "error") === "error")
           throw new DomainSdkError(
             "DOMAIN_CONFLICT",
             `Existing DNS records in ${zone} conflict with the records being written.`,
@@ -362,12 +406,54 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           );
         await provider.deleteRecords({ zone, records: conflicts }, ctx);
       }
-      if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
+      if (missing.length) {
+        try {
+          await provider.createRecords({ zone, records: missing }, ctx);
+        } catch (error) {
+          if (conflicts.length) await restore(zone, conflicts, error);
+          throw error;
+        }
+      }
       const after =
         missing.length || conflicts.length ? await provider.listRecords({ zone }, ctx) : existing;
       return after.filter((item) => wanted.some((record) => sameRecord(item, record)));
     });
   };
+
+  /** Put back records a failed replacement deleted, then report the original failure. */
+  const restore = async (zone: string, deleted: ZoneRecord[], error: unknown): Promise<never> => {
+    const cause = normalizeUnknownError(error, provider.id);
+    const records = deleted
+      .filter((item) => provider.capabilities.recordTypes.includes(item.type as DnsRecordType))
+      .map(({ type, name, value, ttl }) => ({ type: type as DnsRecordType, name, value, ttl }));
+    let restored = records.length === deleted.length;
+    try {
+      // Restore even when the caller's signal aborted the replacement.
+      if (records.length) await provider.createRecords({ zone, records }, { logger });
+    } catch {
+      restored = false;
+    }
+    throw new DomainSdkError(
+      cause.code,
+      restored
+        ? `${cause.message} The replaced records were restored.`
+        : `${cause.message} Some replaced records could not be restored.`,
+      {
+        provider: provider.id,
+        statusCode: cause.statusCode,
+        retryable: cause.retryable,
+        retryAfter: cause.retryAfter,
+        cause,
+        details: {
+          restored,
+          deleted: deleted.map(({ type, name, value }) => ({ type, name, value })),
+        },
+      },
+    );
+  };
+
+  const ensureRecords: DnsClient["ensureRecords"] = (records, options = {}) =>
+    ensure(records, [], options);
 
   return {
     provider: provider.id,
@@ -394,9 +480,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     },
     ensureRecords,
     removeRecords(records, remove = {}) {
+      if (!records.length) return Promise.resolve();
       const zone = resolveZone(records, remove.zone);
       return run("removeRecords", zone, async () => {
-        const wanted = normalizeRecords(records, zone);
+        const wanted = normalizeRecords(records, zone, true);
         if (!wanted.length) return;
         const ctx = context(remove.signal);
         const existing = await provider.listRecords({ zone }, ctx);
@@ -407,10 +494,13 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       });
     },
     applyDomainRecords(domain, apply = {}) {
-      const records = [...domain.records, ...domain.verification.records]
-        .filter((record: DnsRecord) => apply.includeOptional || record.required)
-        .map(({ type, name, value, ttl }) => ({ type, name, value, ttl }));
-      return ensureRecords(records, apply);
+      const all = [...domain.records, ...domain.verification.records];
+      const input = ({ type, name, value, ttl }: DnsRecord) => ({ type, name, value, ttl });
+      const required = all.filter((record) => record.required).map(input);
+      const optional = apply.includeOptional
+        ? all.filter((record) => !record.required).map(input)
+        : [];
+      return ensure(required, optional, apply);
     },
   };
 }
