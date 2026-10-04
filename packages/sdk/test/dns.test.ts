@@ -229,6 +229,61 @@ describe("createDnsClient", () => {
     expect(values()).toEqual(["192.0.2.1", "192.0.2.2"]);
   });
 
+  test("rollback restores a deleted copy of an identical record", async () => {
+    const seeded = [
+      { type: "TXT" as const, name: "example.com", value: "same" },
+      { type: "TXT" as const, name: "example.com", value: "same" },
+      { type: "CNAME" as const, name: "www.example.com", value: "old.example.net" },
+    ];
+    const provider = memoryDnsProvider({ zones: { "example.com": seeded } });
+    const { deleteRecords } = provider;
+    let fail = true;
+    provider.deleteRecords = async (input, context) => {
+      if (fail) {
+        fail = false;
+        const copy = input.records.find((record) => record.type === "TXT")!;
+        await deleteRecords({ ...input, records: [copy] }, context);
+        throw new DomainSdkError("PROVIDER_UNAVAILABLE", "Down.", { retryable: true });
+      }
+      return deleteRecords(input, context);
+    };
+    const dns = createDnsClient({ provider });
+    await expect(
+      dns.ensureRecords([{ type: "CNAME", name: "example.com", value: "cname.vercel-dns.com" }], {
+        onConflict: "replace",
+      }),
+    ).rejects.toMatchObject({ details: { restored: true } });
+    expect(provider.records("example.com").filter((record) => record.type === "TXT")).toHaveLength(
+      2,
+    );
+  });
+
+  test("a failed delete never removes requested records written by someone else", async () => {
+    const provider = memoryDnsProvider({
+      zones: { "example.com": [{ type: "A", name: "example.com", value: "192.0.2.1" }] },
+    });
+    const { createRecords } = provider;
+    provider.deleteRecords = async (input, context) => {
+      await createRecords(
+        { zone: input.zone, records: [{ type: "A", name: "example.com", value: "76.76.21.21" }] },
+        context,
+      );
+      throw new DomainSdkError("PROVIDER_UNAVAILABLE", "Down.", { retryable: true });
+    };
+    const dns = createDnsClient({ provider });
+    await expect(
+      dns.ensureRecords([{ type: "A", name: "example.com", value: "76.76.21.21" }], {
+        onConflict: "replace",
+      }),
+    ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+    expect(
+      provider
+        .records("example.com")
+        .map((record) => record.value)
+        .sort(),
+    ).toEqual(["192.0.2.1", "76.76.21.21"]);
+  });
+
   test("prefers an optional route that is already in the zone", async () => {
     const provider = memoryDnsProvider({
       zones: { "example.com": [{ type: "A", name: "app.example.com", value: "76.76.21.21" }] },
