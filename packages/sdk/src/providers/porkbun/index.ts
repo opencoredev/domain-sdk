@@ -89,9 +89,10 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
       });
     }
 
+    // Porkbun returns a whole zone in one response, so never truncate it before parsing.
     let body: PorkbunResponse | undefined;
     try {
-      body = (await readJson(response, 2_000_000)) as PorkbunResponse | undefined;
+      body = (await readJson(response, Number.POSITIVE_INFINITY)) as PorkbunResponse | undefined;
     } catch {
       if (context.signal?.aborted)
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {

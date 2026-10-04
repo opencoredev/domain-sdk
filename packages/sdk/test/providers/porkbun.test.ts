@@ -158,6 +158,18 @@ describe("porkbun DNS", () => {
     });
   });
 
+  test("parses zones larger than the default response limit", async () => {
+    const initial: FakeRecord[] = Array.from({ length: 1500 }, (_, index) => ({
+      id: String(index + 1),
+      name: `txt${index}.example.com`,
+      type: "TXT",
+      content: "x".repeat(2000),
+      ttl: "600",
+    }));
+    const records = await fakeApi(initial).provider.listRecords({ zone: "example.com" }, context);
+    expect(records).toHaveLength(1500);
+  });
+
   test("deletes only selected ids and validates ids before making changes", async () => {
     const api = fakeApi([
       { id: "1", name: "example.com", type: "TXT", content: "one", ttl: "600" },
