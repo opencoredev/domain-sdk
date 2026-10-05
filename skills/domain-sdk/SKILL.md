@@ -1,6 +1,6 @@
 ---
 name: domain-sdk
-description: This skill should be used when the user asks to "add custom domains", "manage customer domains", "integrate Domain SDK", "set up Vercel domains", "set up Cloudflare custom hostnames", "set up Railway domains", "set up Render domains", "set up Netlify domain aliases", "set up bunny.net pull zone hostnames", "write DNS records to Porkbun or Namecheap", "show DNS records", "verify a customer domain", or "test domain flows without network calls" in a TypeScript application.
+description: This skill should be used when the user asks to "add custom domains", "manage customer domains", "integrate Domain SDK", "set up Vercel domains", "set up Cloudflare custom hostnames", "set up Railway domains", "set up Render domains", "set up Netlify domain aliases", "set up bunny.net pull zone hostnames", "write DNS records to Porkbun, Namecheap, or Spaceship", "show DNS records", "verify a customer domain", or "test domain flows without network calls" in a TypeScript application.
 version: 0.1.0
 ---
 
@@ -33,6 +33,7 @@ To write the returned records into a zone you control, use a DNS adapter with `c
 | --------- | ----------------------------------- | ------------------------------------ |
 | Porkbun   | `@opencoredev/domain-sdk/porkbun`   | Records in one Porkbun zone          |
 | Namecheap | `@opencoredev/domain-sdk/namecheap` | Hosts in one Namecheap BasicDNS zone |
+| Spaceship | `@opencoredev/domain-sdk/spaceship` | Records in one Spaceship zone        |
 
 The DNS client rejects conflicting records with `DOMAIN_CONFLICT` unless `onConflict: "replace"` is passed. Do not use the Cloudflare adapter for generic DNS record management. Do not choose a provider based only on where DNS is hosted; choose the platform that attaches the hostname to the deployed application.
 

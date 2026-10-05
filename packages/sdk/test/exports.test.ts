@@ -12,6 +12,7 @@ describe("published package exports", () => {
     expect(await import("@opencoredev/domain-sdk/bunny")).toHaveProperty("bunny");
     expect(await import("@opencoredev/domain-sdk/porkbun")).toHaveProperty("porkbun");
     expect(await import("@opencoredev/domain-sdk/namecheap")).toHaveProperty("namecheap");
+    expect(await import("@opencoredev/domain-sdk/spaceship")).toHaveProperty("spaceship");
     expect(await import("@opencoredev/domain-sdk/testing")).toHaveProperty("memoryProvider");
   });
 });

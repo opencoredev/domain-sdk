@@ -305,6 +305,25 @@ describe("createDnsClient", () => {
     expect(provider.records("example.com")).toHaveLength(1);
   });
 
+  test("never replaces a record the provider cannot restore", async () => {
+    const provider = memoryDnsProvider({
+      capabilities: { recordTypes: ["CNAME"], ttl: { min: 60, max: 3600 } },
+      zones: {
+        "example.com": [{ type: "MX", name: "app.example.com", value: "mail.example.net" }],
+      },
+    });
+    const dns = createDnsClient({ provider });
+    await expect(
+      dns.ensureRecords(
+        [{ type: "CNAME", name: "app.example.com", value: "cname.vercel-dns.com" }],
+        {
+          onConflict: "replace",
+        },
+      ),
+    ).rejects.toMatchObject({ code: "DOMAIN_CONFLICT" });
+    expect(provider.records("example.com").map((record) => record.type)).toEqual(["MX"]);
+  });
+
   test("removes record types the provider cannot create", async () => {
     const provider = memoryDnsProvider({
       capabilities: { recordTypes: ["A"], ttl: { min: 60, max: 3600 } },

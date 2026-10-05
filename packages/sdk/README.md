@@ -78,7 +78,7 @@ const bunnyProvider = bunny({
 });
 ```
 
-When the zone is at Porkbun or Namecheap, write the required records with a DNS adapter:
+When the zone is at Porkbun, Namecheap, or Spaceship, write the required records with a DNS adapter:
 
 ```ts
 import { createDnsClient } from "@opencoredev/domain-sdk";
@@ -95,7 +95,7 @@ const domain = await domains.add("app.customer.com");
 await dns.applyDomainRecords(domain);
 ```
 
-The DNS client lists the zone first, adds only missing records, and rejects conflicting records with `DOMAIN_CONFLICT` unless you pass `onConflict: "replace"`. Use `namecheap()` from `@opencoredev/domain-sdk/namecheap` the same way.
+The DNS client lists the zone first, adds only missing records, and rejects conflicting records with `DOMAIN_CONFLICT` unless you pass `onConflict: "replace"`. Use `namecheap()` from `@opencoredev/domain-sdk/namecheap` or `spaceship()` from `@opencoredev/domain-sdk/spaceship` the same way.
 
 The lifecycle is `add`, `get`/`refresh`, optional `verify`, `list`, `waitUntilActive`, and `remove`. Duplicate adds return the existing domain only when it belongs to the configured provider resource; conflicts are never silently moved.
 

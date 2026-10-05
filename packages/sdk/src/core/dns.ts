@@ -410,7 +410,13 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
         );
         if (conflicts.length) {
-          const locked = conflicts.filter((item) => !item.editable);
+          // A record the provider cannot create again could not be restored if the replacement
+          // failed, so it blocks replacement just like a record the host manages.
+          const locked = conflicts.filter(
+            (item) =>
+              !item.editable ||
+              !provider.capabilities.recordTypes.includes(item.type as DnsRecordType),
+          );
           if (locked.length || (options.onConflict ?? "error") === "error")
             throw new DomainSdkError(
               "DOMAIN_CONFLICT",
