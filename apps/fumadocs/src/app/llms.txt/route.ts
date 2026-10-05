@@ -26,7 +26,7 @@ export function GET() {
 - Runtime: Server-side Node.js 20+ or Bun
 - Language: TypeScript
 - Providers: Vercel, Cloudflare for SaaS, Railway, Render, Netlify, and bunny.net
-- DNS adapters: Namecheap
+- DNS adapters: Porkbun and Namecheap
 - Cost: The open-source SDK is free; infrastructure provider charges are separate.
 - Scope: Domain SDK manages domain lifecycle calls and normalized DNS instructions. It does not register domains, host DNS, proxy traffic, or store tenant data.
 
