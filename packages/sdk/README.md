@@ -78,6 +78,25 @@ const bunnyProvider = bunny({
 });
 ```
 
+When the zone is at Porkbun, write the required records with the DNS adapter:
+
+```ts
+import { createDnsClient } from "@opencoredev/domain-sdk";
+import { porkbun } from "@opencoredev/domain-sdk/porkbun";
+
+const dns = createDnsClient({
+  provider: porkbun({
+    apiKey: process.env.PORKBUN_API_KEY!,
+    secretApiKey: process.env.PORKBUN_SECRET_API_KEY!,
+  }),
+});
+
+const domain = await domains.add("app.customer.com");
+await dns.applyDomainRecords(domain);
+```
+
+The DNS client lists the zone first, adds only missing records, and rejects conflicting records with `DOMAIN_CONFLICT` unless you pass `onConflict: "replace"`.
+
 The lifecycle is `add`, `get`/`refresh`, optional `verify`, `list`, `waitUntilActive`, and `remove`. Duplicate adds return the existing domain only when it belongs to the configured provider resource; conflicts are never silently moved.
 
 ```ts

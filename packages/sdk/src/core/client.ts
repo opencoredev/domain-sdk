@@ -22,10 +22,8 @@ const defaultClock = {
   },
 };
 
-function assertServerEnvironment(): void {
-  const isBrowser =
-    typeof window !== "undefined" ||
-    typeof document !== "undefined";
+export function assertServerEnvironment(): void {
+  const isBrowser = typeof window !== "undefined" || typeof document !== "undefined";
 
   if (isBrowser) {
     throw new Error(

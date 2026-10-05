@@ -24,7 +24,7 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(token|api[_-]?token|api[_-]?key|authorization|secret|password|private[_-]?key)$/i;
+  /^(?:x-)?(token|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|authorization|secret|password|private[_-]?key)$/i;
 const BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const MAX_STRING = 1_000;
 

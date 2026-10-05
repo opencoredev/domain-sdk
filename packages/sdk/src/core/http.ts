@@ -2,8 +2,8 @@ import { DomainSdkError, parseRetryAfter, redact } from "./errors";
 
 export type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
-export async function readJson(response: Response): Promise<unknown> {
-  const text = (await response.text()).slice(0, 16_000);
+export async function readJson(response: Response, maxLength = 16_000): Promise<unknown> {
+  const text = (await response.text()).slice(0, maxLength);
   if (!text) return undefined;
   try {
     return JSON.parse(text) as unknown;

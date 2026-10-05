@@ -6,7 +6,9 @@
     "bunny",
     "cloudflare",
     "custom-domains",
+    "dns",
     "netlify",
+    "porkbun",
     "railway",
     "render",
     "typescript",
@@ -55,6 +57,10 @@
       "types": "./dist/providers/bunny/index.d.ts",
       "import": "./dist/providers/bunny/index.js"
     },
+    "./porkbun": {
+      "types": "./dist/providers/porkbun/index.d.ts",
+      "import": "./dist/providers/porkbun/index.js"
+    },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "import": "./dist/testing/index.js"
@@ -65,7 +71,7 @@
   },
   "scripts": {
     "build": "rm -rf dist && bun run build:js && bun run build:types",
-    "build:js": "bun build src/index.ts src/providers/vercel/index.ts src/providers/cloudflare/index.ts src/providers/railway/index.ts src/providers/render/index.ts src/providers/netlify/index.ts src/providers/bunny/index.ts src/testing/index.ts --root src --outdir dist --target node --format esm --sourcemap=external --splitting --entry-naming '[dir]/[name].[ext]'",
+    "build:js": "bun build src/index.ts src/providers/vercel/index.ts src/providers/cloudflare/index.ts src/providers/railway/index.ts src/providers/render/index.ts src/providers/netlify/index.ts src/providers/bunny/index.ts src/providers/porkbun/index.ts src/testing/index.ts --root src --outdir dist --target node --format esm --sourcemap=external --splitting --entry-naming '[dir]/[name].[ext]'",
     "build:types": "tsc -p tsconfig.build.json",
     "check-types": "tsc --noEmit",
     "lint": "oxlint src test",
