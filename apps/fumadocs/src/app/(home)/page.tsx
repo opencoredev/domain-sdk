@@ -34,6 +34,8 @@ const providers = [
   { id: "render", name: "Render", href: "/docs/providers/render" },
   { id: "netlify", name: "Netlify", href: "/docs/providers/netlify" },
   { id: "bunny", name: "bunny.net", href: "/docs/providers/bunny" },
+  { id: "porkbun", name: "Porkbun", href: "/docs/providers/porkbun" },
+  { id: "namecheap", name: "Namecheap", href: "/docs/providers/namecheap" },
   { id: "spaceship", name: "Spaceship", href: "/docs/providers/spaceship" },
 ] as const;
 
