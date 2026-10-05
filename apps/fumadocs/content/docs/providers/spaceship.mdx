@@ -56,6 +56,6 @@ Lists are fetched in pages of 100 records. Saves merge only the supplied records
 
 `getZone()` uses the domain-details endpoint, which allows only five calls per domain per five minutes. Avoid calling it on every record operation. It reports `authoritative: true` when Spaceship identifies the nameserver provider as `basic`, rather than performing a live DNS lookup.
 
-HTTP 429 errors report `RATE_LIMITED`, are retryable, and include `retryAfter` when Spaceship sends a `Retry-After` header. Network and server failures are retryable `PROVIDER_UNAVAILABLE` errors. The adapter maps a save rejected with HTTP 422 to `DOMAIN_CONFLICT`; other HTTP 422 responses map to `INVALID_CONFIGURATION`.
+HTTP 429 errors report `RATE_LIMITED`, are retryable, and include `retryAfter` when Spaceship sends a `Retry-After` header. Network and server failures are retryable `PROVIDER_UNAVAILABLE` errors. A save rejected with HTTP 422 maps to `DOMAIN_CONFLICT` when Spaceship's message reports a conflict. Other HTTP 422 responses, such as an invalid address, map to `INVALID_CONFIGURATION`.
 
 Official reference: [Spaceship API documentation](https://docs.spaceship.dev/).
