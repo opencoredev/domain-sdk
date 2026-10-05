@@ -1,0 +1,72 @@
+---
+title: Namecheap DNS
+description: Write routing and verification records to Namecheap BasicDNS with a server-side TypeScript adapter.
+icon: namecheap
+---
+
+## Credentials and DNS setup
+
+The `namecheap` adapter manages DNS records for domains on Namecheap BasicDNS. It does not register domains, switch nameservers, or issue certificates. PremiumDNS and FreeDNS zones cannot be managed through this API.
+
+Enable API access in your Namecheap account, generate an API key, and whitelist the IPv4 address your server uses for outbound requests. API access requires an eligible account. Store the API user, API key, and whitelisted IP in server-only configuration. `userName` defaults to `apiUser`; set it explicitly when the account making the request differs from the account owning the domain.
+
+```ts title="dns.ts"
+import { createDnsClient } from "@opencoredev/domain-sdk";
+import { namecheap } from "@opencoredev/domain-sdk/namecheap";
+
+export const dns = createDnsClient({
+  provider: namecheap({
+    apiUser: process.env.NAMECHEAP_API_USER!,
+    apiKey: process.env.NAMECHEAP_API_KEY!,
+    clientIp: process.env.NAMECHEAP_CLIENT_IP!,
+  }),
+});
+
+const zone = await dns.getZone("customer.co.uk");
+if (!zone.authoritative) {
+  throw new Error("Configure Namecheap BasicDNS before writing records.");
+}
+```
+
+Use `sandbox: true` with a Namecheap sandbox account to target the sandbox API. Credentials and request data are sent in form-encoded POST bodies, not URL query strings.
+
+## Apply a hosting provider's records
+
+Pass the `Domain` returned by your hosting provider to `applyDomainRecords`. The DNS client writes missing required routing and verification records and leaves matching records alone.
+
+```ts title="connect-domain.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+import { dns } from "./dns";
+
+const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+  }),
+});
+
+const domain = await domains.add("app.customer.co.uk");
+await dns.applyDomainRecords(domain, { zone: "customer.co.uk" });
+const verified = await domains.verify(domain.hostname);
+```
+
+Conflicting routing records produce `DOMAIN_CONFLICT` by default. Use `onConflict: "replace"` only when your application has permission to remove those records. Set `includeOptional: true` to include optional records returned by the hosting provider. DNS propagation can delay verification after a successful write.
+
+## Supported records and limits
+
+The adapter writes A, AAAA, ALIAS, CAA, CNAME, and TXT records. ANAME is not supported. TTLs range from 60 to 60000 seconds; the default is 1800 seconds and can be changed with the adapter's `ttl` option. CAA values use presentation format, such as `0 issue "letsencrypt.org"`.
+
+`listRecords()` returns every host record, including MX, URL, FRAME, and NS records that the SDK does not create. All returned records are editable. `getZone()` reports the nameservers and whether Namecheap reports the zone as using its DNS. A zone that is not using BasicDNS cannot be changed by this adapter; it returns `INVALID_CONFIGURATION` rather than changing nameservers.
+
+Namecheap limits API usage to 50 requests per minute, 700 per hour, and 8000 per day. A mutation uses at least three requests: read, replace, and verification read. The DNS client may make additional reads for conflict detection and returning results. Rate-limit errors are retryable; when Namecheap supplies a `Retry-After` header, the error exposes `retryAfter` in milliseconds.
+
+## Whole-zone writes
+
+Namecheap's `setHosts` replaces the entire host list. The adapter reads the current list, applies the requested change, preserves unrelated records and the returned email mode, then reads again to verify the result. MX records and their priorities are retained even when the email mode is MX or MXE.
+
+Writes to one zone are serialized within an adapter instance. Separate instances, other processes, and concurrent dashboard edits are not protected by that queue. A change made after the initial read can be overwritten by `setHosts`. Use one DNS writer per zone and avoid dashboard changes during SDK writes. Post-write verification detects a mismatched result but cannot recover a dashboard edit that was already overwritten.
+
+An IP whitelist error returns `PERMISSION_DENIED` with guidance to whitelist the server's IPv4 address. Rejected API credentials return `AUTHENTICATION_FAILED`. If verification of a write fails, re-read the zone before deciding whether to retry.
+
+Official references: [API introduction](https://www.namecheap.com/support/api/intro/), [getHosts](https://www.namecheap.com/support/api/methods/domains-dns/get-hosts/), [setHosts](https://www.namecheap.com/support/api/methods/domains-dns/set-hosts/), and [getList](https://www.namecheap.com/support/api/methods/domains-dns/get-list/).

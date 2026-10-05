@@ -35,6 +35,7 @@ const providers = [
   { id: "netlify", name: "Netlify", href: "/docs/providers/netlify" },
   { id: "bunny", name: "bunny.net", href: "/docs/providers/bunny" },
   { id: "porkbun", name: "Porkbun", href: "/docs/providers/porkbun" },
+  { id: "namecheap", name: "Namecheap", href: "/docs/providers/namecheap" },
 ] as const;
 
 const providerLoop = Array.from({ length: 4 }, () => providers).flat();

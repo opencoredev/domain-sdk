@@ -1,6 +1,6 @@
 ---
 title: Custom domain provider comparison
-description: Compare custom domain support across Vercel, Cloudflare for SaaS, Railway, Render, Netlify, and bunny.net, plus the Porkbun DNS adapter.
+description: Compare custom domain support across Vercel, Cloudflare for SaaS, Railway, Render, Netlify, and bunny.net, plus the Porkbun and Namecheap DNS adapters.
 ---
 
 Choose the provider where your application already serves traffic. Domain SDK normalizes the lifecycle, but credentials, resource scope, DNS requirements, and platform limits remain provider-specific.
@@ -34,12 +34,19 @@ Cloudflare for SaaS requires a CNAME target, so the current adapter does not cla
 
 ## DNS adapters
 
-A DNS adapter writes the records a hosting provider asks for into a zone at your registrar. Pass it to `createDnsClient()`, then call `applyDomainRecords()` with the `Domain` a hosting adapter returned. The adapter writes A, AAAA, CNAME, ALIAS, TXT, and CAA records. It does not register domains, change nameservers, or issue certificates.
+DNS adapters write the records a hosting provider asks for into a zone at your registrar. Pass them to `createDnsClient()`, then call `applyDomainRecords()` with the `Domain` a hosting adapter returned. Both write A, AAAA, CNAME, ALIAS, TXT, and CAA records. They do not register domains, change nameservers, or issue certificates.
 
 <Cards>
   <Card title="Porkbun" href="/docs/providers/porkbun" />
+  <Card title="Namecheap" href="/docs/providers/namecheap" />
 </Cards>
 
-Porkbun accepts TTLs from 600 to 86400 seconds and writes each record individually.
+| Capability          |  Porkbun  |   Namecheap    |
+| ------------------- | :-------: | :------------: |
+| TTL range (seconds) | 600–86400 |    60–60000    |
+| Per-record writes   |     ✓     | — (whole zone) |
+| Delegation check    |     ✓     |       ✓        |
+
+Namecheap's API replaces every host in a zone on each write. The adapter reads the zone, changes only the requested records, and writes the result back, so use one writer per zone. See the [Namecheap page](./namecheap.mdx) for details.
 
 Provider credentials belong to your SaaS account, never to the customer. The memory adapter is available separately for [testing](./testing.mdx), not as a production provider.

@@ -10,6 +10,7 @@ import {
   createDnsClient,
 } from "@opencoredev/domain-sdk";
 import { cloudflareSaaS } from "@opencoredev/domain-sdk/cloudflare";
+import { namecheap } from "@opencoredev/domain-sdk/namecheap";
 import { porkbun } from "@opencoredev/domain-sdk/porkbun";
 import { railway } from "@opencoredev/domain-sdk/railway";
 import {
@@ -38,6 +39,7 @@ const tenantHostname: string = subdomains.toHostname("tenant");
 const mock: Domain = createMockDomain();
 const dnsProviders: DnsProvider[] = [
   porkbun({ apiKey: "test", secretApiKey: "test" }),
+  namecheap({ apiUser: "test", apiKey: "test", clientIp: "192.0.2.1" }),
   memoryDnsProvider(),
 ];
 const dns: DnsClient = createDnsClient({ provider: dnsProviders[0]! });
