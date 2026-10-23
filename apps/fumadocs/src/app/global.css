@@ -1183,10 +1183,11 @@ html > body[data-scroll-locked] {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: center;
-  gap: 30px;
+  gap: 40px 30px;
   width: min(1440px, calc(100% - 64px));
   min-height: 150px;
   margin: 0 auto;
+  padding: 62px 0 64px;
   color: #817f78;
   font-size: 12px;
 }
@@ -1202,6 +1203,27 @@ html > body[data-scroll-locked] {
   transition: color 180ms ease;
 }
 .home-footer > div a:hover {
+  color: #fff;
+}
+.home-footer-family {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-direction: column;
+  gap: 16px;
+}
+.home-footer-family ul {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 24px;
+}
+.home-footer-family a {
+  line-height: 17px;
+  transition: color 180ms ease;
+}
+.home-footer-family a span {
+  color: var(--home-paper);
+}
+.home-footer-family a:hover {
   color: #fff;
 }
 
@@ -1293,6 +1315,9 @@ html > body[data-scroll-locked] {
     grid-template-columns: 1fr;
     padding: 46px 0;
   }
+  .home-footer-family ul {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .home-footer > div {
     justify-self: start;
     flex-wrap: wrap;
@@ -1300,6 +1325,9 @@ html > body[data-scroll-locked] {
 }
 
 @media (max-width: 560px) {
+  .home-footer-family ul {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .home-nav {
     min-height: 78px;
     padding: 0;
