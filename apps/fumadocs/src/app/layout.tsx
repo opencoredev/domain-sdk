@@ -36,6 +36,15 @@ export const metadata: Metadata = {
     description: siteConfig.description,
     siteName: siteConfig.name,
     locale: "en_US",
+    videos: [
+      {
+        url: absoluteUrl("/og/og-video.mp4"),
+        secureUrl: absoluteUrl("/og/og-video.mp4"),
+        type: "video/mp4",
+        width: 2400,
+        height: 1260,
+      },
+    ],
   },
   twitter: {
     card: "summary_large_image",
