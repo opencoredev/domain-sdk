@@ -23,9 +23,13 @@ import { DomainLogo } from "@/components/domain-logo";
 import { JsonLd } from "@/components/json-ld";
 import { ProviderLogo } from "@/components/provider-logo";
 import { track } from "@/lib/analytics";
+import { otherOpenCoreSites } from "@/lib/opencore-sites";
 import { absoluteUrl, siteConfig } from "@/lib/seo";
 
 gsap.registerPlugin(useGSAP, ScrollTrigger);
+
+// Plain followed links on purpose: they share authority between our sites.
+const openCoreSites = otherOpenCoreSites("https://www.domain-sdk.dev");
 
 const providers = [
   { id: "vercel", name: "Vercel", href: "/docs/providers/vercel" },
@@ -611,6 +615,18 @@ export default function HomePage() {
           <Link href="/docs/project/contributing">Contributing</Link>
           <Link href="https://github.com/sponsors/opencoredev">Sponsor</Link>
         </div>
+        <nav aria-labelledby="home-footer-family-label" className="home-footer-family">
+          <span id="home-footer-family-label">More from OpenCore</span>
+          <ul>
+            {openCoreSites.map((site) => (
+              <li key={site.url}>
+                <a href={site.url}>
+                  <span>{site.name}</span> {site.description}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
       </footer>
     </main>
   );
