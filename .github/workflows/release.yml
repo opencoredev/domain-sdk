@@ -1,0 +1,105 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Expected npm version (e.g. 0.3.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Version and publish
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Validate release commit
+        run: |
+          git fetch origin main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::The release commit must be an ancestor of origin/main."
+            exit 1
+          fi
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+          package-manager-cache: false
+      - name: Require npm token
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [[ -z "$NPM_TOKEN" ]]; then
+            echo "::error::Configure the NPM_TOKEN repository secret before releasing."
+            exit 1
+          fi
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+      - run: bun run test
+      - run: bun run release:check
+      - run: bun run release:build
+      - run: bun run test:registry
+      - run: bun run registry:validate
+      - run: bun run tegami version
+      - name: Validate version and publish lock
+        env:
+          EXPECTED_VERSION: ${{ inputs.version }}
+        run: |
+          expected_version="$EXPECTED_VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            expected_version="${GITHUB_REF_NAME#v}"
+          fi
+          actual_version="$(node -p "require('./packages/sdk/package.json').version")"
+          if [[ "$actual_version" != "$expected_version" ]]; then
+            echo "::error::The generated SDK version does not match the requested release version."
+            exit 1
+          fi
+          if [[ ! -f .tegami/publish-lock.yaml ]]; then
+            echo "::error::Tegami did not generate .tegami/publish-lock.yaml."
+            exit 1
+          fi
+      - run: bun run release:build
+      - name: Preserve release state before publishing
+        run: |
+          if [[ -f packages/sdk/CHANGELOG.md ]]; then
+            git add -N -- packages/sdk/CHANGELOG.md
+          fi
+          git add -N -- .tegami/publish-lock.yaml
+          git diff --binary HEAD -- .tegami packages/sdk/package.json packages/sdk/CHANGELOG.md bun.lock > "$RUNNER_TEMP/release-state.patch"
+      - run: bun run tegami publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
+      - run: bun run tegami cleanup
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_PROVENANCE: "true"
+      - name: Preserve cleaned release state
+        run: |
+          git diff --binary HEAD -- .tegami packages/sdk/package.json packages/sdk/CHANGELOG.md bun.lock > "$RUNNER_TEMP/release-state.patch"
+      - name: Upload release state for a reviewed follow-up PR
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-state
+          path: ${{ runner.temp }}/release-state.patch
+          if-no-files-found: error
