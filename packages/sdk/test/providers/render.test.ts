@@ -155,6 +155,21 @@ describe("Render adapter", () => {
     expect(serviceCalls).toBe(1);
   });
 
+  test("an already-cancelled call does not start the service lookup", async () => {
+    const mock = mockFetch((url) =>
+      url.pathname === "/v1/services/srv_123"
+        ? json({ message: "unavailable" }, 503)
+        : json(pendingDomain),
+    );
+    const provider = render({ apiKey: "key", serviceId: "srv_123", fetch: mock.fetch });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      provider.list!({ limit: 10 }, { logger: {}, signal: controller.signal }),
+    ).rejects.toMatchObject({ code: "ABORTED" });
+    expect(mock.calls.some((call) => call.url.endsWith("/v1/services/srv_123"))).toBe(false);
+  });
+
   test("validates configuration and normalizes provider failures", async () => {
     expect(() => render({ apiKey: "", serviceId: "service" })).toThrow();
     const mock = mockFetch(() => json({ message: "slow down" }, 429, { "retry-after": "2" }));
