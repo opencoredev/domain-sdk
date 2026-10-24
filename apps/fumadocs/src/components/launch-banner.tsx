@@ -5,7 +5,8 @@ import type { MouseEvent } from "react";
 import { track } from "@/lib/analytics";
 
 // gradients.sh, tagged so its analytics show which site sent the visitor.
-const LAUNCH_POST_URL = "https://gradients.sh/?utm_source=domain-sdk.dev&utm_medium=banner&utm_campaign=gradients-launch";
+const LAUNCH_POST_URL =
+  "https://gradients.sh/?utm_source=domain-sdk.dev&utm_medium=banner&utm_campaign=gradients-launch";
 
 const promo = { project: "gradients-sh", placement: "banner" };
 
