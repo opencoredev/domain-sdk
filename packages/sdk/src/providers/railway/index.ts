@@ -305,8 +305,7 @@ export function railway(options: RailwayOptions): RailwayProvider {
         });
       const raw = await listRaw(context);
       const page = raw.slice(offset, offset + input.limit);
-      const domains: Domain[] = [];
-      for (const item of page) if (item.id) domains.push(await getById(item.id, context));
+      const domains = page.filter((item) => item.id).map((item) => normalize(item));
       const next = offset + page.length;
       return { domains, nextCursor: next < raw.length ? String(next) : undefined };
     },

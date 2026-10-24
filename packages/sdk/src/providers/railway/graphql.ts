@@ -6,6 +6,7 @@ export const DOMAINS_QUERY = `query DomainSdkDomains($projectId: String!, $envir
       status {
         verificationToken
         dnsRecords { hostlabel requiredValue currentValue status }
+        certificateStatus
       }
     }
   }

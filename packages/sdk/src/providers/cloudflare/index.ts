@@ -257,15 +257,14 @@ export function cloudflareSaaS(options: CloudflareSaaSOptions): CloudflareSaaSPr
     return envelope?.result?.find((item) => item.hostname?.toLowerCase() === hostname);
   };
   const get = async ({ hostname }: ProviderDomainInput, context: ProviderContext) => {
-    const summary = await find(hostname, context);
-    if (!summary?.id)
+    const found = await find(hostname, context);
+    if (!found?.id)
       throw new DomainSdkError(
         "DOMAIN_NOT_FOUND",
         `${hostname} is not configured in this Cloudflare zone.`,
         { provider: "cloudflare" },
       );
-    const envelope = await request<CfHostname>(`/${encodeURIComponent(summary.id)}`, context);
-    return normalize(envelope!.result!);
+    return normalize(found);
   };
   return {
     id: "cloudflare",
@@ -325,12 +324,7 @@ export function cloudflareSaaS(options: CloudflareSaaSOptions): CloudflareSaaSPr
         `?page=${page}&per_page=${input.limit}`,
         context,
       );
-      const domains: Domain[] = [];
-      for (const summary of envelope!.result!) {
-        if (!summary.id) continue;
-        const details = await request<CfHostname>(`/${encodeURIComponent(summary.id)}`, context);
-        domains.push(normalize(details!.result!));
-      }
+      const domains = envelope!.result!.filter((item) => item.id).map((item) => normalize(item));
       const totalPages = envelope?.result_info?.total_pages ?? page;
       return { domains, nextCursor: page < totalPages ? String(page + 1) : undefined };
     },

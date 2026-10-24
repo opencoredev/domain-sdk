@@ -1,4 +1,3 @@
-import { isIP } from "node:net";
 import { getDomainWithoutSuffix, getPublicSuffix } from "tldts";
 
 import {
@@ -108,13 +107,21 @@ function hostKey(host: Host, zone: string): string {
   ]);
 }
 
+function isIPv4(value: string): boolean {
+  const octets = value.split(".");
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => /^(?:0|[1-9]\d{0,2})$/.test(octet) && Number(octet) <= 255)
+  );
+}
+
 export function namecheap(options: NamecheapOptions): DnsProvider {
   const apiUser = requireString(options.apiUser, "apiUser", "namecheap");
   const apiKey = requireString(options.apiKey, "apiKey", "namecheap");
   const userName = requireString(options.userName ?? apiUser, "userName", "namecheap");
   const clientIp = requireString(options.clientIp, "clientIp", "namecheap");
   const ttl = options.ttl ?? 1800;
-  if (isIP(clientIp) !== 4 || !Number.isInteger(ttl) || ttl < 60 || ttl > 60000)
+  if (!isIPv4(clientIp) || !Number.isInteger(ttl) || ttl < 60 || ttl > 60000)
     throw new DomainSdkError(
       "INVALID_CONFIGURATION",
       "Namecheap requires an IPv4 clientIp and a TTL between 60 and 60000 seconds.",

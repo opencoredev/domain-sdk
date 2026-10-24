@@ -95,6 +95,81 @@ describe("Render adapter", () => {
     );
   });
 
+  test("fetches the service hostname once per instance and retries after a failure", async () => {
+    let serviceCalls = 0;
+    const mock = mockFetch((url, init) => {
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/v1/services/srv_123") {
+        serviceCalls += 1;
+        return serviceCalls === 1
+          ? json({ message: "unavailable" }, 503)
+          : json({ serviceDetails: { url: "https://domain-sdk.onrender.com" } });
+      }
+      if (url.pathname.endsWith("/verify") && method === "POST")
+        return new Response(undefined, { status: 202 });
+      if (url.pathname.endsWith("/custom-domains/app.customer.com")) return json(pendingDomain);
+      if (url.pathname.endsWith("/custom-domains"))
+        return json([{ customDomain: pendingDomain, cursor: "cursor-1" }]);
+      return json({ message: `Unhandled ${method} ${url.pathname}` }, 500);
+    });
+    const provider = render({ apiKey: "key", serviceId: "srv_123", fetch: mock.fetch });
+    const context = { logger: {} };
+    await expect(provider.get({ hostname: "app.customer.com" }, context)).rejects.toThrow();
+    await provider.get({ hostname: "app.customer.com" }, context);
+    await provider.add({ hostname: "app.customer.com" }, context);
+    await provider.verify!({ hostname: "app.customer.com" }, context);
+    const page = await provider.list!({ limit: 10 }, context);
+    expect(page.domains[0]?.records[0]?.value).toBe("domain-sdk.onrender.com");
+    expect(serviceCalls).toBe(2);
+  });
+
+  test("one caller's cancellation does not cancel a shared service lookup", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let serviceCalls = 0;
+    const mock = mockFetch(async (url, init) => {
+      if (url.pathname === "/v1/services/srv_123") {
+        serviceCalls += 1;
+        expect(init?.signal).toBeUndefined();
+        await gate;
+        return json({ serviceDetails: { url: "https://domain-sdk.onrender.com" } });
+      }
+      if (url.pathname.endsWith("/custom-domains/app.customer.com")) return json(pendingDomain);
+      return json({ message: "Unhandled" }, 500);
+    });
+    const provider = render({ apiKey: "key", serviceId: "srv_123", fetch: mock.fetch });
+    const first = new AbortController();
+    const second = new AbortController();
+    const cancelled = provider.get(
+      { hostname: "app.customer.com" },
+      { logger: {}, signal: first.signal },
+    );
+    const kept = provider.get(
+      { hostname: "app.customer.com" },
+      { logger: {}, signal: second.signal },
+    );
+    first.abort();
+    await expect(cancelled).rejects.toMatchObject({ code: "ABORTED" });
+    release();
+    expect((await kept).hostname).toBe("app.customer.com");
+    expect(serviceCalls).toBe(1);
+  });
+
+  test("an already-cancelled call does not start the service lookup", async () => {
+    const mock = mockFetch((url) =>
+      url.pathname === "/v1/services/srv_123"
+        ? json({ message: "unavailable" }, 503)
+        : json(pendingDomain),
+    );
+    const provider = render({ apiKey: "key", serviceId: "srv_123", fetch: mock.fetch });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      provider.list!({ limit: 10 }, { logger: {}, signal: controller.signal }),
+    ).rejects.toMatchObject({ code: "ABORTED" });
+    expect(mock.calls.some((call) => call.url.endsWith("/v1/services/srv_123"))).toBe(false);
+  });
+
   test("validates configuration and normalizes provider failures", async () => {
     expect(() => render({ apiKey: "", serviceId: "service" })).toThrow();
     const mock = mockFetch(() => json({ message: "slow down" }, 429, { "retry-after": "2" }));

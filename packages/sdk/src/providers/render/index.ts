@@ -96,7 +96,7 @@ export function render(options: RenderOptions): RenderProvider {
   const getRaw = (hostname: string, context: ProviderContext, absent = false) =>
     request<RenderCustomDomain>(customDomainPath(hostname), context, undefined, absent);
 
-  const getServiceHostname = async (context: ProviderContext): Promise<string> => {
+  const fetchServiceHostname = async (context: ProviderContext): Promise<string> => {
     const raw = await request<RenderService>(`/services/${encodeURIComponent(serviceId)}`, context);
     if (!raw?.serviceDetails?.url)
       throw new DomainSdkError("REQUEST_FAILED", "Render returned an invalid service response.", {
@@ -110,6 +110,27 @@ export function render(options: RenderOptions): RenderProvider {
         cause: error,
       });
     }
+  };
+
+  let serviceHostname: Promise<string> | undefined;
+  const getServiceHostname = (context: ProviderContext): Promise<string> => {
+    const signal = context.signal;
+    const aborted = () =>
+      new DomainSdkError("ABORTED", "The Render request was cancelled.", { provider: "render" });
+    if (signal?.aborted) return Promise.reject(aborted());
+    serviceHostname ??= fetchServiceHostname({ ...context, signal: undefined }).catch(
+      (error: unknown) => {
+        serviceHostname = undefined;
+        throw error;
+      },
+    );
+    const shared = serviceHostname;
+    if (!signal) return shared;
+    return new Promise((resolve, reject) => {
+      const onAbort = () => reject(aborted());
+      signal.addEventListener("abort", onAbort, { once: true });
+      shared.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    });
   };
 
   const normalize = (raw: RenderCustomDomain, serviceHostname: string): Domain => {
