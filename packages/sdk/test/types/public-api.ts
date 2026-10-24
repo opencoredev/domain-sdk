@@ -6,6 +6,8 @@ import {
   type DnsClient,
   type DnsProvider,
   type DomainProvider,
+  type DnsZoneLock,
+  type RetryOptions,
   type ZoneRecord,
   createDnsClient,
 } from "@opencoredev/domain-sdk";
@@ -53,3 +55,8 @@ void records;
 void tenantHostname;
 void mock;
 void DomainSdkError;
+
+const retry: RetryOptions = { maxAttempts: 2, baseDelayMs: 100, maxDelayMs: 1_000 };
+const lock: DnsZoneLock = (_zone, task) => task();
+createDnsClient({ provider: memoryDnsProvider(), retry, lock });
+createDomainClient({ provider: memoryProvider(), retry });

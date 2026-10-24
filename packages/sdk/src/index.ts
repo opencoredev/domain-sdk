@@ -27,6 +27,7 @@ export type {
   DnsProviderZoneInput,
   DnsRecordInput,
   DnsZone,
+  DnsZoneLock,
   EnsureRecordsOptions,
   RemoveRecordsOptions,
   ZoneRecord,
@@ -56,6 +57,7 @@ export type {
   DomainVerification,
   ListDomainsOptions,
   RequestOptions,
+  RetryOptions,
   VerificationStatus,
   WaitUntilActiveOptions,
 } from "./core/types";

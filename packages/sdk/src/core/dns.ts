@@ -3,7 +3,15 @@ import { getDomain } from "tldts";
 import { assertServerEnvironment } from "./client";
 import { DomainSdkError, normalizeUnknownError } from "./errors";
 import { normalizeHostname } from "./hostname";
-import type { DnsRecord, DnsRecordType, Domain, DomainLogger, RequestOptions } from "./types";
+import { withRetry } from "./http";
+import type {
+  DnsRecord,
+  DnsRecordType,
+  Domain,
+  DomainLogger,
+  RequestOptions,
+  RetryOptions,
+} from "./types";
 
 /** A record the SDK can write into a DNS zone. */
 export interface DnsRecordInput {
@@ -111,9 +119,20 @@ export interface ApplyDomainRecordsOptions extends EnsureRecordsOptions {
   includeOptional?: boolean;
 }
 
+/** Runs `task` while holding an exclusive lock on `zone`, then releases it. */
+export type DnsZoneLock = <T>(zone: string, task: () => Promise<T>) => Promise<T>;
+
 export interface DnsClientOptions {
   provider: DnsProvider;
   logger?: DomainLogger;
+  /** Retry rate limits and transient outages. Pass `{ maxAttempts: 1 }` to disable. */
+  retry?: RetryOptions;
+  /**
+   * Serializes writes to one zone. Defaults to an in-memory queue, which only protects
+   * writes made by this process. Pass a Redis, Postgres, or similar lock when several
+   * workers or serverless instances write to the same zones.
+   */
+  lock?: DnsZoneLock;
 }
 
 export interface DnsClient {
@@ -277,7 +296,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
   const queues = new Map<string, Promise<unknown>>();
 
   /** Run read-then-write operations on one zone one at a time, so each sees the last write. */
-  const serialize = <T>(zone: string, operation: () => Promise<T>): Promise<T> => {
+  const memoryLock: DnsZoneLock = <T>(zone: string, operation: () => Promise<T>): Promise<T> => {
     const pending = (queues.get(zone) ?? Promise.resolve()).catch(() => {}).then(operation);
     queues.set(zone, pending);
     void pending
@@ -287,11 +306,31 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       });
     return pending;
   };
+  const lock = options.lock ?? memoryLock;
 
-  const run = async <T>(name: string, zone: string, operation: () => Promise<T>): Promise<T> => {
+  const run = async <T>(
+    name: string,
+    zone: string,
+    operation: () => Promise<T>,
+    signal?: AbortSignal,
+  ): Promise<T> => {
     logger.debug?.("DNS operation started.", { provider: provider.id, operation: name, zone });
     try {
-      const result = await operation();
+      const result = await withRetry(operation, {
+        retry: options.retry,
+        signal,
+        // A failed replacement was already rolled back; the caller decides whether to try again.
+        shouldRetry: (error) => error.details?.restored === undefined,
+        onRetry: (error, attempt, delayMs) =>
+          logger.warn?.("DNS operation will be retried.", {
+            provider: provider.id,
+            operation: name,
+            zone,
+            code: error.code,
+            attempt,
+            delayMs,
+          }),
+      });
       logger.info?.("DNS operation completed.", { provider: provider.id, operation: name, zone });
       return result;
     } catch (error) {
@@ -373,80 +412,86 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
   ): Promise<ZoneRecord[]> => {
     if (!records.length && !optional.length) return Promise.resolve([]);
     const zone = resolveZone(records.length ? records : optional, options.zone);
-    return run("ensureRecords", zone, () =>
-      serialize(zone, async () => {
-        const wanted = normalizeRecords(records, zone);
-        // Reject a self-contradicting request before anything in the zone is touched.
-        for (const [index, record] of wanted.entries()) {
-          const clash = wanted.slice(index + 1).find((other) => incompatible(record, other));
-          if (clash)
-            throw new DomainSdkError(
-              "INVALID_CONFIGURATION",
-              `${record.type} and ${clash.type} records cannot share the name ${record.name}.`,
-              { provider: provider.id, details: { name: record.name } },
-            );
-        }
-        const alternatives = normalizeRecords(optional, zone);
-        if (!wanted.length && !alternatives.length) return [];
-        const ctx = context(options.signal);
-        const existing = await provider.listRecords({ zone }, ctx);
-        // Optional records are often alternatives. Prefer ones already in the zone, then keep only
-        // those that fit the records chosen so far.
-        const present = (record: DnsRecordInput) =>
-          existing.some((item) => sameRecord(item, record));
-        for (const record of [
-          ...alternatives.filter(present),
-          ...alternatives.filter((record) => !present(record)),
-        ])
-          if (!wanted.some((other) => sameRecord(other, record) || incompatible(other, record)))
-            wanted.push(record);
-        const isWanted = (item: ZoneRecord) => wanted.some((record) => sameRecord(item, record));
-        const missing = wanted.filter(
-          (record) => !existing.some((item) => sameRecord(item, record)),
-        );
-        // Records that are already part of the requested set are never conflicts. Every requested
-        // record is checked, so a stale address beside a requested one is still reported.
-        const conflicts = existing.filter(
-          (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
-        );
-        if (conflicts.length) {
-          // A record the provider cannot create again could not be restored if the replacement
-          // failed, so it blocks replacement just like a record the host manages.
-          const locked = conflicts.filter(
-            (item) =>
-              !item.editable ||
-              !provider.capabilities.recordTypes.includes(item.type as DnsRecordType),
-          );
-          if (locked.length || (options.onConflict ?? "error") === "error")
-            throw new DomainSdkError(
-              "DOMAIN_CONFLICT",
-              `Existing DNS records in ${zone} conflict with the records being written.`,
-              {
-                provider: provider.id,
-                details: {
-                  conflicts: conflicts.map(({ type, name, value, editable }) => ({
-                    type,
-                    name,
-                    value,
-                    editable,
-                  })),
-                },
-              },
-            );
-          let creating = false;
-          try {
-            await provider.deleteRecords({ zone, records: conflicts }, ctx);
-            creating = true;
-            if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
-          } catch (error) {
-            // Nothing was created when the delete failed, so leave every requested record alone.
-            return restore(zone, conflicts, creating ? missing : [], error);
+    return run(
+      "ensureRecords",
+      zone,
+      () =>
+        lock(zone, async () => {
+          const wanted = normalizeRecords(records, zone);
+          // Reject a self-contradicting request before anything in the zone is touched.
+          for (const [index, record] of wanted.entries()) {
+            const clash = wanted.slice(index + 1).find((other) => incompatible(record, other));
+            if (clash)
+              throw new DomainSdkError(
+                "INVALID_CONFIGURATION",
+                `${record.type} and ${clash.type} records cannot share the name ${record.name}.`,
+                { provider: provider.id, details: { name: record.name } },
+              );
           }
-        } else if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
-        const after =
-          missing.length || conflicts.length ? await provider.listRecords({ zone }, ctx) : existing;
-        return after.filter((item) => wanted.some((record) => sameRecord(item, record)));
-      }),
+          const alternatives = normalizeRecords(optional, zone);
+          if (!wanted.length && !alternatives.length) return [];
+          const ctx = context(options.signal);
+          const existing = await provider.listRecords({ zone }, ctx);
+          // Optional records are often alternatives. Prefer ones already in the zone, then keep only
+          // those that fit the records chosen so far.
+          const present = (record: DnsRecordInput) =>
+            existing.some((item) => sameRecord(item, record));
+          for (const record of [
+            ...alternatives.filter(present),
+            ...alternatives.filter((record) => !present(record)),
+          ])
+            if (!wanted.some((other) => sameRecord(other, record) || incompatible(other, record)))
+              wanted.push(record);
+          const isWanted = (item: ZoneRecord) => wanted.some((record) => sameRecord(item, record));
+          const missing = wanted.filter(
+            (record) => !existing.some((item) => sameRecord(item, record)),
+          );
+          // Records that are already part of the requested set are never conflicts. Every requested
+          // record is checked, so a stale address beside a requested one is still reported.
+          const conflicts = existing.filter(
+            (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
+          );
+          if (conflicts.length) {
+            // A record the provider cannot create again could not be restored if the replacement
+            // failed, so it blocks replacement just like a record the host manages.
+            const locked = conflicts.filter(
+              (item) =>
+                !item.editable ||
+                !provider.capabilities.recordTypes.includes(item.type as DnsRecordType),
+            );
+            if (locked.length || (options.onConflict ?? "error") === "error")
+              throw new DomainSdkError(
+                "DOMAIN_CONFLICT",
+                `Existing DNS records in ${zone} conflict with the records being written.`,
+                {
+                  provider: provider.id,
+                  details: {
+                    conflicts: conflicts.map(({ type, name, value, editable }) => ({
+                      type,
+                      name,
+                      value,
+                      editable,
+                    })),
+                  },
+                },
+              );
+            let creating = false;
+            try {
+              await provider.deleteRecords({ zone, records: conflicts }, ctx);
+              creating = true;
+              if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
+            } catch (error) {
+              // Nothing was created when the delete failed, so leave every requested record alone.
+              return restore(zone, conflicts, creating ? missing : [], error);
+            }
+          } else if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
+          const after =
+            missing.length || conflicts.length
+              ? await provider.listRecords({ zone }, ctx)
+              : existing;
+          return after.filter((item) => wanted.some((record) => sameRecord(item, record)));
+        }),
+      options.signal,
     );
   };
 
@@ -533,31 +578,41 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             { provider: provider.id },
           ),
         );
-      return run("getZone", normalized, () =>
-        provider.getZone!({ zone: normalized }, context(request?.signal)),
+      return run(
+        "getZone",
+        normalized,
+        () => provider.getZone!({ zone: normalized }, context(request?.signal)),
+        request?.signal,
       );
     },
     listRecords(zone, request) {
       const normalized = normalizeZone(zone);
-      return run("listRecords", normalized, () =>
-        provider.listRecords({ zone: normalized }, context(request?.signal)),
+      return run(
+        "listRecords",
+        normalized,
+        () => provider.listRecords({ zone: normalized }, context(request?.signal)),
+        request?.signal,
       );
     },
     ensureRecords,
     removeRecords(records, remove = {}) {
       if (!records.length) return Promise.resolve();
       const zone = resolveZone(records, remove.zone);
-      return run("removeRecords", zone, () =>
-        serialize(zone, async () => {
-          const wanted = normalizeRecords(records, zone, true);
-          if (!wanted.length) return;
-          const ctx = context(remove.signal);
-          const existing = await provider.listRecords({ zone }, ctx);
-          const matches = existing.filter(
-            (item) => item.editable && wanted.some((record) => sameRecord(item, record)),
-          );
-          if (matches.length) await provider.deleteRecords({ zone, records: matches }, ctx);
-        }),
+      return run(
+        "removeRecords",
+        zone,
+        () =>
+          lock(zone, async () => {
+            const wanted = normalizeRecords(records, zone, true);
+            if (!wanted.length) return;
+            const ctx = context(remove.signal);
+            const existing = await provider.listRecords({ zone }, ctx);
+            const matches = existing.filter(
+              (item) => item.editable && wanted.some((record) => sameRecord(item, record)),
+            );
+            if (matches.length) await provider.deleteRecords({ zone, records: matches }, ctx);
+          }),
+        remove.signal,
       );
     },
     applyDomainRecords(domain, apply = {}) {

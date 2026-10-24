@@ -264,6 +264,7 @@ describe("bunny.net adapter", () => {
     await expect(
       createDomainClient({
         provider: bunny({ apiKey: "key", pullZoneId: 4321, fetch: rateLimited.fetch }),
+        retry: { maxAttempts: 1 },
       }).get("app.customer.com"),
     ).rejects.toMatchObject({ code: "RATE_LIMITED", retryable: true, retryAfter: 30_000 });
   });

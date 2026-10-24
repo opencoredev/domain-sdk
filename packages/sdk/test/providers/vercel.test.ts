@@ -197,6 +197,7 @@ describe("Vercel adapter", () => {
     );
     const client = createDomainClient({
       provider: vercel({ token: "secret", projectId: "prj_123", fetch: mock.fetch }),
+      retry: { maxAttempts: 1 },
     });
     await expect(client.get("app.customer.com")).rejects.toMatchObject({
       code: "RATE_LIMITED",
