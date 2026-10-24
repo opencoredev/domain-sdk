@@ -100,6 +100,7 @@ describe("Render adapter", () => {
     const mock = mockFetch(() => json({ message: "slow down" }, 429, { "retry-after": "2" }));
     const client = createDomainClient({
       provider: render({ apiKey: "key", serviceId: "srv_123", fetch: mock.fetch }),
+      retry: { maxAttempts: 1 },
     });
     await expect(client.get("app.customer.com")).rejects.toMatchObject({
       code: "RATE_LIMITED",

@@ -1,4 +1,4 @@
-import type { Domain, DomainLogger, DomainPage, ListDomainsOptions } from "./types";
+import type { Domain, DomainLogger, DomainPage, ListDomainsOptions, RetryOptions } from "./types";
 
 export interface DomainProviderCapabilities {
   list: boolean;
@@ -34,6 +34,8 @@ export interface DomainProvider {
 export interface DomainClientOptions {
   provider: DomainProvider;
   logger?: DomainLogger;
+  /** Retry rate limits and transient outages. Pass `{ maxAttempts: 1 }` to disable. */
+  retry?: RetryOptions;
   /** Internal deterministic-test hooks. */
   clock?: { now(): number; sleep(ms: number, signal?: AbortSignal): Promise<void> };
 }
