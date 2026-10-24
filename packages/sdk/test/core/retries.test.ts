@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createDnsClient, createDomainClient, DomainSdkError } from "../../src";
-import type { DnsZoneLock } from "../../src/core/dns";
+import type { DnsZoneLock } from "../../src";
 import { memoryDnsProvider, memoryProvider } from "../../src/testing";
 
 const fakeClock = () => {
@@ -156,6 +156,38 @@ describe("waitUntilActive backoff", () => {
     await expect(
       client.waitUntilActive("app.customer.com", { intervalMs: 5_000, maxIntervalMs: 1_000 }),
     ).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+    for (const invalid of [{ backoffFactor: Number.NaN }, { maxIntervalMs: Number.NaN }])
+      await expect(client.waitUntilActive("app.customer.com", invalid)).rejects.toMatchObject({
+        code: "REQUEST_FAILED",
+      });
+  });
+
+  test("shortens the last wait to poll once more at the deadline", async () => {
+    const memory = memoryProvider();
+    const { sleeps, clock } = fakeClock();
+    const client = createDomainClient({ provider: memory, clock });
+    await client.add("app.customer.com");
+    let polls = 0;
+    const active = await client.waitUntilActive("app.customer.com", {
+      timeoutMs: 30_000,
+      onStatus: () => {
+        if (++polls === 4) memory.activate("app.customer.com");
+      },
+    });
+    expect(active.status).toBe("active");
+    expect(sleeps).toEqual([5_000, 7_500, 11_250, 6_250]);
+  });
+
+  test("times out when the provider's Retry-After passes the deadline", async () => {
+    const memory = memoryProvider();
+    const { sleeps, clock } = fakeClock();
+    const client = createDomainClient({ provider: memory, clock });
+    await client.add("app.customer.com");
+    failGets(memory, [rateLimited(60_000)]);
+    await expect(
+      client.waitUntilActive("app.customer.com", { timeoutMs: 30_000 }),
+    ).rejects.toMatchObject({ code: "TIMEOUT" });
+    expect(sleeps).toEqual([]);
   });
 });
 

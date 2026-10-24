@@ -158,7 +158,12 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       const intervalMs = polling.intervalMs ?? 5_000;
       const backoffFactor = polling.backoffFactor ?? 1.5;
       const maxIntervalMs = polling.maxIntervalMs ?? Math.max(30_000, intervalMs);
-      if (timeoutMs < 0 || intervalMs < 250 || backoffFactor < 1 || maxIntervalMs < intervalMs)
+      if (
+        !(timeoutMs >= 0) ||
+        !(intervalMs >= 250) ||
+        !(backoffFactor >= 1 && Number.isFinite(backoffFactor)) ||
+        !(maxIntervalMs >= intervalMs && Number.isFinite(maxIntervalMs))
+      )
         throw new DomainSdkError(
           "REQUEST_FAILED",
           "Polling timeout must be non-negative, interval must be at least 250ms, backoffFactor at least 1, and maxIntervalMs at least intervalMs.",
@@ -168,7 +173,8 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       for (let poll = 0; ; poll += 1) {
         if (polling.signal?.aborted) throw abortedError(provider.id, polling.signal.reason);
         const backoff = Math.min(maxIntervalMs, intervalMs * backoffFactor ** poll);
-        let retryDelay = polling.jitter ? backoff / 2 + (Math.random() * backoff) / 2 : backoff;
+        const delay = polling.jitter ? backoff / 2 + (Math.random() * backoff) / 2 : backoff;
+        let retryAfter = 0;
         try {
           // The polling loop already retries transient failures, so each poll is one attempt.
           const domain = await get(normalized, polling.signal, { maxAttempts: 1 });
@@ -177,17 +183,18 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
         } catch (error) {
           const normalizedError = normalizeUnknownError(error, provider.id);
           if (!normalizedError.retryable) throw normalizedError;
-          retryDelay = Math.max(retryDelay, normalizedError.retryAfter ?? 0);
+          retryAfter = normalizedError.retryAfter ?? 0;
         }
         const remaining = deadline - clock.now();
-        if (remaining <= 0 || retryDelay > remaining) {
+        // Shorten the last wait to fit the deadline, but never poll before the provider allows.
+        if (remaining <= 0 || retryAfter > remaining) {
           throw new DomainSdkError(
             "TIMEOUT",
             `Timed out waiting for ${normalized} to become active.`,
             { provider: provider.id, retryable: true },
           );
         }
-        await clock.sleep(retryDelay, polling.signal);
+        await clock.sleep(Math.min(Math.max(delay, retryAfter), remaining), polling.signal);
       }
     },
   };

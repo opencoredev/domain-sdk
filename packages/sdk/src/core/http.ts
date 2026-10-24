@@ -5,7 +5,16 @@ export type Fetch = (input: string | URL | Request, init?: RequestInit) => Promi
 
 /** Parse a JSON response body. `maxLength` only bounds the preview kept in error details. */
 export async function readJson(response: Response, maxLength = 16_000): Promise<unknown> {
-  const rawText = await response.text();
+  let rawText: string;
+  try {
+    rawText = await response.text();
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw error;
+    throw new DomainSdkError("PROVIDER_UNAVAILABLE", "The provider response was interrupted.", {
+      retryable: true,
+      cause: error,
+    });
+  }
   if (!rawText) return undefined;
   try {
     return JSON.parse(rawText) as unknown;
@@ -82,9 +91,13 @@ const RETRYABLE_STATUS = new Set([502, 503, 504]);
 export function isTransientError(error: unknown): error is DomainSdkError {
   if (!(error instanceof DomainSdkError) || !error.retryable) return false;
   if (error.code === "RATE_LIMITED") return true;
+  if (error.code === "PROVIDER_UNAVAILABLE")
+    return error.statusCode === undefined || RETRYABLE_STATUS.has(error.statusCode);
+  // A non-JSON outage page, such as a proxy's HTML 503, fails parsing before status mapping.
   return (
-    error.code === "PROVIDER_UNAVAILABLE" &&
-    (error.statusCode === undefined || RETRYABLE_STATUS.has(error.statusCode))
+    error.code === "REQUEST_FAILED" &&
+    error.statusCode !== undefined &&
+    RETRYABLE_STATUS.has(error.statusCode)
   );
 }
 
@@ -109,7 +122,12 @@ export async function withRetry<T>(
   const maxAttempts = options.retry?.maxAttempts ?? 3;
   const baseDelayMs = options.retry?.baseDelayMs ?? 250;
   const maxDelayMs = options.retry?.maxDelayMs ?? 10_000;
-  if (!Number.isInteger(maxAttempts) || maxAttempts < 1 || baseDelayMs < 0 || maxDelayMs < 0)
+  if (
+    !Number.isInteger(maxAttempts) ||
+    maxAttempts < 1 ||
+    !(baseDelayMs >= 0 && Number.isFinite(baseDelayMs)) ||
+    !(maxDelayMs >= 0 && Number.isFinite(maxDelayMs))
+  )
     throw new DomainSdkError(
       "INVALID_CONFIGURATION",
       "retry.maxAttempts must be a positive integer and retry delays must be non-negative.",

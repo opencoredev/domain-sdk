@@ -24,6 +24,26 @@ describe("readJson", () => {
     expect(String((error as DomainSdkError).details?.["response"])).toHaveLength(1_000);
   });
 
+  test("reports an interrupted body as a retryable outage", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"partial":'));
+        controller.error(new TypeError("socket closed"));
+      },
+    });
+    const error = await readJson(new Response(body)).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "PROVIDER_UNAVAILABLE", retryable: true });
+    expect(isTransientError(error)).toBe(true);
+  });
+
+  test("an HTML 503 page is retried", async () => {
+    const error = await readJson(
+      new Response("<html>Service Unavailable</html>", { status: 503 }),
+    ).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "REQUEST_FAILED", statusCode: 503 });
+    expect(isTransientError(error)).toBe(true);
+  });
+
   test("returns undefined for an empty body", async () => {
     expect(await readJson(new Response(""))).toBeUndefined();
   });
@@ -116,8 +136,9 @@ describe("withRetry", () => {
   });
 
   test("rejects invalid retry options", async () => {
-    await expect(withRetry(async () => 1, { retry: { maxAttempts: 0 } })).rejects.toMatchObject({
-      code: "INVALID_CONFIGURATION",
-    });
+    for (const retry of [{ maxAttempts: 0 }, { maxDelayMs: Number.NaN }, { baseDelayMs: -1 }])
+      await expect(withRetry(async () => 1, { retry })).rejects.toMatchObject({
+        code: "INVALID_CONFIGURATION",
+      });
   });
 });
