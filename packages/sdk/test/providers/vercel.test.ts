@@ -170,6 +170,27 @@ describe("Vercel adapter", () => {
     expect(peak).toBe(5);
   });
 
+  test("stops starting config lookups after one fails", async () => {
+    const names = Array.from({ length: 12 }, (_, index) => `d${index}.customer.com`);
+    let configCalls = 0;
+    const mock = mockFetch(async (url) => {
+      if (url.pathname === "/v9/projects/prj_123/domains")
+        return json({
+          domains: names.map((name) => ({ ...projectDomain, name, verified: true })),
+          pagination: { next: null },
+        });
+      configCalls += 1;
+      if (url.pathname === "/v6/domains/d0.customer.com/config")
+        return json({ error: { message: "rate limited" } }, 429);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return json(configuration);
+    });
+    const provider = vercel({ token: "token", projectId: "prj_123", fetch: mock.fetch });
+    await expect(provider.list!({ limit: 20 }, { logger: {} })).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(configCalls).toBe(5);
+  });
+
   test("normalizes rate limits", async () => {
     const mock = mockFetch(() =>
       json({ error: { message: "slow down" } }, 429, { "retry-after": "3" }),

@@ -255,14 +255,20 @@ export function vercel(options: VercelOptions): VercelProvider {
       const items = raw.domains;
       const domains: Domain[] = Array.from({ length: items.length });
       let next = 0;
+      let failed = false;
       const worker = async () => {
-        while (next < items.length) {
+        while (!failed && next < items.length) {
           const index = next++;
           const item = items[index]!;
-          domains[index] = normalize(
-            item,
-            item.name ? await config(item.name, context) : undefined,
-          );
+          try {
+            domains[index] = normalize(
+              item,
+              item.name ? await config(item.name, context) : undefined,
+            );
+          } catch (error) {
+            failed = true;
+            throw error;
+          }
         }
       };
       await Promise.all(Array.from({ length: Math.min(CONFIG_CONCURRENCY, items.length) }, worker));

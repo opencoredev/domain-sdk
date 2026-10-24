@@ -114,11 +114,23 @@ export function render(options: RenderOptions): RenderProvider {
 
   let serviceHostname: Promise<string> | undefined;
   const getServiceHostname = (context: ProviderContext): Promise<string> => {
-    serviceHostname ??= fetchServiceHostname(context).catch((error: unknown) => {
-      serviceHostname = undefined;
-      throw error;
+    serviceHostname ??= fetchServiceHostname({ ...context, signal: undefined }).catch(
+      (error: unknown) => {
+        serviceHostname = undefined;
+        throw error;
+      },
+    );
+    const shared = serviceHostname;
+    const signal = context.signal;
+    if (!signal) return shared;
+    const aborted = () =>
+      new DomainSdkError("ABORTED", "The Render request was cancelled.", { provider: "render" });
+    if (signal.aborted) return Promise.reject(aborted());
+    return new Promise((resolve, reject) => {
+      const onAbort = () => reject(aborted());
+      signal.addEventListener("abort", onAbort, { once: true });
+      shared.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
     });
-    return serviceHostname;
   };
 
   const normalize = (raw: RenderCustomDomain, serviceHostname: string): Domain => {
