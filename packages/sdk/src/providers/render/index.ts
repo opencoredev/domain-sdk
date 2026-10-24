@@ -96,7 +96,7 @@ export function render(options: RenderOptions): RenderProvider {
   const getRaw = (hostname: string, context: ProviderContext, absent = false) =>
     request<RenderCustomDomain>(customDomainPath(hostname), context, undefined, absent);
 
-  const getServiceHostname = async (context: ProviderContext): Promise<string> => {
+  const fetchServiceHostname = async (context: ProviderContext): Promise<string> => {
     const raw = await request<RenderService>(`/services/${encodeURIComponent(serviceId)}`, context);
     if (!raw?.serviceDetails?.url)
       throw new DomainSdkError("REQUEST_FAILED", "Render returned an invalid service response.", {
@@ -110,6 +110,15 @@ export function render(options: RenderOptions): RenderProvider {
         cause: error,
       });
     }
+  };
+
+  let serviceHostname: Promise<string> | undefined;
+  const getServiceHostname = (context: ProviderContext): Promise<string> => {
+    serviceHostname ??= fetchServiceHostname(context).catch((error: unknown) => {
+      serviceHostname = undefined;
+      throw error;
+    });
+    return serviceHostname;
   };
 
   const normalize = (raw: RenderCustomDomain, serviceHostname: string): Domain => {

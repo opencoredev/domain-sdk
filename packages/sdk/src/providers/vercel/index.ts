@@ -42,6 +42,8 @@ interface VercelConfig {
   recommendedCNAME?: { rank?: number; value?: string }[];
 }
 
+const CONFIG_CONCURRENCY = 5;
+
 export function vercel(options: VercelOptions): VercelProvider {
   const token = requireString(options.token, "token", "vercel");
   const projectId = requireString(options.projectId, "projectId", "vercel");
@@ -250,9 +252,20 @@ export function vercel(options: VercelOptions): VercelProvider {
         throw new DomainSdkError("REQUEST_FAILED", "Vercel returned an invalid domain list.", {
           provider: "vercel",
         });
-      const domains: Domain[] = [];
-      for (const item of raw.domains)
-        domains.push(normalize(item, item.name ? await config(item.name, context) : undefined));
+      const items = raw.domains;
+      const domains: Domain[] = Array.from({ length: items.length });
+      let next = 0;
+      const worker = async () => {
+        while (next < items.length) {
+          const index = next++;
+          const item = items[index]!;
+          domains[index] = normalize(
+            item,
+            item.name ? await config(item.name, context) : undefined,
+          );
+        }
+      };
+      await Promise.all(Array.from({ length: Math.min(CONFIG_CONCURRENCY, items.length) }, worker));
       return {
         domains,
         nextCursor: raw.pagination?.next ? String(raw.pagination.next) : undefined,

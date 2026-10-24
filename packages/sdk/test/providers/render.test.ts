@@ -95,6 +95,34 @@ describe("Render adapter", () => {
     );
   });
 
+  test("fetches the service hostname once per instance and retries after a failure", async () => {
+    let serviceCalls = 0;
+    const mock = mockFetch((url, init) => {
+      const method = init?.method ?? "GET";
+      if (url.pathname === "/v1/services/srv_123") {
+        serviceCalls += 1;
+        return serviceCalls === 1
+          ? json({ message: "unavailable" }, 503)
+          : json({ serviceDetails: { url: "https://domain-sdk.onrender.com" } });
+      }
+      if (url.pathname.endsWith("/verify") && method === "POST")
+        return new Response(undefined, { status: 202 });
+      if (url.pathname.endsWith("/custom-domains/app.customer.com")) return json(pendingDomain);
+      if (url.pathname.endsWith("/custom-domains"))
+        return json([{ customDomain: pendingDomain, cursor: "cursor-1" }]);
+      return json({ message: `Unhandled ${method} ${url.pathname}` }, 500);
+    });
+    const provider = render({ apiKey: "key", serviceId: "srv_123", fetch: mock.fetch });
+    const context = { logger: {} };
+    await expect(provider.get({ hostname: "app.customer.com" }, context)).rejects.toThrow();
+    await provider.get({ hostname: "app.customer.com" }, context);
+    await provider.add({ hostname: "app.customer.com" }, context);
+    await provider.verify!({ hostname: "app.customer.com" }, context);
+    const page = await provider.list!({ limit: 10 }, context);
+    expect(page.domains[0]?.records[0]?.value).toBe("domain-sdk.onrender.com");
+    expect(serviceCalls).toBe(2);
+  });
+
   test("validates configuration and normalizes provider failures", async () => {
     expect(() => render({ apiKey: "", serviceId: "service" })).toThrow();
     const mock = mockFetch(() => json({ message: "slow down" }, 429, { "retry-after": "2" }));

@@ -79,6 +79,40 @@ describe("Railway adapter", () => {
     expect(operations.some((item) => item.query.includes("customDomainCreate"))).toBe(true);
   });
 
+  test("lists full domains from one GraphQL query", async () => {
+    const mock = mockFetch(async (_url, init) => {
+      const payload = JSON.parse(String(init?.body)) as { query: string };
+      if (payload.query.includes("DomainSdkDomains"))
+        return json({
+          data: {
+            domains: {
+              customDomains: [
+                details,
+                { ...details, id: "domain_456", domain: "www.customer.com" },
+              ],
+            },
+          },
+        });
+      return json({ errors: [{ message: "Unexpected operation" }] });
+    });
+    const provider = railway({
+      token: "token",
+      projectId: "project",
+      environmentId: "environment",
+      serviceId: "service",
+      fetch: mock.fetch,
+    });
+    const page = await provider.list!({ limit: 10 }, { logger: {} });
+    expect(page.domains.map((domain) => domain.hostname)).toEqual([
+      "app.customer.com",
+      "www.customer.com",
+    ]);
+    expect(page.domains[0]?.status).toBe("pending_dns");
+    expect(mock.calls).toHaveLength(1);
+    const operation = JSON.parse(String(mock.calls[0]?.init?.body)) as { query: string };
+    expect(operation.query).toContain("certificateStatus");
+  });
+
   test("detects GraphQL errors returned with HTTP 200", async () => {
     const mock = setup(true);
     const client = createDomainClient({

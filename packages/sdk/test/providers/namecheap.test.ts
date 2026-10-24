@@ -488,11 +488,24 @@ describe("namecheap DNS adapter", () => {
       { apiUser: "" },
       { userName: "" },
       { clientIp: "::1" },
+      { clientIp: "2001:db8::1" },
+      { clientIp: "::ffff:192.0.2.1" },
+      { clientIp: "256.0.0.1" },
+      { clientIp: "192.0.2" },
+      { clientIp: "192.0.2.1.5" },
+      { clientIp: "192.0.02.1" },
+      { clientIp: " 192.0.2.1" },
+      { clientIp: "192.0.2.1 " },
+      { clientIp: "192.0.2.+1" },
+      { clientIp: "0x7f.0.0.1" },
+      { clientIp: "localhost" },
       { ttl: 59 },
       { ttl: 60001 },
       { ttl: 60.5 },
     ])
       expect(() => namecheap({ ...credentials, ...options })).toThrow();
+    for (const clientIp of ["0.0.0.0", "10.0.0.1", "192.0.2.10", "255.255.255.255"])
+      expect(() => namecheap({ ...credentials, clientIp })).not.toThrow();
     const api = fake();
     const dns = createDnsClient({ provider: namecheap({ ...credentials, fetch: api.fetch }) });
     await expect(

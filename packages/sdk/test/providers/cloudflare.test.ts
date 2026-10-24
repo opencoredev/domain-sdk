@@ -95,6 +95,39 @@ describe("Cloudflare for SaaS adapter", () => {
     await client.remove("absent.customer.com");
   });
 
+  test("get and list read hostnames from the lookup without per-id requests", async () => {
+    const mock = mockFetch((url) => {
+      if (url.searchParams.has("hostname"))
+        return json({ success: true, errors: [], messages: [], result: [hostname] });
+      if (url.pathname === "/client/v4/zones/zone_123/custom_hostnames")
+        return json({
+          success: true,
+          errors: [],
+          messages: [],
+          result: [hostname, { ...hostname, id: "second", hostname: "www.customer.com" }],
+          result_info: { page: 1, total_pages: 2 },
+        });
+      return json({ success: false, errors: [{ code: 1000, message: "Unexpected" }] }, 500);
+    });
+    const provider = cloudflareSaaS({
+      apiToken: "token",
+      zoneId: "zone_123",
+      cnameTarget: "target.example.net",
+      fetch: mock.fetch,
+    });
+    const context = { logger: {} };
+    const found = await provider.get({ hostname: "app.customer.com" }, context);
+    expect(found.id).toBe(hostname.id);
+    expect(mock.calls).toHaveLength(1);
+    const page = await provider.list!({ limit: 2 }, context);
+    expect(page.domains.map((domain) => domain.hostname)).toEqual([
+      "app.customer.com",
+      "www.customer.com",
+    ]);
+    expect(page.nextCursor).toBe("2");
+    expect(mock.calls).toHaveLength(2);
+  });
+
   test("maps structured errors without leaking the token", async () => {
     const mock = mockFetch(() =>
       json({ success: false, errors: [{ code: 9109, message: "Invalid access token" }] }, 403),
