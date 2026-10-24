@@ -26,7 +26,7 @@
     },
     "apps/fumadocs": {
       "name": "fumadocs",
-      "version": "0.0.4",
+      "version": "0.0.5",
       "dependencies": {
         "@base-ui/react": "^1.6.0",
         "@gsap/react": "^2.1.2",
@@ -64,7 +64,7 @@
     },
     "packages/sdk": {
       "name": "@opencoredev/domain-sdk",
-      "version": "0.2.0",
+      "version": "0.3.0",
       "dependencies": {
         "tldts": "^7.0.19",
       },

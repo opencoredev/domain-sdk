@@ -45,14 +45,8 @@ jobs:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      - name: Require npm token
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [[ -z "$NPM_TOKEN" ]]; then
-            echo "::error::Configure the NPM_TOKEN repository secret before releasing."
-            exit 1
-          fi
+      - name: Install npm with trusted publishing support
+        run: npm install --global npm@11.5.1
       - run: bun install --frozen-lockfile
       - run: bun run check
       - run: bun run test
@@ -87,10 +81,21 @@ jobs:
           fi
           git add -N -- .tegami/publish-lock.yaml
           git diff --binary HEAD -- .tegami packages/sdk/package.json packages/sdk/CHANGELOG.md bun.lock > "$RUNNER_TEMP/release-state.patch"
-      - run: bun run tegami publish
+      - name: Publish with npm token or trusted publishing
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_CONFIG_ACCESS: public
           NPM_CONFIG_PROVENANCE: "true"
+        run: |
+          if [[ -z "$NODE_AUTH_TOKEN" ]]; then
+            unset NODE_AUTH_TOKEN
+            export NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npm-oidc.npmrc"
+            : > "$NPM_CONFIG_USERCONFIG"
+            echo "Publishing with npm OIDC trusted publishing."
+          else
+            echo "Publishing with the configured npm token."
+          fi
+          bun run tegami publish
       - run: bun run tegami cleanup
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
