@@ -80,6 +80,7 @@ jobs:
           fi
       - run: bun run release:build
       - name: Preserve release state before publishing
+        id: release_state
         run: |
           if [[ -f packages/sdk/CHANGELOG.md ]]; then
             git add -N -- packages/sdk/CHANGELOG.md
@@ -98,6 +99,7 @@ jobs:
         run: |
           git diff --binary HEAD -- .tegami packages/sdk/package.json packages/sdk/CHANGELOG.md bun.lock > "$RUNNER_TEMP/release-state.patch"
       - name: Upload release state for a reviewed follow-up PR
+        if: ${{ always() && steps.release_state.outcome == 'success' }}
         uses: actions/upload-artifact@v4
         with:
           name: release-state
