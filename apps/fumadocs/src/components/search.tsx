@@ -27,7 +27,10 @@ export default function DefaultSearchDialog(props: SharedProps) {
 
   const resultsCount =
     data?.query === search
-      ? data.items.reduce((count, item) => count + (item.type === "table" ? item.rows.length : 1), 0)
+      ? data.items.reduce(
+          (count, item) => count + (item.type === "table" ? item.rows.length : 1),
+          0,
+        )
       : undefined;
   useEffect(() => {
     const trimmed = search.trim();
