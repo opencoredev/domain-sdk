@@ -25,7 +25,10 @@ export default function DefaultSearchDialog(props: SharedProps) {
     if (props.open) track("docs_search_opened", { path: window.location.pathname });
   }, [props.open]);
 
-  const resultsCount = data?.query === search ? data.items.length : undefined;
+  const resultsCount =
+    data?.query === search
+      ? data.items.reduce((count, item) => count + (item.type === "table" ? item.rows.length : 1), 0)
+      : undefined;
   useEffect(() => {
     const trimmed = search.trim();
     if (trimmed.length < 2 || isLoading || resultsCount === undefined) return;
