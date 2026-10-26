@@ -1,3 +1,4 @@
+import { remarkStructureDefaultOptions } from "fumadocs-core/mdx-plugins/remark-structure";
 import { metaSchema, pageSchema } from "fumadocs-core/source/schema";
 import { defineConfig, defineDocs } from "fumadocs-mdx/config";
 
@@ -18,6 +19,9 @@ export const docs = defineDocs({
 
 export default defineConfig({
   mdxOptions: {
-    // MDX options
+    remarkStructureOptions: {
+      filterElement: (node) =>
+        node.name !== "Card" && remarkStructureDefaultOptions.filterElement(node),
+    },
   },
 });

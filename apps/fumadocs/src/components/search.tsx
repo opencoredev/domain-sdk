@@ -9,6 +9,7 @@ import {
   SearchDialogInput,
   SearchDialogList,
   SearchDialogOverlay,
+  type SearchItemType,
   type SharedProps,
 } from "fumadocs-ui/components/dialog/search";
 import { useI18n } from "fumadocs-ui/contexts/i18n";
@@ -47,12 +48,11 @@ export default function DefaultSearchDialog(props: SharedProps) {
     return () => window.clearTimeout(timeout);
   }, [search, isLoading, resultsCount]);
 
-  function onResultClick(event: React.MouseEvent) {
-    const anchor = (event.target as HTMLElement).closest("a");
-    if (!anchor) return;
+  function onSelect(item: SearchItemType) {
+    if (item.type === "action") return;
     track("docs_search_result_clicked", {
       query: search.trim(),
-      result_href: anchor.getAttribute("href"),
+      result_href: item.url,
     });
   }
 
@@ -63,10 +63,11 @@ export default function DefaultSearchDialog(props: SharedProps) {
       isLoading={isLoading}
       data={data}
       error={error}
+      onSelect={onSelect}
       {...props}
     >
       <SearchDialogOverlay />
-      <SearchDialogContent onClickCapture={onResultClick}>
+      <SearchDialogContent>
         <SearchDialogHeader>
           <SearchDialogIcon />
           <SearchDialogInput />
