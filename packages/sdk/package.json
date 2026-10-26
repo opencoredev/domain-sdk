@@ -88,12 +88,12 @@
     "test": "bun test"
   },
   "dependencies": {
-    "tldts": "^7.0.19"
+    "tldts": "^7.4.19"
   },
   "devDependencies": {
     "@domain-sdk/config": "workspace:*",
-    "@types/bun": "^1.3.8",
-    "@types/node": "^22.13.14",
+    "@types/bun": "^1.4.4",
+    "@types/node": "^22.20.5",
     "oxlint": "^1.72.0",
     "typescript": "^6.0.0"
   },

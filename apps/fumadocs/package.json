@@ -12,33 +12,33 @@
     "test": "bun test --pass-with-no-tests"
   },
   "dependencies": {
-    "@base-ui/react": "^1.6.0",
+    "@base-ui/react": "^1.9.0",
     "@gsap/react": "^2.1.2",
-    "@hugeicons/core-free-icons": "^4.2.2",
-    "@hugeicons/react": "^1.1.9",
+    "@hugeicons/core-free-icons": "^4.3.5",
+    "@hugeicons/react": "^1.1.10",
     "@opencoredev/domain-sdk": "workspace:*",
     "@orama/orama": "^3.1.18",
     "class-variance-authority": "^0.7.1",
-    "cnfast": "^0.0.8",
+    "cnfast": "^0.2.0",
     "fumadocs-core": "16.11.3",
     "fumadocs-mdx": "15.1.0",
     "fumadocs-ui": "npm:@fumadocs/base-ui@16.11.3",
     "gsap": "^3.15.0",
     "next": "16.4.1",
-    "posthog-js": "^1.399.2",
-    "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "posthog-js": "^1.438.21",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.3.2",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/mdx": "^2.0.14",
-    "@types/node": "^26.1.1",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "oxlint": "^1.73.0",
-    "portless": "^0.15.1",
+    "portless": "^0.15.12",
     "postcss": "^8.5.16",
-    "tailwindcss": "^4.3.2",
+    "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3"
   }
 }
