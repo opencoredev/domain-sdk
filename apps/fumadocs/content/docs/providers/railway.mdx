@@ -1,8 +1,12 @@
 ---
-title: Railway custom domains
-description: Add, monitor, and remove Railway custom domains for one project, environment, and service with a typed server-side TypeScript adapter.
+title: "Railway custom domains: DNS, SSL, and the API"
+description: How Railway custom domains work, from the CNAME and verification TXT record to automatic Let's Encrypt SSL, and how to add, check, and remove Railway domains from TypeScript.
 icon: railway
 ---
+
+How does Railway handle custom domains and SSL certificates? You add the domain to a service under **Settings → Public Networking → + Custom Domain**, then create the CNAME and the TXT verification record Railway shows at your DNS provider. Without the TXT record, requests return a 404 even after the CNAME resolves. Once DNS is in place, Railway issues a Let's Encrypt certificate automatically, usually within an hour, and renews it before it expires. Root domains need CNAME flattening or an ALIAS record at the DNS provider. The Trial plan allows 1 custom domain, Hobby 2 per service, and Pro 20 per service by default ([Railway docs](https://docs.railway.com/networking/domains/working-with-domains), checked 2026-10-28).
+
+The adapter below does the same through Railway's public GraphQL API, so your app can add a customer's domain and tell them which records to create.
 
 ## Scope and credentials
 

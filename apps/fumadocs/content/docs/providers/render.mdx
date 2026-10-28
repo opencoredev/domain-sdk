@@ -1,8 +1,10 @@
 ---
-title: Render custom domains
-description: Add, verify, monitor, and remove custom domains for a Render web service or static site with a server-side TypeScript adapter.
+title: "Render custom domain: add one with the API"
+description: How to add a custom domain to a Render web service or static site through the Render API, point its DNS, verify it, and wait for TLS, with a TypeScript example.
 icon: render
 ---
+
+To add a custom domain to a Render service by hand, open the service's **Settings**, click **+ Add Custom Domain** under **Custom Domains**, add the DNS records Render shows at your DNS provider, then click **Verify**. Render issues and renews the TLS certificate automatically. To do the same from code, `POST` the hostname to the Render API's `/v1/services/{serviceId}/custom-domains` endpoint, then call its `/verify` endpoint once DNS is in place. This adapter wraps both calls and returns the DNS records your customer needs.
 
 ## Scope and credentials
 
