@@ -9,7 +9,7 @@ const docsContentDir = "content/docs";
 // The files whose last commit is each route's real last content change.
 function routeSourcePaths(): Map<string, readonly string[]> {
   const paths = new Map<string, readonly string[]>([
-    ["/", ["src/app/(home)"]],
+    ["/", ["src/app/(home)/page.tsx", "src/app/(home)/layout.tsx"]],
     ["/sitemap", ["src/app/(home)/sitemap", docsContentDir]],
   ]);
   for (const page of source.getPages()) {
