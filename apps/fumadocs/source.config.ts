@@ -35,6 +35,12 @@ export const blogPosts = defineCollections({
 
 export default defineConfig({
   mdxOptions: {
+    rehypeCodeOptions: {
+      themes: {
+        light: "github-light",
+        dark: "github-dark-default",
+      },
+    },
     remarkStructureOptions: {
       filterElement: (node) =>
         node.name !== "Card" && remarkStructureDefaultOptions.filterElement(node),

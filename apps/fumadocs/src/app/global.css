@@ -343,6 +343,12 @@ html > body[data-scroll-locked] {
   box-shadow: none;
 }
 
+.domain-docs-shell .shiki:not(.not-fumadocs-codeblock *) code span,
+.domain-docs-shell code.shiki:not(.not-fumadocs-code *) span {
+  color: var(--shiki-dark);
+  font-style: var(--shiki-dark-font-style);
+}
+
 .domain-docs-shell article a:not([data-card]) {
   text-decoration-color: #526da9;
   text-underline-offset: 4px;
