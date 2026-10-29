@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 import { DomainLogo } from "@/components/domain-logo";
+import { blogRoute, getBlogPosts } from "@/lib/blog";
 import { legacyDocRoutes } from "@/lib/seo";
 import { source } from "@/lib/source";
 
@@ -112,6 +113,30 @@ export default function SitemapPage() {
               </ul>
             </section>
           ))}
+          <section aria-labelledby="section-Blog">
+            <h2
+              className="mb-4 border-b border-[#cbc7ba] pb-3 font-[var(--font-outfit)] text-xl font-semibold"
+              id="section-Blog"
+            >
+              <Link className="hover:underline hover:underline-offset-4" href={blogRoute}>
+                Blog
+              </Link>
+            </h2>
+            <ul className="space-y-3">
+              {getBlogPosts().map((post) => (
+                <li key={post.url}>
+                  <Link className="group block" href={post.url}>
+                    <span className="font-medium group-hover:underline group-hover:underline-offset-4">
+                      {post.data.title}
+                    </span>
+                    <span className="mt-1 block text-sm leading-5 text-[#706d64]">
+                      {post.data.description}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
         </div>
 
         <footer className="mt-20 flex flex-wrap gap-x-6 gap-y-2 border-t border-[#cbc7ba] pt-6 text-sm text-[#5e5b53]">
@@ -123,6 +148,9 @@ export default function SitemapPage() {
           </Link>
           <Link className="hover:text-[#151515]" href="/docs/providers">
             Provider comparison
+          </Link>
+          <Link className="hover:text-[#151515]" href={blogRoute}>
+            Blog
           </Link>
           <Link className="hover:text-[#151515]" href="/sitemap.xml">
             XML sitemap

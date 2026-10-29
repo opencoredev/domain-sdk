@@ -611,6 +611,7 @@ export default function HomePage() {
         </Link>
         <div>
           <Link href="/docs">Documentation</Link>
+          <Link href="/blog">Blog</Link>
           <Link href="/sitemap">Sitemap</Link>
           <Link href="/docs/project/contributing">Contributing</Link>
           <Link href="https://github.com/sponsors/opencoredev">Sponsor</Link>

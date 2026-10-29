@@ -1,0 +1,203 @@
+---
+title: "Porkbun API: create DNS records from TypeScript"
+description: How to get Porkbun API keys, turn on API access for a domain, and create, list, and delete DNS records with fetch or Domain SDK.
+date: 2026-10-29
+---
+
+The Porkbun API is a JSON-over-HTTPS API at `https://api.porkbun.com/api/json/v3`. You authenticate with an API key and a secret key, and every domain you want to change needs **API Access** switched on in Porkbun's dashboard. DNS writes go to `POST /dns/create/{domain}`, reads to `/dns/retrieve/{domain}`, and deletes to `/dns/delete/{domain}/{id}`.
+
+This guide walks through each step with working TypeScript: first with plain `fetch`, then with [Domain SDK's Porkbun adapter](/docs/providers/porkbun), which adds conflict checks and retries. The SDK doesn't check delegation on its own, so the example calls `getZone()` first. Facts about Porkbun come from its [API documentation](https://porkbun.com/api/json/v3/documentation) and [knowledge base](https://kb.porkbun.com/article/190-getting-started-with-the-porkbun-api), checked on 2026-10-29 (API version 3.65).
+
+## Create a Porkbun API key
+
+1. Sign in to Porkbun, open **Account** in the top-right corner, and choose **API Access**.
+2. Name the key and pick its permissions: full access, read-only, manage without purchases, or a custom set. A DNS automation only needs to read and edit DNS, so don't give it purchase rights.
+3. Optionally limit the key to specific domains or source IP ranges.
+4. Click **Create API Key** and copy both values. The API key starts with `pk1_` and the secret with `sk1_`. Porkbun shows the secret once; if you lose it, delete the key and make a new one.
+
+Store them server-side, for example as `PORKBUN_API_KEY` and `PORKBUN_SECRET_API_KEY`. Keys work whether or not the account has two-factor authentication turned on.
+
+For testing, Porkbun also issues sandbox keys that start with `pk1_sb_`. They run against the same base URL in an isolated environment, so nothing real changes.
+
+## Turn on API access for each domain
+
+A valid key is not enough. Each domain has its own switch:
+
+1. Go to **Account** → **Domain Management**.
+2. Click **Details** next to the domain.
+3. Turn on **API Access**.
+
+Until you do, requests for that domain are refused even with correct keys, so check this switch first when a new key doesn't work.
+
+## The DNS endpoints
+
+All paths are relative to `https://api.porkbun.com/api/json/v3`. Porkbun moved the API from `porkbun.com` to `api.porkbun.com` in 2025, so older scripts and libraries that still call the old host fail.
+
+| Task                                    | Endpoint                                                                                                      |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| List every editable record              | `POST /dns/retrieve/{domain}`                                                                                 |
+| Create a record                         | `POST /dns/create/{domain}`                                                                                   |
+| Edit a record by ID                     | `POST /dns/edit/{domain}/{id}`                                                                                |
+| Delete a record by ID                   | `POST /dns/delete/{domain}/{id}`                                                                              |
+| Read, edit, or delete by name and type  | `/dns/retrieveByNameType`, `/dns/editByNameType`, `/dns/deleteByNameType` with `/{domain}/{type}/{subdomain}` |
+| Check which nameservers the domain uses | `POST /domain/getNs/{domain}`                                                                                 |
+
+Send the keys either as `X-API-Key` and `X-Secret-API-Key` headers or as `apikey` and `secretapikey` fields in the JSON body. Reads also accept `GET` with header auth.
+
+A create request takes these fields:
+
+| Field     | Meaning                                                                                                                     |
+| --------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `name`    | The subdomain only, such as `www`, `_acme-challenge`, or `*`. Leave it empty for the apex. Don't include the domain itself. |
+| `type`    | `A`, `AAAA`, `CNAME`, `ALIAS`, `TXT`, `MX`, `CAA`, `SRV`, and others.                                                       |
+| `content` | The record value.                                                                                                           |
+| `ttl`     | Seconds. The minimum is set per account and is usually 600; leaving it out uses the minimum.                                |
+| `prio`    | Priority for MX and SRV records.                                                                                            |
+
+Responses always carry a `status` of `SUCCESS` or `ERROR`. Errors also have a stable `code` (for example `INVALID_API_KEYS_001`) and a `next_action` hint.
+
+## Create a DNS record with fetch
+
+This creates a TXT record at `_verify.example.com` and prints the new record's ID:
+
+```ts title="create-record.ts"
+const base = "https://api.porkbun.com/api/json/v3";
+
+const response = await fetch(`${base}/dns/create/example.com`, {
+  method: "POST",
+  headers: {
+    "content-type": "application/json",
+    "X-API-Key": process.env.PORKBUN_API_KEY!,
+    "X-Secret-API-Key": process.env.PORKBUN_SECRET_API_KEY!,
+    "Idempotency-Key": crypto.randomUUID(),
+  },
+  body: JSON.stringify({
+    name: "_verify",
+    type: "TXT",
+    content: "verification-token-123",
+    ttl: 600,
+  }),
+});
+
+const body = await response.json();
+if (body.status !== "SUCCESS") throw new Error(`${body.code}: ${body.message}`);
+console.log("created record", body.id);
+for (const warning of body.warnings ?? []) console.warn(warning);
+```
+
+The `Idempotency-Key` header is optional but worth sending on writes. If a request times out and you retry with the same key and body within 24 hours, Porkbun returns the first response instead of creating a duplicate. You can also pass `"dryRun": true` in the body to check ownership, type, and permissions without creating anything.
+
+Reading records back looks the same, with one difference to watch: `/dns/retrieve` returns full names such as `_verify.example.com`, while `/dns/create` wants only `_verify`.
+
+```ts title="list-records.ts"
+const base = "https://api.porkbun.com/api/json/v3";
+
+const records = await fetch(`${base}/dns/retrieve/example.com`, {
+  headers: {
+    "X-API-Key": process.env.PORKBUN_API_KEY!,
+    "X-Secret-API-Key": process.env.PORKBUN_SECRET_API_KEY!,
+  },
+}).then((response) => response.json());
+
+for (const record of records.records) {
+  console.log(record.id, record.type, record.name, record.content, record.ttl);
+}
+```
+
+## Writes that succeed but don't resolve
+
+Porkbun keeps a DNS zone for every domain in the account, even when the domain's nameservers point somewhere else, such as Cloudflare. A write to that zone still returns `SUCCESS`, but nothing changes in public DNS. Porkbun adds a `warnings` entry to the response when this happens, so log it, as the example above does.
+
+The safer habit is to check delegation before writing. `POST /domain/getNs/{domain}` lists the nameservers set at the registry; if they don't end in `porkbun.com`, make the change at the DNS host the domain really uses.
+
+## Use the Porkbun API through Domain SDK
+
+Domain SDK's DNS client wraps those calls. Its [Porkbun adapter](/docs/providers/porkbun) sends the requests above. On top of them, the client reads the zone first, skips records that already exist, refuses to overwrite conflicting records unless you ask it to, checks record types and TTLs before sending anything, and retries rate limits and outages.
+
+```ts title="dns.ts"
+import { createDnsClient } from "@opencoredev/domain-sdk";
+import { porkbun } from "@opencoredev/domain-sdk/porkbun";
+
+const dns = createDnsClient({
+  provider: porkbun({
+    apiKey: process.env.PORKBUN_API_KEY!,
+    secretApiKey: process.env.PORKBUN_SECRET_API_KEY!,
+  }),
+});
+
+// Uses /domain/getNs: true only when every nameserver is Porkbun's.
+const zone = await dns.getZone("example.com");
+if (!zone.authoritative) {
+  throw new Error(`example.com uses ${zone.nameservers.join(", ")}, not Porkbun DNS.`);
+}
+
+// Creates only what is missing. Running it twice changes nothing the second time.
+await dns.ensureRecords(
+  [
+    { type: "CNAME", name: "app.example.com", value: "tenants.your-saas.com" },
+    { type: "TXT", name: "_verify.example.com", value: "verification-token-123" },
+  ],
+  { zone: "example.com" },
+);
+
+const records = await dns.listRecords("example.com");
+```
+
+Record names here are full names, not Porkbun's subdomain-only form; the adapter converts them. If an editable record already sits where you're writing (say an old `A` record at `app.example.com`), `ensureRecords` throws `DOMAIN_CONFLICT`. Pass `onConflict: "replace"` only when you mean to delete it. `dns.removeRecords()` deletes records that exactly match its input and ignores missing ones.
+
+The adapter creates A, AAAA, CNAME, ALIAS, TXT, and CAA records with a TTL from 600 to 86400 seconds (600 by default). Porkbun errors come back as typed `DomainSdkError` codes: bad keys are `AUTHENTICATION_FAILED`, a domain without API Access is `PERMISSION_DENIED`, and an unknown domain is `DOMAIN_NOT_FOUND`. See [error handling](/docs/concepts/error-handling) for the full list.
+
+### Point a customer domain at your SaaS app
+
+The DNS client pays off when you onboard customer custom domains. Add the domain at your hosting platform, then write the records that platform asks for straight into the customer's Porkbun zone:
+
+```ts title="onboard-domain.ts"
+import { createDnsClient, createDomainClient } from "@opencoredev/domain-sdk";
+import { porkbun } from "@opencoredev/domain-sdk/porkbun";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+  }),
+});
+const dns = createDnsClient({
+  provider: porkbun({
+    apiKey: process.env.PORKBUN_API_KEY!,
+    secretApiKey: process.env.PORKBUN_SECRET_API_KEY!,
+  }),
+});
+
+const domain = await domains.add("app.customer.com");
+await dns.applyDomainRecords(domain, { zone: "customer.com" });
+```
+
+`applyDomainRecords` writes the routing and verification records from the platform's response. The same code works with the [Cloudflare for SaaS](/docs/providers/cloudflare), [Railway](/docs/providers/railway), [Render](/docs/providers/render), and [Netlify](/docs/providers/netlify) adapters. After that, [poll until the domain is active](/docs/guides/poll-until-active) to know when the certificate is ready.
+
+Domain SDK only writes DNS records. It doesn't register, renew, or price domains at Porkbun; use Porkbun's own domain endpoints for that.
+
+## Common questions
+
+### Does Porkbun have an API?
+
+Yes. Porkbun's v3 API covers DNS and DNSSEC, domain registration and renewal, nameservers, URL forwarding, SSL certificate bundles, and hosting. It also ships an official MCP server for AI agents.
+
+### Why does my Porkbun API call return an error with valid keys?
+
+Check that API Access is turned on for that domain (**Domain Management** → **Details** → **API Access**), and that the key's permissions and domain list include it. Also check that you call `api.porkbun.com`, not the old `porkbun.com` host.
+
+### What is the minimum TTL on Porkbun?
+
+The minimum is set per account and is usually 600 seconds. Domain SDK's adapter accepts 600 to 86400.
+
+### How do I test without touching real DNS?
+
+Use a sandbox key (`pk1_sb_…`), or Porkbun's mock server at `https://api.porkbun.com/api/json/v3/mock/<path>`, which returns example responses without credentials. With Domain SDK you can pass `baseUrl` or a custom `fetch` to the adapter, or use the [in-memory testing adapter](/docs/guides/test-without-network).
+
+## Next steps
+
+- [Porkbun adapter reference](/docs/providers/porkbun): every option, record type, and error.
+- [DNS records](/docs/concepts/dns-records): what each record does for a custom domain.
+- [Apex domains and subdomains](/docs/guides/apex-and-subdomains): when you need ALIAS instead of CNAME.
+- [Namecheap](/docs/providers/namecheap) and [Spaceship](/docs/providers/spaceship): the other registrar DNS adapters.

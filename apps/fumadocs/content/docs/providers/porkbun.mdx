@@ -6,7 +6,7 @@ icon: porkbun
 
 ## Credentials and scope
 
-Create an API key and secret API key in Porkbun's account API settings. Enable **API Access** for each domain you want to manage. Store both keys in server-only configuration as `PORKBUN_API_KEY` and `PORKBUN_SECRET_API_KEY`.
+Create an API key and secret API key in Porkbun's account API settings. Enable **API Access** for each domain you want to manage. Store both keys in server-only configuration as `PORKBUN_API_KEY` and `PORKBUN_SECRET_API_KEY`. For a walkthrough of the Porkbun API itself, with raw `fetch` calls next to the adapter, see [Porkbun API: create DNS records from TypeScript](/blog/porkbun-api).
 
 The adapter writes DNS records, not hosting-provider domains or certificates. A Porkbun DNS zone must already exist for the domain. Writes to a zone delegated to another DNS host do not change public DNS.
 
