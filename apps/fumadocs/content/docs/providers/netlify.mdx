@@ -1,8 +1,10 @@
 ---
-title: Netlify custom domains
-description: Add, monitor, and remove customer domains as aliases on an existing Netlify site with a typed server-side TypeScript adapter.
+title: "Netlify custom domain: DNS records and the API"
+description: "How to add a custom domain to a Netlify site from code, and the DNS records it needs: a CNAME to your .netlify.app hostname for subdomains, and an ALIAS to apex-loadbalancer.netlify.com or an A record to 75.2.60.5 for apex domains."
 icon: netlify
 ---
+
+A Netlify custom domain needs one DNS record at the customer's DNS provider. A subdomain like `app.customer.com` gets a **CNAME** to the site's `.netlify.app` hostname. An apex domain like `customer.com` can't use a CNAME, so it gets an **ALIAS**, **ANAME**, or flattened CNAME to `apex-loadbalancer.netlify.com`, or, if the DNS provider supports none of those, an **A** record to Netlify's load balancer IP `75.2.60.5`. Sites on Netlify's High-Performance Edge use a different load balancer, shown in the site's DNS verification details; this adapter always returns the standard one, so check those details for High-Performance Edge sites. Netlify then provisions the TLS certificate. These values come from Netlify's [external DNS docs](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/), checked 2026-10-29. To add many customer domains from code, this adapter adds each one as a domain alias on your site through the Netlify API and returns the record to show your customer.
 
 ## Scope and credentials
 

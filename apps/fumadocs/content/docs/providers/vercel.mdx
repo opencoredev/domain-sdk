@@ -1,8 +1,10 @@
 ---
-title: Vercel custom domains
-description: Add, verify, monitor, and remove Vercel project domains with a typed, server-side TypeScript adapter that preserves exact DNS instructions.
+title: "Vercel custom domains: add them with the API"
+description: "How to add a custom domain to a Vercel project from code: attach it with the REST API, give your customer the A or CNAME record Vercel recommends, verify ownership with a TXT record, and track it until it is active."
 icon: vercel
 ---
+
+To add a custom domain to a Vercel project by hand, open the project's **Settings**, then **Domains**, and add the hostname. An apex domain like `customer.com` uses an **A** record, and a subdomain like `app.customer.com` uses a **CNAME** to the project's own target (each project gets a unique value such as `d1d4fc829fe7bc7c.vercel-dns-017.com`). If the domain is already used by another Vercel account or team, Vercel also asks for a **TXT** record at `_vercel.<apex domain>` to prove access. From code, `POST` the hostname to `/v10/projects/{projectId}/domains`, read the recommended records from `/v6/domains/{domain}/config`, and call `/v9/projects/{projectId}/domains/{domain}/verify` once DNS is in place. This adapter wraps those calls and returns the exact records your customer needs. Vercel's [domain docs](https://vercel.com/docs/domains/working-with-domains/add-a-domain) (checked 2026-10-29) limit Hobby teams to 50 custom domains per project.
 
 ## Scope and credentials
 
