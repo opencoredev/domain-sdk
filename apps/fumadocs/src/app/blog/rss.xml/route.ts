@@ -27,7 +27,11 @@ export function GET() {
     </item>`,
     )
     .join("\n");
-  const latest = posts[0];
+  // ISO dates sort as strings, so the max is the most recent publish or update.
+  const lastChange = posts
+    .map((post) => post.data.updated ?? post.data.date)
+    .toSorted()
+    .at(-1);
 
   const feed = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
@@ -36,7 +40,7 @@ export function GET() {
     <link>${absoluteUrl(blogRoute)}</link>
     <description>Guides to custom domains for SaaS apps and DNS automation with registrar APIs.</description>
     <language>en-us</language>
-    <atom:link href="${absoluteUrl(`${blogRoute}/rss.xml`)}" rel="self" type="application/rss+xml" />${latest ? `\n    <lastBuildDate>${rssDate(latest.data.updated ?? latest.data.date)}</lastBuildDate>` : ""}
+    <atom:link href="${absoluteUrl(`${blogRoute}/rss.xml`)}" rel="self" type="application/rss+xml" />${lastChange ? `\n    <lastBuildDate>${rssDate(lastChange)}</lastBuildDate>` : ""}
 ${items}
   </channel>
 </rss>

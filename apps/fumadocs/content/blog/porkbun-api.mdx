@@ -6,7 +6,7 @@ date: 2026-10-29
 
 The Porkbun API is a JSON-over-HTTPS API at `https://api.porkbun.com/api/json/v3`. You authenticate with an API key and a secret key, and every domain you want to change needs **API Access** switched on in Porkbun's dashboard. DNS writes go to `POST /dns/create/{domain}`, reads to `/dns/retrieve/{domain}`, and deletes to `/dns/delete/{domain}/{id}`.
 
-This guide walks through each step with working TypeScript: first with plain `fetch`, then with [Domain SDK's Porkbun adapter](/docs/providers/porkbun), which adds conflict checks, retries, and a delegation check on top. Facts about Porkbun come from its [API documentation](https://porkbun.com/api/json/v3/documentation) and [knowledge base](https://kb.porkbun.com/article/190-getting-started-with-the-porkbun-api), checked on 2026-10-29 (API version 3.65).
+This guide walks through each step with working TypeScript: first with plain `fetch`, then with [Domain SDK's Porkbun adapter](/docs/providers/porkbun), which adds conflict checks and retries. The SDK doesn't check delegation on its own, so the example calls `getZone()` first. Facts about Porkbun come from its [API documentation](https://porkbun.com/api/json/v3/documentation) and [knowledge base](https://kb.porkbun.com/article/190-getting-started-with-the-porkbun-api), checked on 2026-10-29 (API version 3.65).
 
 ## Create a Porkbun API key
 
