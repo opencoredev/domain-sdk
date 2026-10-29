@@ -1,5 +1,7 @@
 import { llms } from "fumadocs-core/source";
 
+import { getBlogPosts } from "@/lib/blog";
+import { absoluteUrl } from "@/lib/seo";
 import { source } from "@/lib/source";
 
 export const revalidate = false;
@@ -8,6 +10,9 @@ export function GET() {
   const documentation = llms(source)
     .index()
     .replace(/^# Domain SDK\s*/, "");
+  const blogPosts = getBlogPosts()
+    .map((post) => `- [${post.data.title}](${absoluteUrl(post.url)}): ${post.data.description}`)
+    .join("\n");
   const content = `# Domain SDK
 
 > Add, verify, monitor, and remove customer domains across Vercel, Cloudflare for SaaS, Railway, Render, Netlify, and bunny.net with one server-side TypeScript API.
@@ -16,6 +21,7 @@ export function GET() {
 
 - [Complete documentation](https://www.domain-sdk.dev/llms-full.txt): All documentation in one file.
 - [Human-readable sitemap](https://www.domain-sdk.dev/sitemap): Every canonical documentation page grouped by topic.
+- [Blog](https://www.domain-sdk.dev/blog): Guides to custom domains for SaaS apps and DNS automation with registrar APIs. RSS: https://www.domain-sdk.dev/blog/rss.xml
 - [Install the Domain SDK skill](https://github.com/opencoredev/domain-sdk/tree/main/skills/domain-sdk): \`npx skills add opencoredev/domain-sdk --skill domain-sdk\`
 - [Source code](https://github.com/opencoredev/domain-sdk): Package source, providers, tests, and examples.
 
@@ -32,7 +38,11 @@ export function GET() {
 
 ## Documentation
 
-${documentation}`;
+${documentation}
+
+## Blog
+
+${blogPosts}`;
 
   return new Response(content, {
     headers: {

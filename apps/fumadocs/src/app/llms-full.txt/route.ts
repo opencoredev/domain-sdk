@@ -1,3 +1,4 @@
+import { getBlogLLMText, getBlogPosts } from "@/lib/blog";
 import { getLLMText, source } from "@/lib/source";
 import { legacyDocRoutes } from "@/lib/seo";
 
@@ -8,7 +9,7 @@ export async function GET() {
     .getPages()
     .filter((page) => !legacyDocRoutes.has(page.url))
     .map(getLLMText);
-  const scanned = await Promise.all(scan);
+  const scanned = await Promise.all([...scan, ...getBlogPosts().map(getBlogLLMText)]);
 
   return new Response(scanned.join("\n\n"), {
     headers: {
