@@ -62,9 +62,9 @@ The limits are 50 calls a minute, 700 an hour, and 8,000 a day across the whole 
 ## Read DNS records with getHosts
 
 ```ts title="get-hosts.ts"
-const endpoint = "https://api.namecheap.com/xml.response";
+export const endpoint = "https://api.namecheap.com/xml.response";
 
-function namecheapBody(command: string, extra: Record<string, string> = {}) {
+export function namecheapBody(command: string, extra: Record<string, string> = {}) {
   return new URLSearchParams({
     ApiUser: process.env.NAMECHEAP_API_USER!,
     ApiKey: process.env.NAMECHEAP_API_KEY!,
@@ -98,6 +98,8 @@ The result element, `DomainDNSGetHostsResult`, has an `IsUsingOurDNS` attribute.
 Namecheap's docs say it plainly: every host record not included in the call is deleted. So adding one TXT record is really three steps. Read the current hosts, append the new one, and send the full list back:
 
 ```ts title="add-txt-record.ts"
+import { endpoint, namecheapBody } from "./get-hosts";
+
 type Host = { name: string; type: string; address: string; ttl: string; mxPref?: string };
 
 // `current` is the parsed <host> list from getHosts, and `emailType` its EmailType attribute.
@@ -114,9 +116,27 @@ function setHostsFields(current: Host[], added: Host, emailType?: string) {
   });
   return fields;
 }
+
+export async function addHost(current: Host[], added: Host, emailType?: string) {
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: namecheapBody(
+      "namecheap.domains.dns.setHosts",
+      setHostsFields(current, added, emailType),
+    ),
+  });
+  const xml = await response.text();
+  if (!xml.includes('IsSuccess="true"')) {
+    throw new Error(xml.match(/<Error[^>]*>([^<]*)<\/Error>/)?.[1] ?? "setHosts failed");
+  }
+}
+
+// For example, add a verification TXT record at _verify.example.com:
+// await addHost(current, { name: "_verify", type: "TXT", address: "verification-token-123", ttl: "1800" }, emailType);
 ```
 
-Post those fields with `namecheapBody("namecheap.domains.dns.setHosts", fields)` and check that the result element says `IsSuccess="true"`. Then read the hosts again to confirm the change stuck, because anything another process or a dashboard edit wrote between your read and your write is gone.
+`addHost` sends the full list and checks that the result element says `IsSuccess="true"`. Then read the hosts again to confirm the change stuck, because anything another process or a dashboard edit wrote between your read and your write is gone.
 
 Two things catch people out:
 
