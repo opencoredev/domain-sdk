@@ -8,7 +8,7 @@ icon: namecheap
 
 The `namecheap` adapter manages DNS records for domains on Namecheap BasicDNS. It does not register domains, switch nameservers, or issue certificates. PremiumDNS and FreeDNS zones cannot be managed through this API.
 
-Enable API access in your Namecheap account, generate an API key, and whitelist the IPv4 address your server uses for outbound requests. API access requires an eligible account. Store the API user, API key, and whitelisted IP in server-only configuration. `userName` defaults to `apiUser`; set it explicitly when the account making the request differs from the account owning the domain. For a walkthrough of the Namecheap API itself, including access requirements and raw `getHosts` and `setHosts` calls, see [Namecheap API: manage DNS records from TypeScript](/blog/namecheap-api).
+Enable API access in your Namecheap account, generate an API key, and whitelist the IPv4 address your server uses for outbound requests. API access requires an eligible account. Store the API user, API key, and whitelisted IP in server-only configuration. `userName` defaults to `apiUser`; set it explicitly when the account making the request differs from the account owning the domain. For a walkthrough of the Namecheap API itself, including access requirements and raw `getHosts` and `setHosts` calls, see [Namecheap API: manage DNS records from TypeScript](/blog/namecheap-api). To compare Namecheap's API access rules with Porkbun's, see [Namecheap vs Porkbun for developers](/blog/namecheap-vs-porkbun).
 
 ```ts title="dns.ts"
 import { createDnsClient } from "@opencoredev/domain-sdk";
