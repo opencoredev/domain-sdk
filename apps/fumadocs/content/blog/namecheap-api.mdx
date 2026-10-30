@@ -158,7 +158,7 @@ await dns.ensureRecords(
 const records = await dns.listRecords("example.com");
 ```
 
-Record names are full names, not Namecheap's `HostName` form; the adapter converts them. If a different record already sits where you're writing, `ensureRecords` throws `DOMAIN_CONFLICT` instead of replacing it, unless you pass `onConflict: "replace"`. `dns.removeRecords()` deletes only records that exactly match its input.
+Record names are full names, not Namecheap's `HostName` form; the adapter converts them. If a record that can't coexist with yours already sits at that name (an old `A` record where you want a CNAME, or a different CNAME target), `ensureRecords` throws `DOMAIN_CONFLICT` instead of replacing it, unless you pass `onConflict: "replace"`. TXT and CAA records with other values aren't conflicts; yours is added beside them. `dns.removeRecords()` deletes only records that exactly match its input.
 
 The adapter writes A, AAAA, ALIAS, CAA, CNAME, and TXT records, with TTLs from 60 to 60,000 seconds (1,800 by default). Errors come back as typed `DomainSdkError` codes: an IP that isn't whitelisted is `PERMISSION_DENIED`, a bad key is `AUTHENTICATION_FAILED`, an unknown domain is `DOMAIN_NOT_FOUND`, a domain off BasicDNS is `INVALID_CONFIGURATION`, and hitting the rate limit is a retryable `RATE_LIMITED`. See [error handling](/docs/concepts/error-handling) for the rest.
 

@@ -29,7 +29,7 @@ This comparison only covers the developer side: API access, DNS automation, and 
 
 ## Getting API access
 
-**Porkbun** lets any account create a key under **Account** → **API Access**. You choose its permissions, and you can restrict it to some domains or source IP ranges. Then you switch on **API Access** for each domain the key should touch. Forgetting that switch is the most common reason a valid key gets refused. Keys come with a default API spending cap of $100 a month until you set your own, which matters only if your code buys or renews domains.
+**Porkbun** lets any account create a key under **Account** → **API Access**. You choose its permissions, and you can restrict it to some domains or source IP ranges. Then you switch on **API Access** for each domain the key should touch. Forgetting that switch is a common reason a valid key gets refused. The account also has one [monthly API spending limit](https://porkbun.com/llms/guides/spend-limits) shared by all its keys, covering purchases such as registrations, renewals, and transfers, and credit added through the API. It defaults to $100 a month until the account holder sets one. DNS changes don't count against it.
 
 **Namecheap** gates production access. The account must have at least 20 domains, at least $50 in its balance, or at least $50 spent in the last two years, or you have to ask support. Once on, you get one API key for the account (the docs describe no scopes), and no call works until you whitelist an IPv4 address on the same screen. Every request also sends that address as `ClientIp`. IPv6 isn't accepted.
 
