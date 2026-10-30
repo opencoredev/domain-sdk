@@ -1,0 +1,226 @@
+---
+title: "Namecheap API: manage DNS records from TypeScript"
+description: How to turn on Namecheap API access, whitelist your server's IP, test in the sandbox, and read and write DNS host records with getHosts and setHosts from TypeScript.
+date: 2026-10-30
+---
+
+The Namecheap API is an XML API at `https://api.namecheap.com/xml.response`. Every call is one URL with your API user, API key, username, the whitelisted IPv4 address of the caller, and a `Command` such as `namecheap.domains.dns.getHosts`. DNS records are read with `getHosts` and written with `setHosts`, and `setHosts` replaces the domain's whole host list, so a careless write deletes every record you didn't send.
+
+This guide covers each step with working TypeScript: getting API access, the sandbox, the two DNS commands with plain `fetch`, and then [Domain SDK's Namecheap adapter](/docs/providers/namecheap), which does the read, merge, write, and verify cycle for you. Namecheap facts come from its [API introduction](https://www.namecheap.com/support/api/intro/), [setHosts reference](https://www.namecheap.com/support/api/methods/domains-dns/set-hosts/), and [API FAQ](https://www.namecheap.com/support/knowledgebase/article.aspx/9739/63/api-faq/), checked on 2026-10-30.
+
+## Who can use the Namecheap API
+
+The API is free, but production access isn't open to every account. To turn it on, the account needs at least one of these:
+
+- 20 or more domains in the account
+- at least $50 in the account balance
+- at least $50 spent in the last 2 years
+
+If you don't qualify, Namecheap says to contact its support team. The sandbox has no requirements, so you can build and test everything before your production account qualifies.
+
+The API only manages domains registered at Namecheap that use its free **BasicDNS** nameservers. Domains on PremiumDNS or FreeDNS can't be managed through it, and neither can a domain whose nameservers point to Cloudflare or another DNS host.
+
+## Turn on API access and get a key
+
+1. Sign in to Namecheap and go to **Profile** → **Tools**.
+2. Under **Business & Dev Tools**, click **Manage** next to **Namecheap API Access**.
+3. Switch it on, accept the terms, and enter your account password.
+4. Copy the API key. Your Namecheap username is the API user.
+
+Store both server-side, for example as `NAMECHEAP_API_USER` and `NAMECHEAP_API_KEY`. Resetting the key on the same screen stops every app that uses the old one straight away.
+
+## Whitelist your server's IP
+
+No call works until you whitelist at least one IP. On the same **API Access** screen, click **Edit** next to **Whitelisted IPs**, add the address, and save. Namecheap only accepts IPv4 addresses.
+
+Every request also sends that address as the `ClientIp` parameter. Serverless functions are the usual trap: they often don't have a fixed outbound IP, so calls fail with an IP error from some regions or after a redeploy. Run Namecheap calls from a server or worker with a static egress IPv4, or route them through one.
+
+## Test in the sandbox first
+
+The sandbox is a separate copy of Namecheap at `https://www.sandbox.namecheap.com`, with its own accounts. Sign up there (your real login doesn't carry over), turn on API access and whitelist an IP the same way, and point your code at `https://api.sandbox.namecheap.com/xml.response`. Domains you register in the sandbox live in the registries' test systems, so you can't delete them later; use throwaway names.
+
+## Every call's parameters
+
+All commands share these global parameters:
+
+| Parameter  | Meaning                                                                        |
+| ---------- | ------------------------------------------------------------------------------ |
+| `ApiUser`  | Your Namecheap username (the API user).                                        |
+| `ApiKey`   | The API key from the API Access screen.                                        |
+| `UserName` | The account the command acts on. Usually the same as `ApiUser`.                |
+| `ClientIp` | The whitelisted IPv4 address the request comes from.                           |
+| `Command`  | The method, such as `namecheap.domains.dns.getHosts`.                          |
+| `SLD`      | For DNS commands, the domain's second-level part: `example` for `example.com`. |
+| `TLD`      | The public suffix: `com`, or `co.uk` for `example.co.uk`.                      |
+
+Namecheap's examples put everything in the query string, but the key is a secret and URLs end up in logs. The API also accepts the same fields as a form-encoded POST body, and Namecheap recommends POST once you set more than 10 hosts. Always use HTTPS.
+
+Responses are XML. A successful call has `Status="OK"` on the root `ApiResponse` element. A failed one has `Status="ERROR"` and an `<Error Number="...">` element with a message.
+
+The limits are 50 calls a minute, 700 an hour, and 8,000 a day across the whole key.
+
+## Read DNS records with getHosts
+
+```ts title="get-hosts.ts"
+const endpoint = "https://api.namecheap.com/xml.response";
+
+function namecheapBody(command: string, extra: Record<string, string> = {}) {
+  return new URLSearchParams({
+    ApiUser: process.env.NAMECHEAP_API_USER!,
+    ApiKey: process.env.NAMECHEAP_API_KEY!,
+    UserName: process.env.NAMECHEAP_API_USER!,
+    ClientIp: process.env.NAMECHEAP_CLIENT_IP!,
+    Command: command,
+    ...extra,
+  });
+}
+
+const response = await fetch(endpoint, {
+  method: "POST",
+  headers: { "content-type": "application/x-www-form-urlencoded" },
+  body: namecheapBody("namecheap.domains.dns.getHosts", { SLD: "example", TLD: "com" }),
+});
+const xml = await response.text();
+
+if (!xml.includes('Status="OK"')) {
+  throw new Error(xml.match(/<Error[^>]*>([^<]*)<\/Error>/)?.[1] ?? "Namecheap request failed");
+}
+// Each record is a <host Name="..." Type="..." Address="..." TTL="..." /> element.
+console.log(xml);
+```
+
+The result element, `DomainDNSGetHostsResult`, has an `IsUsingOurDNS` attribute. If it's `false`, the domain doesn't use BasicDNS and any write is pointless. It also has `EmailType`, which tells you how mail is set up, and each `host` element has a `HostId`, `Name` (`@` for the apex), `Type`, `Address`, `TTL`, and `MXPref` for mail records. Use a real XML parser in production; the regex above is only there to keep the sample short.
+
+## Write DNS records with setHosts
+
+`setHosts` takes numbered fields, one set per record: `HostName1`, `RecordType1`, `Address1`, `TTL1`, then `HostName2` and so on. Record types are A, AAAA, ALIAS, CAA, CNAME, MX, MXE, NS, TXT, URL, URL301, and FRAME. TTLs run from 60 to 60,000 seconds and default to 1,800.
+
+Namecheap's docs say it plainly: every host record not included in the call is deleted. So adding one TXT record is really three steps. Read the current hosts, append the new one, and send the full list back:
+
+```ts title="add-txt-record.ts"
+type Host = { name: string; type: string; address: string; ttl: string; mxPref?: string };
+
+// `current` is the parsed <host> list from getHosts, and `emailType` its EmailType attribute.
+function setHostsFields(current: Host[], added: Host, emailType?: string) {
+  const fields: Record<string, string> = { SLD: "example", TLD: "com" };
+  if (emailType) fields.EmailType = emailType;
+  [...current, added].forEach((host, index) => {
+    const n = index + 1;
+    fields[`HostName${n}`] = host.name;
+    fields[`RecordType${n}`] = host.type;
+    fields[`Address${n}`] = host.address;
+    fields[`TTL${n}`] = host.ttl;
+    if (host.mxPref) fields[`MXPref${n}`] = host.mxPref;
+  });
+  return fields;
+}
+```
+
+Post those fields with `namecheapBody("namecheap.domains.dns.setHosts", fields)` and check that the result element says `IsSuccess="true"`. Then read the hosts again to confirm the change stuck, because anything another process or a dashboard edit wrote between your read and your write is gone.
+
+Two things catch people out:
+
+- **Mail settings.** Namecheap lists `EmailType` among the `setHosts` parameters, and it controls which MX records apply. Send back the value you read so the domain's mail setup stays as it was.
+- **Concurrency.** Two writers on one domain will overwrite each other. Serialize writes per domain, and don't edit records in the dashboard while a script is writing.
+
+## Use the Namecheap API through Domain SDK
+
+Domain SDK's [Namecheap adapter](/docs/providers/namecheap) does that read, merge, write, and verify cycle for you. It sends credentials in a form-encoded POST body, keeps unrelated records and the email mode, queues writes per domain, and re-reads the zone after every `setHosts` to check the result.
+
+```ts title="dns.ts"
+import { createDnsClient } from "@opencoredev/domain-sdk";
+import { namecheap } from "@opencoredev/domain-sdk/namecheap";
+
+const dns = createDnsClient({
+  provider: namecheap({
+    apiUser: process.env.NAMECHEAP_API_USER!,
+    apiKey: process.env.NAMECHEAP_API_KEY!,
+    clientIp: process.env.NAMECHEAP_CLIENT_IP!,
+    // sandbox: true, // targets api.sandbox.namecheap.com
+  }),
+});
+
+// Uses domains.dns.getList: true only when the domain is on BasicDNS.
+const zone = await dns.getZone("example.com");
+if (!zone.authoritative) {
+  throw new Error(`example.com uses ${zone.nameservers.join(", ")}, not Namecheap BasicDNS.`);
+}
+
+// Adds only what is missing and leaves every other host record alone.
+await dns.ensureRecords(
+  [
+    { type: "CNAME", name: "app.example.com", value: "tenants.your-saas.com" },
+    { type: "TXT", name: "_verify.example.com", value: "verification-token-123" },
+  ],
+  { zone: "example.com" },
+);
+
+const records = await dns.listRecords("example.com");
+```
+
+Record names are full names, not Namecheap's `HostName` form; the adapter converts them. If a different record already sits where you're writing, `ensureRecords` throws `DOMAIN_CONFLICT` instead of replacing it, unless you pass `onConflict: "replace"`. `dns.removeRecords()` deletes only records that exactly match its input.
+
+The adapter writes A, AAAA, ALIAS, CAA, CNAME, and TXT records, with TTLs from 60 to 60,000 seconds (1,800 by default). Errors come back as typed `DomainSdkError` codes: an IP that isn't whitelisted is `PERMISSION_DENIED`, a bad key is `AUTHENTICATION_FAILED`, an unknown domain is `DOMAIN_NOT_FOUND`, a domain off BasicDNS is `INVALID_CONFIGURATION`, and hitting the rate limit is a retryable `RATE_LIMITED`. See [error handling](/docs/concepts/error-handling) for the rest.
+
+The adapter's queue only covers one adapter instance. Separate processes writing the same domain can still overwrite each other, so keep one DNS writer per zone.
+
+### Point a customer domain at your SaaS app
+
+If your customers keep their domains at Namecheap, you can write the records your hosting platform asks for straight into their zone:
+
+```ts title="onboard-domain.ts"
+import { createDnsClient, createDomainClient } from "@opencoredev/domain-sdk";
+import { namecheap } from "@opencoredev/domain-sdk/namecheap";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+  }),
+});
+const dns = createDnsClient({
+  provider: namecheap({
+    apiUser: process.env.NAMECHEAP_API_USER!,
+    apiKey: process.env.NAMECHEAP_API_KEY!,
+    clientIp: process.env.NAMECHEAP_CLIENT_IP!,
+  }),
+});
+
+const domain = await domains.add("app.customer.com");
+await dns.applyDomainRecords(domain, { zone: "customer.com" });
+```
+
+`applyDomainRecords` writes the routing and verification records from the platform's response, and the same code works with the [Cloudflare for SaaS](/docs/providers/cloudflare), [Railway](/docs/providers/railway), [Render](/docs/providers/render), and [Netlify](/docs/providers/netlify) adapters. Then [poll until the domain is active](/docs/guides/poll-until-active) to know when the certificate is ready.
+
+Domain SDK only writes DNS records. It doesn't register, renew, or price domains, switch nameservers, or search availability at Namecheap; use Namecheap's own `domains.*` commands for that.
+
+## Common questions
+
+### Is the Namecheap API free?
+
+Yes. Namecheap doesn't charge for API use. You need an account that meets one of the access requirements above, and registrations and renewals cost the same as in the dashboard.
+
+### Why does the Namecheap API say my IP is invalid?
+
+The request's `ClientIp` isn't on the key's whitelist, or the request left from a different address. Whitelist the server's public IPv4 address (IPv6 isn't accepted), send that same address as `ClientIp`, and make sure the code runs from a host with a fixed outbound IP.
+
+### Can I use the Namecheap API with Cloudflare or PremiumDNS?
+
+Not for DNS records. The DNS commands only work on domains using Namecheap BasicDNS. If the domain's nameservers point to Cloudflare, manage the records through Cloudflare's API instead.
+
+### Does Namecheap have a JSON API?
+
+No. Responses are XML. Requests are plain form fields, so sending them from `fetch` is easy, but you need an XML parser for the replies.
+
+### Can I add one DNS record without replacing the others?
+
+Not with a single call. `setHosts` always replaces the full list, so read with `getHosts`, merge your change, and write everything back. Domain SDK's adapter does this and checks the result afterwards.
+
+## Next steps
+
+- [Namecheap adapter reference](/docs/providers/namecheap): options, record types, whole-zone writes, and errors.
+- [Porkbun API: create DNS records from TypeScript](/blog/porkbun-api): the same job on a registrar with per-record JSON endpoints.
+- [Namecheap vs Porkbun for developers](/blog/namecheap-vs-porkbun): API access, DNS writes, and testing side by side.
+- [DNS records](/docs/concepts/dns-records): what each record does for a custom domain.
+- [Apex domains and subdomains](/docs/guides/apex-and-subdomains): when you need ALIAS instead of CNAME.

@@ -1,0 +1,117 @@
+---
+title: "Namecheap vs Porkbun for developers: API access, DNS, and automation"
+description: "A developer's comparison of Namecheap and Porkbun: who can use each API, IP whitelisting, sandboxes, JSON vs XML, per-record vs whole-zone DNS writes, and rate limits."
+date: 2026-10-30
+---
+
+If you only need to buy a domain and point it somewhere, Namecheap and Porkbun are both fine, and the choice mostly comes down to the price of your TLD. Compare current prices on [Namecheap's pricing page](https://www.namecheap.com/domains/) and [Porkbun's pricing page](https://porkbun.com/products/domains) rather than trusting a blog post, since both change often.
+
+If you want to manage DNS from code, the two are far apart. **Porkbun's API is open to every account, uses JSON, and edits one record at a time. Namecheap's API needs an account that meets a spend or domain-count bar, requires a whitelisted IPv4 address on every call, speaks XML, and replaces a domain's whole record list on each write.** Both work, and both have sandboxes, but Porkbun is less work to automate.
+
+This comparison only covers the developer side: API access, DNS automation, and testing. The facts come from [Namecheap's API docs](https://www.namecheap.com/support/api/intro/) and [API FAQ](https://www.namecheap.com/support/knowledgebase/article.aspx/9739/63/api-faq/), checked on 2026-10-30, and [Porkbun's API documentation](https://porkbun.com/api/json/v3/documentation) (version 3.65), checked on 2026-10-29 and 2026-10-30.
+
+## The short version
+
+|                          | Namecheap                                                           | Porkbun                                                                            |
+| ------------------------ | ------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Who can use the API      | Accounts with 20+ domains, a $50+ balance, or $50+ spent in 2 years | Any account                                                                        |
+| Credentials              | API user and API key                                                | API key (`pk1_…`) and secret key (`sk1_…`)                                         |
+| IP whitelist             | Required, IPv4 only                                                 | Optional, per key (CIDR ranges)                                                    |
+| Per-domain switch        | No                                                                  | Yes, **API Access** must be on for each domain                                     |
+| Key permissions          | One key per account, no documented scopes                           | Full, read-only, no-purchase, or custom scopes, optionally per domain              |
+| Format                   | XML responses, form or query-string requests                        | JSON in, JSON out                                                                  |
+| DNS writes               | `setHosts` replaces the whole host list                             | Create, edit, and delete single records by ID or by name and type                  |
+| DNS on other nameservers | Not manageable (BasicDNS only)                                      | Writes succeed with a warning, but don't affect public DNS                         |
+| Rate limits              | 50 a minute, 700 an hour, 8,000 a day per key                       | Not published; rate-limited endpoints return `X-RateLimit-*` headers               |
+| Testing                  | Separate sandbox site and accounts                                  | Sandbox keys (`pk1_sb_…`) on the same base URL, plus a credential-free mock server |
+| Retries                  | No idempotency support documented                                   | `Idempotency-Key` header replays the first response for 24 hours                   |
+| TTL range                | 60 to 60,000 seconds, default 1,800                                 | Account minimum, usually 600 seconds                                               |
+
+## Getting API access
+
+**Porkbun** lets any account create a key under **Account** → **API Access**. You choose its permissions, and you can restrict it to some domains or source IP ranges. Then you switch on **API Access** for each domain the key should touch. Forgetting that switch is the most common reason a valid key gets refused. Keys come with a default API spending cap of $100 a month until you set your own, which matters only if your code buys or renews domains.
+
+**Namecheap** gates production access. The account must have at least 20 domains, at least $50 in its balance, or at least $50 spent in the last two years, or you have to ask support. Once on, you get one API key for the account (the docs describe no scopes), and no call works until you whitelist an IPv4 address on the same screen. Every request also sends that address as `ClientIp`. IPv6 isn't accepted.
+
+The whitelist is the bigger practical difference. Serverless functions often don't have a fixed outbound IP, so with Namecheap you need a server or proxy with a static IPv4 address. With Porkbun, IP limits are an extra layer you can add, not a requirement.
+
+## Writing DNS records
+
+This is where the APIs differ most.
+
+**Porkbun** works per record. `POST /dns/create/{domain}` adds one record and returns its ID. `/dns/edit` and `/dns/delete` change one record by ID, and the `ByNameType` variants work by name and type. Adding a TXT record never touches the domain's other records. The [Porkbun API guide](/blog/porkbun-api) has working `fetch` code.
+
+**Namecheap** works per zone. `namecheap.domains.dns.setHosts` takes the full list of host records, and every record you leave out is deleted. To add a TXT record you read the list with `getHosts`, append the record, send everything back, and preferably read again to check. Two scripts writing the same domain at once can wipe each other's changes. The [Namecheap API guide](/blog/namecheap-api) walks through that cycle.
+
+Both have a delegation catch. Namecheap's DNS commands only work while the domain uses its BasicDNS nameservers; on PremiumDNS, FreeDNS, or Cloudflare you get an error. Porkbun keeps a zone for every domain even when its nameservers point elsewhere, so a write returns `SUCCESS` with a warning and public DNS doesn't change. Either way, check the nameservers before you write.
+
+## Testing
+
+Namecheap's sandbox at `sandbox.namecheap.com` is a separate site with separate accounts and its own endpoint, `api.sandbox.namecheap.com`. It has no access requirements, so it's where you build before your real account qualifies. Domains registered there exist in the registries' test systems and can't be deleted.
+
+Porkbun's sandbox uses special `pk1_sb_` keys on the normal base URL, so you only swap keys. Porkbun also runs a mock server at `https://api.porkbun.com/api/json/v3/mock/<path>` that returns example responses without any credentials, which is handy in CI.
+
+## Using both from one codebase
+
+If your users bring domains from either registrar, you don't have to write two integrations. Domain SDK has DNS adapters for [Porkbun](/docs/providers/porkbun) and [Namecheap](/docs/providers/namecheap) behind the same `createDnsClient` API, so only the adapter line changes:
+
+```ts title="dns.ts"
+import { createDnsClient } from "@opencoredev/domain-sdk";
+import { namecheap } from "@opencoredev/domain-sdk/namecheap";
+import { porkbun } from "@opencoredev/domain-sdk/porkbun";
+
+export const porkbunDns = createDnsClient({
+  provider: porkbun({
+    apiKey: process.env.PORKBUN_API_KEY!,
+    secretApiKey: process.env.PORKBUN_SECRET_API_KEY!,
+  }),
+});
+
+export const namecheapDns = createDnsClient({
+  provider: namecheap({
+    apiUser: process.env.NAMECHEAP_API_USER!,
+    apiKey: process.env.NAMECHEAP_API_KEY!,
+    clientIp: process.env.NAMECHEAP_CLIENT_IP!,
+  }),
+});
+
+// Same call for either registrar: creates only what is missing.
+await porkbunDns.ensureRecords(
+  [{ type: "TXT", name: "_verify.example.com", value: "verification-token-123" }],
+  { zone: "example.com" },
+);
+```
+
+The Namecheap adapter handles the read, merge, write, and verify cycle and queues writes per domain inside one adapter instance. Both adapters report a domain that isn't on the registrar's nameservers through `getZone()`, refuse to overwrite conflicting records unless you pass `onConflict: "replace"`, and map errors to the same typed codes. Domain SDK only writes DNS records; it doesn't register, transfer, or price domains at either registrar.
+
+## Which one should a developer pick?
+
+- **Pick Porkbun** if you're starting fresh and want to automate DNS: no access bar, no IP whitelist, JSON, per-record writes, scoped keys, and idempotent retries.
+- **Stay with Namecheap** if your domains already live there and the account meets the access bar. The API is older and stricter, but it's stable, documented, and fully workable once you whitelist a static IP and always write the full host list.
+- **Check the TTL you need.** Namecheap allows TTLs down to 60 seconds; Porkbun's minimum is usually 600. For fast cutovers that can matter.
+- **For customer domains you don't control**, the registrar isn't your choice. Support both, or ask customers to add the records themselves using a [DNS records table](/docs/components/dns-records-table).
+
+## Common questions
+
+### Is Porkbun or Namecheap better for DNS?
+
+For automating DNS from code, Porkbun is simpler: per-record JSON endpoints and no IP whitelist. For hand-editing records in a dashboard, both are fine.
+
+### Does Namecheap have an API for every account?
+
+No. Production API access needs 20+ domains, a $50+ balance, or $50+ spent in the last two years. The sandbox is open to everyone.
+
+### Do I need a static IP for the Porkbun API?
+
+No. You can restrict a Porkbun key to IP ranges, but it isn't required. Namecheap requires a whitelisted IPv4 address on every call.
+
+### Can I move a domain from Namecheap to Porkbun?
+
+Yes, with a normal registrar transfer, and [Porkbun's knowledge base](https://kb.porkbun.com/) covers the steps. If the domain uses Namecheap BasicDNS, recreate its records at Porkbun before you switch nameservers so nothing stops resolving. With Domain SDK, `listRecords()` on the Namecheap client gives you the list to copy.
+
+## Next steps
+
+- [Porkbun API: create DNS records from TypeScript](/blog/porkbun-api)
+- [Namecheap API: manage DNS records from TypeScript](/blog/namecheap-api)
+- [Spaceship DNS adapter](/docs/providers/spaceship): the third registrar Domain SDK supports.
+- [DNS records](/docs/concepts/dns-records): what each record does for a custom domain.
