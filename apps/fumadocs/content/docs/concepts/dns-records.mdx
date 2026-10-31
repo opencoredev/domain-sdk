@@ -1,9 +1,18 @@
 ---
-title: DNS records
-description: Render exact normalized routing, ownership, and certificate instructions.
+title: "DNS records in the SDK: types, status, and zone writes"
+description: "The DNS records Domain SDK returns for a custom domain: type, full name, value, purpose, and status. Show them to customers, or write them to a DNS zone with createDnsClient."
 ---
 
-Every `DnsRecord` has a `type`, full `name`, `value`, `purpose`, `required` flag, and normalized `status`. Identical records are deduplicated; multiple valid verification methods remain available.
+When you add a custom domain, the hosting provider says which DNS records the customer needs. Domain SDK returns them as one normalized list on `domain.records`, in the same shape for every platform. You can show that list to the customer, or write it into a DNS zone yourself with `createDnsClient` and a DNS adapter.
+
+Every `DnsRecord` has a `type`, full `name`, `value`, `purpose`, `required` flag, and normalized `status`, plus an optional `ttl` and `description`. Identical records are deduplicated; multiple valid verification methods remain available.
+
+| Field      | Values                                                         |
+| ---------- | -------------------------------------------------------------- |
+| `type`     | `A`, `AAAA`, `CNAME`, `TXT`, `CAA`, `ALIAS`, `ANAME`           |
+| `purpose`  | `routing`, `ownership`, `certificate`, `other`                 |
+| `status`   | `pending`, `valid`, `invalid`, `unknown`                       |
+| `required` | `true` for records the domain needs, `false` for optional ones |
 
 ```ts title="render-records.ts"
 for (const record of domain.records.filter((item) => item.required)) {
@@ -13,4 +22,8 @@ for (const record of domain.records.filter((item) => item.required)) {
 
 Names are full hostnames where the provider supplies enough context. Your UI may additionally explain registrar shorthand, but it should not replace the authoritative value stored by your application.
 
-Read next: [Display DNS records correctly](../guides/display-dns-records.mdx). To write these records into a registrar's zone instead of showing them to the customer, see the [DNS adapters](../providers/index.mdx) and the [Porkbun API](/blog/porkbun-api), [Namecheap API](/blog/namecheap-api), and [GoDaddy API](/blog/godaddy-api) guides.
+## Write the records to a DNS zone
+
+If the domain's zone is at Porkbun, Namecheap, or Spaceship, a DNS client can write the records instead of the customer. `dns.applyDomainRecords(domain, { zone })` writes the required records, skips records that already exist, and leaves unrelated records alone. Pass `includeOptional: true` to write optional records too. See [DNS adapters](../providers/index.mdx) for setup and conflict handling.
+
+Read next: [Display DNS records correctly](../guides/display-dns-records.mdx). For raw API walkthroughs next to the adapters, see the [Porkbun API](/blog/porkbun-api), [Namecheap API](/blog/namecheap-api), and [GoDaddy API](/blog/godaddy-api) guides.
