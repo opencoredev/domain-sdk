@@ -170,18 +170,38 @@ const errorCode = (status: number) =>
 
 export function godaddy(options: { pat: string; ttl?: number }): DnsProvider {
   const defaultTtl = options.ttl ?? 600;
+  if (!Number.isInteger(defaultTtl) || defaultTtl < 600 || defaultTtl > 86400) {
+    throw new DomainSdkError(
+      "INVALID_CONFIGURATION",
+      "GoDaddy TTLs must be 600 to 86400 seconds.",
+      {
+        provider: "godaddy",
+      },
+    );
+  }
 
   async function request(path: string, context: DnsProviderContext, init: RequestInit = {}) {
     const method = init.method ?? "GET";
-    const response = await fetch(`${API}/${path}`, {
-      ...init,
-      signal: context.signal,
-      headers: {
-        authorization: `Bearer ${options.pat}`,
-        accept: "application/json",
-        "content-type": "application/json",
-      },
-    });
+    let response: Response;
+    try {
+      response = await fetch(`${API}/${path}`, {
+        ...init,
+        signal: context.signal,
+        headers: {
+          authorization: `Bearer ${options.pat}`,
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+      });
+    } catch (error) {
+      if (context.signal?.aborted) throw error;
+      // The request never got an answer. Retry reads; a write may or may not have happened.
+      throw new DomainSdkError("PROVIDER_UNAVAILABLE", `GoDaddy ${method} failed to connect.`, {
+        provider: "godaddy",
+        retryable: method === "GET",
+        cause: error,
+      });
+    }
     if (response.ok) return response;
     throw new DomainSdkError(
       errorCode(response.status),
