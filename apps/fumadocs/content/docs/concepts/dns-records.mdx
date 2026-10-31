@@ -24,6 +24,6 @@ Names are full hostnames where the provider supplies enough context. Your UI may
 
 ## Write the records to a DNS zone
 
-If the domain's zone is at Porkbun, Namecheap, or Spaceship, a DNS client can write the records instead of the customer. `dns.applyDomainRecords(domain, { zone })` writes the required records, skips records that already exist, and leaves unrelated records alone. Pass `includeOptional: true` to write optional records too. See [DNS adapters](../providers/index.mdx) for setup and conflict handling.
+If the domain's zone is at Porkbun, Namecheap, or Spaceship, a DNS client can write the records instead of the customer. `dns.applyDomainRecords(domain, { zone })` writes the required records, skips records that already exist, and leaves unrelated records alone. Pass `includeOptional: true` to also write optional records that fit the required ones; optional alternatives that would clash are skipped. See [DNS adapters](../providers/index.mdx) for setup and conflict handling.
 
 Read next: [Display DNS records correctly](../guides/display-dns-records.mdx). For raw API walkthroughs next to the adapters, see the [Porkbun API](/blog/porkbun-api), [Namecheap API](/blog/namecheap-api), and [GoDaddy API](/blog/godaddy-api) guides.
