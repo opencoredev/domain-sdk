@@ -1,5 +1,5 @@
 ---
-title: "GoDaddy API: get an API key and manage DNS records from TypeScript"
+title: "GoDaddy API: API keys and DNS records from TypeScript"
 description: How the GoDaddy API works in 2026, from Personal Access Tokens and scopes to account rules and the v3 DNS records endpoints, with fetch samples and a Domain SDK adapter you can copy.
 date: 2026-10-31
 ---
@@ -103,13 +103,19 @@ The rules worth knowing before you write code:
 
 - **TTL** must be between 600 and 86,400 seconds.
 - **Record types** are A, AAAA, CNAME, MX, TXT, SRV, NS, and CAA. SOA is read-only, and GoDaddy's own NS and SOA records can't be replaced or deleted (`409`).
+- **CNAME targets end with a dot.** Send `cname.vercel-dns.com.`, not `cname.vercel-dns.com`, or the API rejects the value with `400`.
 - **No CNAME at the apex.** It returns `422`. GoDaddy's DNS has no ALIAS or ANAME record either, so point an apex domain at a platform with its A or AAAA records.
 - **Retries can duplicate records.** Replaying a `POST` after a `5xx` may create the record twice, so read the zone before you retry a failed create.
 - **Records only resolve on GoDaddy's nameservers.** If the domain is delegated to Cloudflare or another DNS host, records you write here are saved but nobody sees them.
 
 GoDaddy's [DNS records guide](https://developer.godaddy.com/docs/api-users/domains/manage/dns) has samples in curl, Python, and Go, and the [troubleshooting page](https://developer.godaddy.com/docs/api-users/troubleshoot/dns) explains the common 400, 403, 404, and 422 errors.
 
-If you'd rather not write HTTP calls at all, GoDaddy's `gddy` CLI wraps the same API: `gddy dns list example.com`, `gddy dns add example.com --type TXT --name _verify --data "..." --ttl 600`.
+If you'd rather not write HTTP calls at all, GoDaddy's `gddy` CLI wraps the same API:
+
+```bash
+gddy dns list example.com
+gddy dns add example.com --type TXT --name _verify --data "verification-token-123" --ttl 600
+```
 
 ## Use GoDaddy DNS with Domain SDK
 
@@ -137,6 +143,15 @@ const toFullName = (name: string, zone: string) =>
   (name === "@" ? zone : `${name}.${zone}`).toLowerCase();
 const toRelativeName = (name: string, zone: string) =>
   name === zone ? "@" : name.slice(0, -(zone.length + 1));
+
+// A CNAME's data must be a fully qualified name ending with a dot.
+const withDot = (value: string) => (value.endsWith(".") ? value : `${value}.`);
+const withoutDot = (value: string) => value.replace(/\.$/, "");
+
+const retryAfterMs = (headers: Headers) => {
+  const seconds = Number(headers.get("retry-after") ?? headers.get("ratelimit-reset"));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined;
+};
 
 const errorCode = (status: number) =>
   status === 401
@@ -177,7 +192,8 @@ export function godaddy(options: { pat: string; ttl?: number }): DnsProvider {
         // A create that failed with a 5xx may still have written the record, so only reads
         // and rate-limited requests are safe to retry.
         retryable: response.status === 429 || (response.status >= 500 && method === "GET"),
-        retryAfter: Number(response.headers.get("retry-after")) || undefined,
+        // GoDaddy sends seconds; Domain SDK expects milliseconds.
+        retryAfter: retryAfterMs(response.headers),
       },
     );
   }
@@ -204,7 +220,7 @@ export function godaddy(options: { pat: string; ttl?: number }): DnsProvider {
             id: item.recordId,
             type: item.type,
             name: toFullName(item.name, zone),
-            value: item.data,
+            value: item.type === "CNAME" ? withoutDot(item.data) : item.data,
             ttl: item.ttl,
             // GoDaddy manages the zone's SOA and apex NS records itself.
             editable: item.type !== "SOA" && !(item.type === "NS" && item.name === "@"),
@@ -222,7 +238,7 @@ export function godaddy(options: { pat: string; ttl?: number }): DnsProvider {
           body: JSON.stringify({
             type: record.type,
             name: toRelativeName(record.name, zone),
-            data: record.value,
+            data: record.type === "CNAME" ? withDot(record.value) : record.value,
             ttl: record.ttl ?? defaultTtl,
           }),
         });
@@ -270,7 +286,7 @@ Domain SDK only writes DNS records. It doesn't register, renew, transfer, or pri
 
 ### Is the GoDaddy API free?
 
-GoDaddy doesn't list a charge for API calls. Operations that buy something, like registering or renewing a domain, cost the same as in the dashboard and need a billing method on file.
+GoDaddy doesn't charge for API access. Operations that buy something cost money and need a billing method on file, and the price depends on the API version: GoDaddy's [pricing page](https://developer.godaddy.com/docs/api-users/domains/pricing) says registrations through v3 get discounted rates, while v1, v2, and the retail site charge standard rates, and API renewals can be priced differently from dashboard renewals. Get a quote before you buy.
 
 ### Why does the GoDaddy API return 403 Forbidden?
 
