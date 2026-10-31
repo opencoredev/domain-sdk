@@ -1,0 +1,333 @@
+---
+title: "GoDaddy API: API keys and DNS records from TypeScript"
+description: How the GoDaddy API works in 2026, from Personal Access Tokens and scopes to account rules and the v3 DNS records endpoints, with fetch samples and a Domain SDK adapter you can copy.
+date: 2026-10-31
+---
+
+The GoDaddy API lives at `https://api.godaddy.com`. For DNS, the current version is Domains API v3: you create a **Personal Access Token** (PAT) on GoDaddy's developer portal, send it as `Authorization: Bearer <token>`, and read and write records at `/v3/domains/zones/{zone}/dns-records`. The old `sso-key` API key still works for the v1 and v2 endpoints, but GoDaddy has scheduled it for deprecation on the Domains APIs, and it doesn't work with v3.
+
+That's a big change from the GoDaddy API most forum threads describe. GoDaddy launched a new developer portal with PATs and a CLI on July 14, 2026, and released Domains API v3 on August 10, 2026. This guide covers the current setup: getting a token, who can use the API, the DNS calls with plain `fetch`, and a small adapter that lets [Domain SDK](/docs) write a hosting platform's records into a GoDaddy zone. Every GoDaddy fact here comes from [developer.godaddy.com](https://developer.godaddy.com/docs/api-users), checked on 2026-10-31.
+
+## API key or Personal Access Token?
+
+When people search for a "GoDaddy API key", they usually mean one of two credentials:
+
+| Credential                  | Header                                | Works with                                | Status                                              |
+| --------------------------- | ------------------------------------- | ----------------------------------------- | --------------------------------------------------- |
+| Personal Access Token (PAT) | `Authorization: Bearer $GODADDY_PAT`  | Domains v3, Hosting, Shopping, and others | Recommended                                         |
+| Classic Developer Key       | `Authorization: sso-key $KEY:$SECRET` | Domains v1 and v2, Auctions (required)    | Deprecated for Domains, still required for Auctions |
+
+Use a PAT for anything new. It carries only the scopes you choose, can expire, and can be revoked on its own without rotating an account-wide key. The [authentication reference](https://developer.godaddy.com/docs/api-users/auth) lists which API takes which credential.
+
+## Create a Personal Access Token
+
+1. Sign in on GoDaddy's [Personal Access Token page](https://developer.godaddy.com/personal-access-token) and select **Generate Token**.
+2. Give it a name and pick an expiry: 7, 30, 60, or 90 days, 1 year, or a custom date up to a year away.
+3. Choose its permissions. For DNS work you need `domains.domain:read` to list records and `domains.dns:update` to create, replace, and delete them. The **Domains & DNS** bundle selects every domain scope; expand it to grant only those two.
+4. Select **Create Token** and copy it. GoDaddy shows the token once and you can't retrieve it later.
+
+Keep it in a secrets manager or your platform's environment variables, for example as `GODADDY_PAT`, and never in source control. If you lose it, revoke it and generate a new one. GoDaddy's [token guide](https://developer.godaddy.com/docs/api-users/auth/how-to) also covers cloning a token with different scopes.
+
+## Who can use the GoDaddy API
+
+GoDaddy's current docs say a valid token isn't always enough on its own:
+
+- **Domain management**, which includes DNS, needs an account that holds at least one domain or is on a plan that grants management access.
+- **Anything that costs money**, such as registrations, renewals, and transfers, needs a billing method on file or a funded Good as Gold balance.
+
+Read operations, including DNS reads, work on any account with a valid credential. An ineligible account gets `403 Forbidden`, and so does a token without the right scope, so check the `code` field in the response body to tell them apart.
+
+Older rules were stricter. GoDaddy's API terms as archived in [March 2025](https://web.archive.org/web/20250306194813/https://developer.godaddy.com/getstarted) limited the Management and DNS APIs to accounts with 10 or more domains or a Discount Domain Club Premier membership, and the availability API to accounts with 50 or more domains. That rule is why so many developers reported their DNS scripts and ACME clients failing with 403 in 2024. The new portal's account requirements don't mention a domain count, but if your account gets a 403 on DNS calls with the right scopes, eligibility is the first thing to check.
+
+## Rate limits and the test environment
+
+Limits are per credential, not per endpoint. At the time of writing the [rate limit page](https://developer.godaddy.com/docs/api-users/rate-limits) gives 600 requests per window of about 23 minutes, and says the numbers can change. Every response carries `RateLimit-Limit`, `RateLimit-Remaining`, and `RateLimit-Reset` headers, and a request over the limit gets `429` with no body. Read the headers instead of hard-coding a number.
+
+GoDaddy's test environment, OTE, is at `https://api.ote-godaddy.com`. It doesn't process real transactions, its credentials are separate from production, and not every API has an OTE version.
+
+## List DNS records
+
+```ts title="list-records.ts"
+const zone = "example.com";
+const url = new URL(`https://api.godaddy.com/v3/domains/zones/${zone}/dns-records`);
+url.searchParams.set("type", "TXT");
+url.searchParams.set("pageSize", "100");
+
+const response = await fetch(url, {
+  headers: {
+    authorization: `Bearer ${process.env.GODADDY_PAT}`,
+    accept: "application/json",
+  },
+});
+if (!response.ok) throw new Error(`GoDaddy returned ${response.status}`);
+
+const { items } = (await response.json()) as {
+  items: { recordId: string; name: string; type: string; data: string; ttl: number }[];
+};
+for (const record of items) console.log(record.recordId, record.name, record.type, record.data);
+```
+
+Each record has a server-assigned `recordId`, a `name` relative to the zone (`@` is the apex, `www` is `www.example.com`), a `type`, its `data`, and a `ttl`. Filter with the `type` and `name` query parameters. Results are paged with `page` (from 1) and `pageSize` (1 to 100, default 25), so a zone with more records than one page needs a loop.
+
+## Create, replace, and delete records
+
+v3 works one record at a time, which is easier to get right than an API that replaces the whole zone:
+
+| Call                                                     | What it does                                                          |
+| -------------------------------------------------------- | --------------------------------------------------------------------- |
+| `POST /v3/domains/zones/{zone}/dns-records`              | Creates one record. Returns `201` with the record and its `recordId`. |
+| `PUT /v3/domains/zones/{zone}/dns-records/{recordId}`    | Replaces one record. Send every field; omitted fields aren't kept.    |
+| `DELETE /v3/domains/zones/{zone}/dns-records/{recordId}` | Deletes one record. Returns `204`, or `404` if it doesn't exist.      |
+
+Changes apply synchronously, so there's nothing to poll. Here's a verification TXT record:
+
+```ts title="add-txt-record.ts"
+const zone = "example.com";
+
+const response = await fetch(`https://api.godaddy.com/v3/domains/zones/${zone}/dns-records`, {
+  method: "POST",
+  headers: {
+    authorization: `Bearer ${process.env.GODADDY_PAT}`,
+    "content-type": "application/json",
+  },
+  body: JSON.stringify({ type: "TXT", name: "_verify", data: "verification-token-123", ttl: 600 }),
+});
+if (!response.ok) throw new Error(`GoDaddy returned ${response.status}`);
+
+const record = (await response.json()) as { recordId: string };
+// Keep the id: deletes and replacements need it.
+console.log(record.recordId);
+```
+
+The rules worth knowing before you write code:
+
+- **TTL** must be between 600 and 86,400 seconds.
+- **Record types** are A, AAAA, CNAME, MX, TXT, SRV, NS, and CAA. SOA is read-only, and GoDaddy's own NS and SOA records can't be replaced or deleted (`409`).
+- **CNAME targets end with a dot.** Send `cname.vercel-dns.com.`, not `cname.vercel-dns.com`, or the API rejects the value with `400`.
+- **No CNAME at the apex.** It returns `422`. GoDaddy's DNS has no ALIAS or ANAME record either, so point an apex domain at a platform with its A or AAAA records.
+- **Retries can duplicate records.** Replaying a `POST` after a `5xx` may create the record twice, so read the zone before you retry a failed create.
+- **Records only resolve on GoDaddy's nameservers.** If the domain is delegated to Cloudflare or another DNS host, records you write here are saved but nobody sees them.
+
+GoDaddy's [DNS records guide](https://developer.godaddy.com/docs/api-users/domains/manage/dns) has samples in curl, Python, and Go, and the [troubleshooting page](https://developer.godaddy.com/docs/api-users/troubleshoot/dns) explains the common 400, 403, 404, and 422 errors.
+
+If you'd rather not write HTTP calls at all, GoDaddy's `gddy` CLI wraps the same API:
+
+```bash
+gddy dns list example.com
+gddy dns add example.com --type TXT --name _verify --data "verification-token-123" --ttl 600
+```
+
+## Use GoDaddy DNS with Domain SDK
+
+Domain SDK doesn't ship a GoDaddy adapter. Its built-in DNS adapters are [Porkbun](/docs/providers/porkbun), [Namecheap](/docs/providers/namecheap), and [Spaceship](/docs/providers/spaceship). But the `DnsProvider` interface those adapters implement is public, and v3's per-record endpoints map onto it directly. An adapter only has to list, create, and delete records; `createDnsClient()` does the diffing, conflict checks, validation, and per-zone write queue.
+
+This adapter is a starting point built from GoDaddy's documented v3 endpoints, not an official one, so test it on a spare domain before you point it at customer zones:
+
+```ts title="godaddy-dns.ts"
+import { DomainSdkError } from "@opencoredev/domain-sdk";
+import type { DnsProvider, DnsProviderContext, ZoneRecord } from "@opencoredev/domain-sdk";
+
+const API = "https://api.godaddy.com/v3/domains/zones";
+const PAGE_SIZE = 100;
+
+interface GoDaddyRecord {
+  recordId: string;
+  name: string;
+  type: string;
+  data: string;
+  ttl: number;
+}
+
+// GoDaddy names are relative to the zone ("@" for the apex). Domain SDK uses full names.
+const toFullName = (name: string, zone: string) =>
+  (name === "@" ? zone : `${name}.${zone}`).toLowerCase();
+const toRelativeName = (name: string, zone: string) =>
+  name === zone ? "@" : name.slice(0, -(zone.length + 1));
+
+// A CNAME's data must be a fully qualified name ending with a dot.
+const withDot = (value: string) => (value.endsWith(".") ? value : `${value}.`);
+const withoutDot = (value: string) => value.replace(/\.$/, "");
+
+const retryAfterMs = (headers: Headers) => {
+  const seconds = Number(headers.get("retry-after") ?? headers.get("ratelimit-reset"));
+  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined;
+};
+
+const errorCode = (status: number) =>
+  status === 401
+    ? "AUTHENTICATION_FAILED"
+    : status === 403
+      ? "PERMISSION_DENIED"
+      : status === 404
+        ? "DOMAIN_NOT_FOUND"
+        : status === 409
+          ? "DOMAIN_CONFLICT"
+          : status === 429
+            ? "RATE_LIMITED"
+            : status >= 500
+              ? "PROVIDER_UNAVAILABLE"
+              : "REQUEST_FAILED";
+
+export function godaddy(options: { pat: string; ttl?: number }): DnsProvider {
+  const defaultTtl = options.ttl ?? 600;
+  if (!Number.isInteger(defaultTtl) || defaultTtl < 600 || defaultTtl > 86400) {
+    throw new DomainSdkError(
+      "INVALID_CONFIGURATION",
+      "GoDaddy TTLs must be 600 to 86400 seconds.",
+      {
+        provider: "godaddy",
+      },
+    );
+  }
+
+  async function request(path: string, context: DnsProviderContext, init: RequestInit = {}) {
+    const method = init.method ?? "GET";
+    let response: Response;
+    try {
+      response = await fetch(`${API}/${path}`, {
+        ...init,
+        signal: context.signal,
+        headers: {
+          authorization: `Bearer ${options.pat}`,
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+      });
+    } catch (error) {
+      if (context.signal?.aborted) throw error;
+      // The request never got an answer. Retry reads; a write may or may not have happened.
+      throw new DomainSdkError("PROVIDER_UNAVAILABLE", `GoDaddy ${method} failed to connect.`, {
+        provider: "godaddy",
+        retryable: method === "GET",
+        cause: error,
+      });
+    }
+    if (response.ok) return response;
+    throw new DomainSdkError(
+      errorCode(response.status),
+      `GoDaddy ${method} returned ${response.status}.`,
+      {
+        provider: "godaddy",
+        statusCode: response.status,
+        // A create that failed with a 5xx may still have written the record, so only reads
+        // and rate-limited requests are safe to retry.
+        retryable: response.status === 429 || (response.status >= 500 && method === "GET"),
+        // GoDaddy sends seconds; Domain SDK expects milliseconds.
+        retryAfter: retryAfterMs(response.headers),
+      },
+    );
+  }
+
+  return {
+    id: "godaddy",
+    capabilities: {
+      recordTypes: ["A", "AAAA", "CNAME", "TXT"],
+      ttl: { min: 600, max: 86400 },
+      wholeZoneWrites: false,
+      zoneInfo: false,
+    },
+
+    async listRecords({ zone }, context) {
+      const records: ZoneRecord[] = [];
+      for (let page = 1; ; page++) {
+        const response = await request(
+          `${zone}/dns-records?page=${page}&pageSize=${PAGE_SIZE}`,
+          context,
+        );
+        const { items } = (await response.json()) as { items: GoDaddyRecord[] };
+        for (const item of items) {
+          records.push({
+            id: item.recordId,
+            type: item.type,
+            name: toFullName(item.name, zone),
+            value: item.type === "CNAME" ? withoutDot(item.data) : item.data,
+            ttl: item.ttl,
+            // GoDaddy manages the zone's SOA and apex NS records itself.
+            editable: item.type !== "SOA" && !(item.type === "NS" && item.name === "@"),
+          });
+        }
+        if (items.length < PAGE_SIZE) return records;
+      }
+    },
+
+    async createRecords({ zone, records }, context) {
+      // v3 creates one record per request.
+      for (const record of records) {
+        await request(`${zone}/dns-records`, context, {
+          method: "POST",
+          body: JSON.stringify({
+            type: record.type,
+            name: toRelativeName(record.name, zone),
+            data: record.type === "CNAME" ? withDot(record.value) : record.value,
+            ttl: record.ttl ?? defaultTtl,
+          }),
+        });
+      }
+    },
+
+    async deleteRecords({ zone, records }, context) {
+      for (const record of records) {
+        if (record.id) {
+          await request(`${zone}/dns-records/${record.id}`, context, { method: "DELETE" });
+        }
+      }
+    },
+  };
+}
+```
+
+With the adapter in place, GoDaddy works like any built-in DNS adapter. This connects a customer's GoDaddy domain to a Vercel project:
+
+```ts title="onboard-domain.ts"
+import { createDnsClient, createDomainClient } from "@opencoredev/domain-sdk";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+import { godaddy } from "./godaddy-dns";
+
+const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+  }),
+});
+const dns = createDnsClient({ provider: godaddy({ pat: process.env.GODADDY_PAT! }) });
+
+const domain = await domains.add("app.customer.com");
+// Adds only the missing routing and verification records and leaves everything else alone.
+await dns.applyDomainRecords(domain, { zone: "customer.com" });
+```
+
+`applyDomainRecords` writes the records the platform returned, and the same call works with the [Cloudflare for SaaS](/docs/providers/cloudflare), [Railway](/docs/providers/railway), [Render](/docs/providers/render), and [Netlify](/docs/providers/netlify) adapters. If an old record already sits at that name, such as an A record where the platform wants a CNAME, it throws `DOMAIN_CONFLICT` instead of overwriting it, unless you pass `onConflict: "replace"`. A platform that asks for an ALIAS record at the apex fails with `UNSUPPORTED_OPERATION`, because GoDaddy can't store one. After the records are written, [poll until the domain is active](/docs/guides/poll-until-active) to know when the certificate is ready.
+
+The adapter leaves out a few things on purpose. It doesn't write CAA records, because v3 takes CAA as separate `flag`, `tag`, and `data` fields while Domain SDK uses the one-line `0 issue "letsencrypt.org"` form. It doesn't implement `getZone()`, so check that the domain uses GoDaddy's nameservers yourself. And the client's write queue only covers one process, so pass a shared `lock` to `createDnsClient()` if several workers write the same zones.
+
+Domain SDK only writes DNS records. It doesn't register, renew, transfer, or price domains, or check availability, at GoDaddy or anywhere else. Use GoDaddy's own Domains API for that.
+
+## Common questions
+
+### Is the GoDaddy API free?
+
+GoDaddy doesn't charge for API access. Operations that buy something cost money and need a billing method on file, and the price depends on the API version: GoDaddy's [pricing page](https://developer.godaddy.com/docs/api-users/domains/pricing) says registrations through v3 get discounted rates, while v1, v2, and the retail site charge standard rates, and API renewals can be priced differently from dashboard renewals. Get a quote before you buy.
+
+### Why does the GoDaddy API return 403 Forbidden?
+
+Either the token is missing a scope, or the account isn't eligible for that operation. DNS writes need `domains.dns:update`, and reads need `domains.domain:read`. The `code` field in the response body says which problem it is. On a classic key with the v1 API, old accounts with few domains were often refused DNS access, so a PAT on v3 is worth trying.
+
+### Can I still use my old GoDaddy API key?
+
+For now. The classic `sso-key` key and secret still work with the v1 and v2 Domains endpoints, and the Auctions API requires it. GoDaddy has marked it deprecated for the Domains APIs, and it never works with v3, so new DNS code should use a PAT.
+
+### Can I add one DNS record without replacing the others?
+
+Yes. v3's `POST /v3/domains/zones/{zone}/dns-records` adds a single record, and `PUT` and `DELETE` act on one `recordId`. Be careful with the v1 API's `PUT` calls on `/v1/domains/{domain}/records`: depending on the path, they replace every record in the domain, every record of one type, or every record of one type and name.
+
+### What if my customers' domains aren't at GoDaddy?
+
+Then you write to wherever their DNS is hosted. Domain SDK has built-in adapters for [Porkbun](/blog/porkbun-api), [Namecheap](/blog/namecheap-api), and Spaceship, and the same `applyDomainRecords` call works with each. If a customer won't give you API access to their DNS, show them the records instead with a [DNS records table](/docs/guides/display-dns-records).
+
+## Next steps
+
+- [DNS adapters](/docs/providers): the built-in Porkbun, Namecheap, and Spaceship adapters.
+- [Porkbun API: create DNS records from TypeScript](/blog/porkbun-api): another registrar with per-record JSON endpoints.
+- [Namecheap API: manage DNS records from TypeScript](/blog/namecheap-api): an XML API that replaces the whole host list on every write.
+- [DNS records](/docs/concepts/dns-records): what each record does for a custom domain.
+- [Apex domains and subdomains](/docs/guides/apex-and-subdomains): why apex domains need A records or ALIAS instead of a CNAME.

@@ -34,7 +34,7 @@ Cloudflare for SaaS requires a CNAME target, so the current adapter does not cla
 
 ## DNS adapters
 
-DNS adapters write the records a hosting provider asks for into a zone at your registrar. Pass them to `createDnsClient()`, then call `applyDomainRecords()` with the `Domain` a hosting adapter returned. All three write A, AAAA, CNAME, ALIAS, TXT, and CAA records. They do not register domains, change nameservers, or issue certificates. For walkthroughs of the registrar APIs behind two of them, see [Porkbun API](/blog/porkbun-api) and [Namecheap API](/blog/namecheap-api) on the blog.
+DNS adapters write the records a hosting provider asks for into a zone at your registrar. Pass them to `createDnsClient()`, then call `applyDomainRecords()` with the `Domain` a hosting adapter returned. All three write A, AAAA, CNAME, ALIAS, TXT, and CAA records. They do not register domains, change nameservers, or issue certificates. For walkthroughs of the registrar APIs behind two of them, see [Porkbun API](/blog/porkbun-api) and [Namecheap API](/blog/namecheap-api) on the blog. GoDaddy has no built-in adapter; the [GoDaddy API guide](/blog/godaddy-api) shows how to write one with the `DnsProvider` interface.
 
 <Cards>
   <Card title="Porkbun" href="/docs/providers/porkbun" />
