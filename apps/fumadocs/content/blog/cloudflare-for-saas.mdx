@@ -149,7 +149,7 @@ Cloudflare retries validation 75 times over seven days. The first 10 checks happ
 
 ## Use Domain SDK instead of raw calls
 
-[Domain SDK](/docs) wraps the custom hostnames API in the same client it uses for Vercel, Railway, Render, Netlify, and bunny.net. You configure your zone, CNAME target, and validation method once, and `add` creates the hostname, or returns it if it already exists in your zone.
+[Domain SDK](/docs) wraps the custom hostnames API in the same client it uses for Vercel, Railway, Render, Netlify, and bunny.net. You configure your zone, CNAME target, and validation method once, and `add` creates the hostname, or returns it if it already exists in your zone. `add` returns Cloudflare's create response, which may not list the certificate records yet, so read the hostname again with `refresh` before showing records to the customer.
 
 ```ts title="domains.ts"
 import { createDomainClient } from "@opencoredev/domain-sdk";
@@ -164,9 +164,13 @@ export const domains = createDomainClient({
   }),
 });
 
-const domain = await domains.add("app.customer.com");
+await domains.add("app.customer.com");
 
-// The routing CNAME, the ownership TXT, and the certificate TXT records, ready to show the customer.
+// Cloudflare can add the certificate tokens a few seconds after creation, so read the hostname again.
+await new Promise((resolve) => setTimeout(resolve, 5_000));
+const domain = await domains.refresh("app.customer.com");
+
+// The routing CNAME, the ownership TXT, and (once Cloudflare has them) the certificate TXT records.
 for (const record of domain.records) {
   console.log(record.purpose, record.type, record.name, record.value, record.status);
 }
