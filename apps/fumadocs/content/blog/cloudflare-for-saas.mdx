@@ -199,7 +199,7 @@ The adapter covers custom hostnames only. It doesn't set the fallback origin, cr
 
 It fits when your app already runs behind Cloudflare, or you want Cloudflare's edge (caching, WAF, DDoS protection) in front of every customer domain. It's also cheap at small scale, since the first 100 hostnames are included.
 
-It's more than you need when your host has its own custom domains API. Vercel, Netlify, Render, and Railway all attach customer domains to a project directly, with their own certificates, and Domain SDK covers each of them with the same calls as above. On the non-Enterprise plans, customers must use a subdomain with a CNAME. For apex domains like `customer.com` you need Enterprise apex proxying, or a host that accepts A or ALIAS records ([Apex domains and subdomains](/docs/guides/apex-and-subdomains)). Hosted custom-domain services such as Approximated and SaaS Custom Domains run the proxy and certificates for you with no Cloudflare account, which suits teams that would rather not run any of this themselves.
+It's more than you need when your host has its own custom domains API. Vercel, Netlify, Render, and Railway all attach customer domains to a project directly, with their own certificates, and Domain SDK covers each of them with the same calls as above. Cloudflare for SaaS routes customers with a CNAME, and most DNS providers don't allow a CNAME at the apex, so apex domains like `customer.com` need a DNS provider that flattens CNAMEs (Cloudflare's own DNS does), Enterprise apex proxying, or a host that accepts A or ALIAS records ([Apex domains and subdomains](/docs/guides/apex-and-subdomains)). Hosted custom-domain services such as Approximated and SaaS Custom Domains run the proxy and certificates for you with no Cloudflare account, which suits teams that would rather not run any of this themselves.
 
 ## Common questions
 
@@ -209,15 +209,15 @@ The first 100 custom hostnames are included on the Free, Pro, and Business plans
 
 ### Can a customer use an apex domain like customer.com?
 
-Not on the standard setup. DNS doesn't allow a CNAME at the apex, and Cloudflare for SaaS routes customers with a CNAME. Cloudflare's answer is apex proxying or BYOIP, which give customers IP addresses for an A record and are paid Enterprise add-ons. On lower plans, ask customers to use a subdomain such as `app.customer.com` or `www.customer.com`.
+It depends on their DNS provider. The standard setup routes customers with a CNAME, and most DNS providers don't allow a CNAME at the apex. Some flatten it instead, and Cloudflare's DNS does this with [CNAME flattening](https://developers.cloudflare.com/dns/cname-flattening/). For everyone else, Cloudflare offers apex proxying or BYOIP, which give customers IP addresses for an A record and are paid Enterprise add-ons ([Apex proxying](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/advanced-settings/apex-proxying/)). Without those, ask customers to use a subdomain such as `app.customer.com` or `www.customer.com`.
 
 ### How long does validation take?
 
 Once the customer's records are in place, usually minutes. Cloudflare's first 10 checks happen within about 20 minutes. If the records go in later, the next scheduled check can be hours away, so trigger a recheck with a `PATCH` when the customer tells you they're done.
 
-### What happens when a customer removes their CNAME?
+### What happens when a customer leaves?
 
-The hostname stops pointing at your zone and moves to `moved`. After seven days in `moved`, Cloudflare deletes it. If the customer is on Cloudflare themselves, they need to keep the record pointing to you for as long as they use your service.
+Delete their custom hostname yourself, with a `DELETE` call or `domains.remove()`. Cloudflare's [Remove custom hostnames](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/domain-support/remove-custom-hostnames/) page says you must do this when the customer's domain isn't on Cloudflare, and should do it when it is: a customer on Cloudflare who points their CNAME elsewhere sends the hostname to `moved` and, after seven days, `deleted`, but until you remove it the hostname can keep routing to your service. Hostnames you leave in place also keep counting toward your bill. Customers on Cloudflare who stay need to keep their record pointing to you.
 
 ### Do I need Cloudflare for SaaS if my app runs on Vercel or Netlify?
 
