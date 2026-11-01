@@ -3,7 +3,7 @@ title: Troubleshoot certificate issuance
 description: Separate certificate validation from routing and hostname ownership.
 ---
 
-Confirm routing and ownership first, then render records with `purpose: "certificate"`. Check CAA/DNSSEC and proxy configuration when the provider reports validation errors. Cloudflare may return HTTP validation instead of DNS; the SDK preserves that as a message.
+Confirm routing and ownership first, then render records with `purpose: "certificate"`. Check CAA/DNSSEC and proxy configuration when the provider reports validation errors. Cloudflare may return HTTP validation instead of DNS; the SDK preserves that as a message. For Cloudflare for SaaS, the blog's [common errors](/blog/cloudflare-for-saas#common-errors) section covers certificates stuck in pending validation, CAA records, and the 15-certificates-a-minute limit.
 
 Use `domain.certificate.status` and issues rather than probing HTTPS yourself as the source of truth.
 

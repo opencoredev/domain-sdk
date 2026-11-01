@@ -6,7 +6,7 @@ icon: cloudflare
 
 Cloudflare for SaaS custom hostnames let your customers serve your app on their own domain through your Cloudflare zone. You set it up once: create a proxied DNS record for your origin and set it as the zone's **fallback origin**, then (optionally, but Cloudflare recommends it) create a proxied **CNAME target** such as `customers.yourapp.com` that points to the fallback origin. For each customer, you create a custom hostname in the zone, the customer adds a CNAME from their hostname (for example `app.customer.com`) to your CNAME target, and Cloudflare validates the hostname and issues its TLS certificate. Creating, checking, and deleting each customer hostname is a call to the `/zones/{zone_id}/custom_hostnames` API, which this adapter wraps.
 
-As of 2026-10-29, Cloudflare's [plans page](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/plans/) lists 100 custom hostnames included on the Free, Pro, and Business plans, $0.10 for each additional hostname, and a 50,000-hostname maximum. Wildcard custom hostnames and apex proxying are Enterprise features.
+As of 2026-10-29, Cloudflare's [plans page](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/plans/) lists 100 custom hostnames included on the Free, Pro, and Business plans, $0.10 for each additional hostname, and a 50,000-hostname maximum. Wildcard custom hostnames and apex proxying are Enterprise features. The blog's [Cloudflare for SaaS guide](/blog/cloudflare-for-saas#pricing-and-plan-limits) explains how pending hostnames are billed.
 
 ## Scope and credentials
 
