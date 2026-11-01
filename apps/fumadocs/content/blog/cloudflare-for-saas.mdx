@@ -1,0 +1,236 @@
+---
+title: "Cloudflare for SaaS: custom hostnames, setup, and pricing"
+description: "How Cloudflare for SaaS works: fallback origin, CNAME target, hostname and certificate validation, readiness checks, pricing, common errors, and the API in TypeScript."
+date: 2026-11-01
+---
+
+Cloudflare for SaaS lets your customers put their own domain, such as `app.customer.com`, in front of an app you run on a Cloudflare zone. Each customer domain becomes a **custom hostname** in your zone. The customer adds one CNAME record pointing to a hostname you own, Cloudflare checks that they control the domain, issues a TLS certificate for it, and proxies the traffic to your origin. On the Free, Pro, and Business plans, the first 100 custom hostnames are included and each one after that costs $0.10.
+
+This guide explains the moving parts in the order you meet them: the one-time zone setup, adding a customer hostname, picking validation methods, knowing when a hostname is ready, and the errors people hit most. The code uses plain `fetch` against the Cloudflare API, then [Domain SDK's Cloudflare adapter](/docs/providers/cloudflare). Every Cloudflare fact links to its page in the [Cloudflare for SaaS docs](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/), checked on 2026-11-01.
+
+## How a request reaches your app
+
+Three hostnames are involved, and two of them belong to you:
+
+| Hostname        | Example                      | Who owns it   | What it is                                                                       |
+| --------------- | ---------------------------- | ------------- | -------------------------------------------------------------------------------- |
+| Custom hostname | `app.customer.com`           | Your customer | The domain their users type.                                                     |
+| CNAME target    | `customers.yourapp.com`      | You           | The name customers point their CNAME at. Optional, but Cloudflare recommends it. |
+| Fallback origin | `proxy-fallback.yourapp.com` | You           | A proxied DNS record in your zone that points to the server running your app.    |
+
+A request for `app.customer.com` follows the customer's CNAME to `customers.yourapp.com`, which is a proxied CNAME to `proxy-fallback.yourapp.com`, which sends the request to your server. Your app then reads the `Host` header to work out which tenant it is serving. You can also send individual hostnames to a different server with a [custom origin](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/advanced-settings/custom-origin/).
+
+Before Cloudflare serves traffic for a custom hostname, two separate checks have to pass, and they are easy to mix up:
+
+- **Hostname validation** proves the customer controls the domain. Its result is the custom hostname's `status` field.
+- **Certificate validation** (domain control validation, or DCV) lets the certificate authority issue the TLS certificate. Its result is `ssl.status`.
+
+Cloudflare's [validation status page](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/domain-support/hostname-validation/validation-status/) treats a hostname as ready for production only when both are `active` and the customer's DNS points to your CNAME target.
+
+## Pricing and plan limits
+
+From Cloudflare's [Plans page](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/plans/) (last updated 2026-08-14):
+
+|                                                                         | Free, Pro, Business | Enterprise                               |
+| ----------------------------------------------------------------------- | ------------------- | ---------------------------------------- |
+| Custom hostnames included                                               | 100                 | Custom                                   |
+| Each additional hostname                                                | $0.10               | Custom pricing                           |
+| Maximum hostnames                                                       | 50,000              | No fixed cap (contact sales past 50,000) |
+| Custom origin per hostname                                              | Yes                 | Yes                                      |
+| Wildcard custom hostnames                                               | No                  | Yes                                      |
+| Apex proxying or BYOIP (customers point an A record instead of a CNAME) | No                  | Paid add-on                              |
+| Custom certificates, CSRs, choice of CA                                 | No                  | Yes                                      |
+
+Turning Cloudflare for SaaS on for a non-Enterprise zone asks for payment details, even before you pass 100 hostnames ([Enable](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/enable/)). Two billing details matter for a SaaS app. Every custom hostname counts toward usage until you delete it, including ones still pending validation, so clean up abandoned signups. And the quota is soft: past it, creation keeps working with a billing warning, until a hard threshold where non-Enterprise zones get errors instead ([Quotas and billing](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/quotas-and-billing/)). `GET /zones/{zone_id}/custom_hostnames/quota` returns `used`, `allocated`, and `hard_cap`.
+
+## Set up your zone once
+
+These steps follow [Configuring Cloudflare for SaaS](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/getting-started/):
+
+1. Add your SaaS zone to Cloudflare (a Free plan zone works) and enable Cloudflare for SaaS on its **Custom Hostnames** page.
+2. Create a proxied `A`, `AAAA`, or `CNAME` record for your origin, such as `proxy-fallback.yourapp.com`.
+3. Set that record as the **fallback origin**, in the dashboard or through the API, and wait until its status is **Active**. Active only means Cloudflare is ready to send traffic to that record. Check that the record itself points at the right server.
+4. Create the CNAME target: a proxied CNAME such as `customers.yourapp.com` pointing to the fallback origin. It can be a wildcard such as `*.customers.yourapp.com` if you want a different target per customer.
+
+Setting the fallback origin through the API is one `PUT` ([API reference](https://developers.cloudflare.com/api/resources/custom_hostnames/subresources/fallback_origin/methods/update/)). The token needs the **SSL and Certificates Write** permission on the zone.
+
+```ts title="fallback-origin.ts"
+const zoneId = process.env.CLOUDFLARE_ZONE_ID!;
+const api = `https://api.cloudflare.com/client/v4/zones/${zoneId}/custom_hostnames`;
+const headers = {
+  authorization: `Bearer ${process.env.CLOUDFLARE_API_TOKEN!}`,
+  "content-type": "application/json",
+};
+
+const response = await fetch(`${api}/fallback_origin`, {
+  method: "PUT",
+  headers,
+  body: JSON.stringify({ origin: "proxy-fallback.yourapp.com" }),
+});
+console.log((await response.json()).result); // { origin, status, ... }
+```
+
+Don't create a custom hostname with the same name as your SaaS zone. If your zone is `yourapp.com`, `yourapp.com` itself can't be a custom hostname.
+
+## Add a customer's hostname
+
+Each customer domain is one `POST` to the custom hostnames endpoint ([API reference](https://developers.cloudflare.com/api/resources/custom_hostnames/methods/create/)). `ssl.method` picks how the certificate is validated: `http`, `txt`, or `email`.
+
+```ts title="add-hostname.ts"
+const created = await fetch(api, {
+  method: "POST",
+  headers,
+  body: JSON.stringify({
+    hostname: "app.customer.com",
+    ssl: { method: "txt", type: "dv" },
+  }),
+}).then((r) => r.json());
+
+if (!created.success) throw new Error(JSON.stringify(created.errors));
+const id: string = created.result.id;
+```
+
+The create response doesn't always include the certificate tokens yet. Cloudflare asks the certificate authority for them in the background, so `ssl.validation_records` can be empty for a few seconds. Read the hostname again after a short delay:
+
+```ts title="read-hostname.ts"
+const { result } = await fetch(`${api}/${id}`, { headers }).then((r) => r.json());
+
+console.log(result.status); // "pending" until hostname validation passes
+console.log(result.ssl.status); // "pending_validation" until the certificate is issued
+console.log(result.ownership_verification); // { type: "txt", name: "_cf-custom-hostname.app.customer.com", value }
+console.log(result.ssl.validation_records); // [{ txt_name: "_acme-challenge.app.customer.com", txt_value, status }]
+console.log(result.verification_errors); // e.g. ["custom hostname does not CNAME to this zone."]
+```
+
+Your customer then adds DNS records at their own DNS provider: always the CNAME from `app.customer.com` to `customers.yourapp.com`, and, depending on the methods you chose, the TXT records from the response.
+
+## Choose the validation methods
+
+The choice comes down to one question: can the customer's domain be down for a few minutes while it switches over?
+
+| Goal                                                   | Hostname validation                                          | Certificate validation                                                               | What the customer adds                                  |
+| ------------------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| Simplest onboarding, a few minutes of downtime is fine | Real-time: Cloudflare validates once the CNAME points to you | `http` (automatic)                                                                   | The CNAME only                                          |
+| No downtime, for example moving a live domain          | Pre-validation with the `_cf-custom-hostname` TXT record     | `txt`, with the `_acme-challenge` TXT records                                        | Both TXT records first, then the CNAME                  |
+| No downtime and hands-off renewals                     | Pre-validation                                               | Delegated DCV: a one-time `_acme-challenge` CNAME to a hostname Cloudflare gives you | The TXT record and the delegation CNAME, then the CNAME |
+
+With automatic HTTP validation, the CA can only fetch its token after the hostname points to you, so the hostname may reach Cloudflare before its certificate is active ([Validate](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/security/certificate-management/issue-and-validate/validate-certificates/)). TXT and Delegated DCV issue the certificate before the cutover. A few rules from the same docs:
+
+- Wildcard custom hostnames (Enterprise only) can't use HTTP validation. They need TXT, with two tokens for the apex and the wildcard, or Delegated DCV.
+- Pre-validation doesn't work when the customer's domain is already its own zone on Cloudflare (Cloudflare calls this "orange-to-orange", or O2O). Those hostnames use real-time validation ([Pre-validation](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/domain-support/hostname-validation/pre-validation/)).
+- At renewal, Cloudflare may switch an eligible non-wildcard hostname to HTTP validation even if you picked TXT, so read `ssl.method` and `ssl.validation_records` again before asking a customer to change anything.
+- A domain whose DNS is hidden behind another CDN can't be validated, so it can't be a custom hostname.
+
+## Know when a custom hostname is ready
+
+Poll the hostname until `status` and `ssl.status` are both `active` ([Common API calls](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/common-api-calls/)). A working HTTPS connection isn't proof: Cloudflare can complete a handshake with another matching certificate before the hostname's own certificate is deployed.
+
+The hostname `status` moves through these values:
+
+| Status    | Meaning                                                                            |
+| --------- | ---------------------------------------------------------------------------------- |
+| `pending` | Waiting for hostname validation.                                                   |
+| `active`  | Validated. Cloudflare will proxy it.                                               |
+| `moved`   | Stayed pending through the whole retry schedule, or stopped pointing to your zone. |
+| `deleted` | Removed from the zone, which happens after 7 days in `moved`.                      |
+| `blocked` | Cloudflare refuses the hostname, usually because it was flagged for abuse.         |
+
+Cloudflare retries validation 75 times over seven days. The first 10 checks happen within about 20 minutes, most happen in the first four hours, and the gap between later checks is capped at four hours ([Backoff schedule](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/domain-support/hostname-validation/backoff-schedule/)). So if a customer fixes their DNS on day three, the next check might be hours away. To check again right away, send a no-change `PATCH` to the hostname with the same `ssl` object (`method` and `type`) you created it with. That also takes a `moved` or `deleted` hostname back to pending.
+
+## Common errors
+
+**"custom hostname does not CNAME to this zone."** This shows up in `verification_errors` while the customer's CNAME isn't in place yet, and it is expected during pre-validation. If it stays after the customer says they've added the record, look up the record yourself (`dig app.customer.com CNAME +short`). The usual causes are a typo in the target, the record created at the wrong name (for example `app.customer.com.customer.com`), or a proxy or CDN in front of the domain on the customer's side.
+
+**Error 1016 (Origin DNS error)** on the customer's domain has three causes, per Cloudflare's [troubleshooting page](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/reference/troubleshooting/): hostname validation isn't finished, the fallback origin isn't set or its DNS record is missing, or a wildcard custom hostname is being outranked by the customer's own Cloudflare zone. In the last case, add each hostname individually.
+
+**Certificate stuck in pending validation.** A DCV step didn't complete. Check `ssl.validation_errors`. Two causes to check first: CAA records on the customer's domain that don't allow the certificate authority Cloudflare uses, and old `_acme-challenge` TXT records left over from a previous provider when you use Delegated DCV.
+
+**Rate limits.** You can issue up to 15 certificates a minute. Past that, new certificate requests are refused for 30 seconds, so a bulk import should pace itself.
+
+## Use Domain SDK instead of raw calls
+
+[Domain SDK](/docs) wraps the custom hostnames API in the same client it uses for Vercel, Railway, Render, Netlify, and bunny.net. You configure your zone, CNAME target, and validation method once, and `add` creates the hostname, or returns it if it already exists in your zone. `add` returns Cloudflare's create response, which may not list the certificate records yet, so read the hostname again with `refresh` before showing records to the customer.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { cloudflareSaaS } from "@opencoredev/domain-sdk/cloudflare";
+
+export const domains = createDomainClient({
+  provider: cloudflareSaaS({
+    apiToken: process.env.CLOUDFLARE_API_TOKEN!,
+    zoneId: process.env.CLOUDFLARE_ZONE_ID!,
+    cnameTarget: "customers.yourapp.com",
+    ssl: { method: "txt" },
+  }),
+});
+
+await domains.add("app.customer.com");
+
+// Cloudflare can add the certificate tokens a few seconds after creation, so read the hostname again.
+await new Promise((resolve) => setTimeout(resolve, 5_000));
+const domain = await domains.refresh("app.customer.com");
+
+// The routing CNAME, the ownership TXT, and (once Cloudflare has them) the certificate TXT records.
+for (const record of domain.records) {
+  console.log(record.purpose, record.type, record.name, record.value, record.status);
+}
+```
+
+`domain.status` folds the two Cloudflare checks into one value: `pending_verification` while hostname validation is pending (or `pending_dns` when there is no TXT record to show), `pending_certificate` once the hostname is active but `ssl.status` isn't, and `active` only when both are. Cloudflare's `moved` and `deleted` statuses, and certificate timeouts, become `failed`. Messages from `verification_errors` and `ssl.validation_errors` land in `domain.issues`.
+
+To wait for a hostname, run `waitUntilActive` in a background job. It polls with backoff and stops at `active` or when it times out:
+
+```ts title="wait.ts"
+import { domains } from "./domains";
+
+const active = await domains.waitUntilActive("app.customer.com", {
+  timeoutMs: 15 * 60_000,
+  onStatus: (domain) =>
+    console.log(
+      domain.status,
+      domain.issues.map((issue) => issue.message),
+    ),
+});
+console.log(active.certificate.status, active.certificate.expiresAt);
+
+// When the customer leaves, delete the hostname so it stops counting toward your bill.
+await domains.remove("app.customer.com");
+```
+
+The adapter covers custom hostnames only. It doesn't set the fallback origin, create your zone's DNS records, or edit the customer's DNS, and it doesn't do wildcard custom hostnames or apex proxying. The [Cloudflare provider page](/docs/providers/cloudflare) lists the options, and [Poll until active](/docs/guides/poll-until-active) covers the polling settings. If you manage the customer's DNS at Porkbun, Namecheap, or Spaceship, a [DNS adapter](/docs/providers) can write the records for them.
+
+## Is Cloudflare for SaaS the right choice?
+
+It fits when your app already runs behind Cloudflare, or you want Cloudflare's edge (caching, WAF, DDoS protection) in front of every customer domain. It's also cheap at small scale, since the first 100 hostnames are included.
+
+It's more than you need when your host has its own custom domains API. Vercel, Netlify, Render, and Railway all attach customer domains to a project directly, with their own certificates, and Domain SDK covers each of them with the same calls as above. Cloudflare for SaaS routes customers with a CNAME, and most DNS providers don't allow a CNAME at the apex, so apex domains like `customer.com` need a DNS provider that flattens CNAMEs (Cloudflare's own DNS does), Enterprise apex proxying, or a host that accepts A or ALIAS records ([Apex domains and subdomains](/docs/guides/apex-and-subdomains)). Hosted custom-domain services such as Approximated and SaaS Custom Domains run the proxy and certificates for you with no Cloudflare account, which suits teams that would rather not run any of this themselves.
+
+## Common questions
+
+### Is Cloudflare for SaaS free?
+
+The first 100 custom hostnames are included on the Free, Pro, and Business plans, but you have to add payment details to turn it on, and each hostname past 100 costs $0.10. Pending hostnames count too, until you delete them.
+
+### Can a customer use an apex domain like customer.com?
+
+It depends on their DNS provider. The standard setup routes customers with a CNAME, and most DNS providers don't allow a CNAME at the apex. Some flatten it instead, and Cloudflare's DNS does this with [CNAME flattening](https://developers.cloudflare.com/dns/cname-flattening/). For everyone else, Cloudflare offers apex proxying or BYOIP, which give customers IP addresses for an A record and are paid Enterprise add-ons ([Apex proxying](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/advanced-settings/apex-proxying/)). Without those, ask customers to use a subdomain such as `app.customer.com` or `www.customer.com`.
+
+### How long does validation take?
+
+Once the customer's records are in place, usually minutes. Cloudflare's first 10 checks happen within about 20 minutes. If the records go in later, the next scheduled check can be hours away, so trigger a recheck with a `PATCH` when the customer tells you they're done.
+
+### What happens when a customer leaves?
+
+Delete their custom hostname yourself, with a `DELETE` call or `domains.remove()`. Cloudflare's [Remove custom hostnames](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/domain-support/remove-custom-hostnames/) page says you must do this when the customer's domain isn't on Cloudflare, and should do it when it is: a customer on Cloudflare who points their CNAME elsewhere sends the hostname to `moved` and, after seven days, `deleted`, but until you remove it the hostname can keep routing to your service. Hostnames you leave in place also keep counting toward your bill. Customers on Cloudflare who stay need to keep their record pointing to you.
+
+### Do I need Cloudflare for SaaS if my app runs on Vercel or Netlify?
+
+No. Those platforms issue certificates for customer domains themselves. Use their domains API, or Domain SDK's [Vercel](/docs/providers/vercel) or [Netlify](/docs/providers/netlify) adapter. Cloudflare for SaaS earns its place when Cloudflare is your edge.
+
+## Next steps
+
+- [Cloudflare for SaaS custom hostnames](/docs/providers/cloudflare): the Domain SDK adapter's options and scope.
+- [Ownership verification](/docs/concepts/ownership-verification): how ownership records differ from routing and certificate records.
+- [Troubleshoot certificates](/docs/guides/troubleshoot-certificates): what to check when a certificate stays pending.
+- [Display DNS records](/docs/guides/display-dns-records): show customers exactly which records to add.
+- [Provider comparison](/docs/providers): Cloudflare for SaaS next to Vercel, Railway, Render, Netlify, and bunny.net.
