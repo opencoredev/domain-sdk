@@ -2,6 +2,7 @@
 title: "Cloudflare for SaaS: custom hostnames, setup, and pricing"
 description: "Cloudflare for SaaS in practice: what custom hostnames cost and when pending ones bill, which validation method to pick, why hostnames get stuck, the errors customers hit, and the API calls in TypeScript."
 date: 2026-11-01
+updated: 2026-11-02
 ---
 
 Cloudflare for SaaS puts your customers' own domains, such as `app.customer.com`, in front of an app you run on a Cloudflare zone. Each one becomes a **custom hostname**: the customer adds a CNAME to a hostname you own, Cloudflare validates it, issues a TLS certificate, and proxies the traffic to your origin. The first 100 custom hostnames are included on the Free, Pro, and Business plans, and each one after that costs $0.10. Hostnames that are still pending count too, until you delete them.
