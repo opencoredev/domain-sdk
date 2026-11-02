@@ -4,6 +4,7 @@ import Link from "next/link";
 import { DomainLogo } from "@/components/domain-logo";
 import { blogRoute, getBlogPosts } from "@/lib/blog";
 import { legacyDocRoutes } from "@/lib/seo";
+import { socialImageAlt, socialImageSize } from "@/lib/social-image";
 import { source } from "@/lib/source";
 
 export const metadata: Metadata = {
@@ -16,12 +17,16 @@ export const metadata: Metadata = {
     title: "Sitemap | Domain SDK",
     description:
       "Browse every Domain SDK guide, provider adapter, concept, component, and TypeScript API reference page.",
+    images: [
+      { url: "/opengraph-image", ...socialImageSize, alt: socialImageAlt, type: "image/png" },
+    ],
   },
   twitter: {
     card: "summary_large_image",
     title: "Sitemap | Domain SDK",
     description:
       "Browse every Domain SDK guide, provider adapter, concept, component, and TypeScript API reference page.",
+    images: [{ url: "/twitter-image", ...socialImageSize, alt: socialImageAlt }],
   },
 };
 
