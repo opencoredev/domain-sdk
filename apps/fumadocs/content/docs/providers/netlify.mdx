@@ -26,7 +26,7 @@ const domain = await domains.add("app.customer.com");
 
 ## DNS and certificates
 
-Subdomains return a CNAME pointing to the site's `.netlify.app` hostname. Apex domains return an ALIAS to `apex-loadbalancer.netlify.com`; when the customer's DNS provider cannot create ALIAS, ANAME, or flattened-CNAME records, use an A record to `75.2.60.5` instead.
+Subdomains return a CNAME pointing to the site's `.netlify.app` hostname. Apex domains return an ALIAS to `apex-loadbalancer.netlify.com`; when the customer's DNS provider cannot create ALIAS, ANAME, or flattened-CNAME records, use an A record to `75.2.60.5` instead. [Apex domains: A records, ALIAS, and CNAME flattening](/blog/apex-domain) explains which DNS hosts support which record.
 
 Netlify does not expose independent DNS-verification state for each alias. The adapter treats an alias covered by the site's issued TLS certificate as verified and active. Until then, it remains `pending_dns`. Netlify manages certificate issuance, so the adapter does not call the certificate provisioning endpoint.
 
