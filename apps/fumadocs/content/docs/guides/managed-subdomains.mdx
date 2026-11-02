@@ -1,6 +1,6 @@
 ---
 title: Give tenants managed subdomains
-description: Safely map tenant labels to subdomains under a parent domain you own.
+description: "Give each tenant a subdomain like acme.mydomain.com with createSubdomainClient: reserved labels, a single wildcard, or one hostname per tenant."
 ---
 
 Use `createSubdomainClient` when tenants choose hostnames such as `acme.mydomain.com` under a parent domain controlled by your application. It accepts direct-child labels only, normalizes them, enforces the parent-domain boundary, and blocks labels you reserve.

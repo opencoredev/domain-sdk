@@ -1,6 +1,6 @@
 ---
 title: Tenant authorization and domain security
-description: Prevent cross-tenant access and abandoned-domain takeover.
+description: "Secure customer custom domains in a multi-tenant app: authorize every call by tenant, rate-limit changes, and prevent abandoned-domain takeover."
 ---
 
 Authorize every add, get, verify, refresh, and remove by tenant. Normalize before uniqueness checks. Rate-limit mutations. Remove provider configuration when a tenant disconnects a hostname. Do not reassign an abandoned hostname until provider ownership is safely re-established.

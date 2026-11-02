@@ -1,6 +1,6 @@
 ---
 title: Domain lifecycle
-description: Move a hostname from user input to provider-authoritative activation.
+description: "How a custom domain moves from add through DNS setup, verification, and waitUntilActive to remove, and how the SDK handles repeat adds and conflicts."
 ---
 
 The lifecycle is `add` → configure returned DNS → `verify` when supported → `refresh` or `waitUntilActive` → `remove`.
