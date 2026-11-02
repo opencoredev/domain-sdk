@@ -1,12 +1,21 @@
 ---
 title: "Cloudflare for SaaS: custom hostnames, setup, and pricing"
-description: "How Cloudflare for SaaS works: fallback origin, CNAME target, hostname and certificate validation, readiness checks, pricing, common errors, and the API in TypeScript."
+description: "Cloudflare for SaaS in practice: what custom hostnames cost and when pending ones bill, which validation method to pick, why hostnames get stuck, the errors customers hit, and the API calls in TypeScript."
 date: 2026-11-01
+updated: 2026-11-02
 ---
 
-Cloudflare for SaaS lets your customers put their own domain, such as `app.customer.com`, in front of an app you run on a Cloudflare zone. Each customer domain becomes a **custom hostname** in your zone. The customer adds one CNAME record pointing to a hostname you own, Cloudflare checks that they control the domain, issues a TLS certificate for it, and proxies the traffic to your origin. On the Free, Pro, and Business plans, the first 100 custom hostnames are included and each one after that costs $0.10.
+Cloudflare for SaaS puts your customers' own domains, such as `app.customer.com`, in front of an app you run on a Cloudflare zone. Each one becomes a **custom hostname**: the customer adds a CNAME to a hostname you own, Cloudflare validates it, issues a TLS certificate, and proxies the traffic to your origin. The first 100 custom hostnames are included on the Free, Pro, and Business plans, and each one after that costs $0.10. Hostnames that are still pending count too, until you delete them.
 
-This guide explains the moving parts in the order you meet them: the one-time zone setup, adding a customer hostname, picking validation methods, knowing when a hostname is ready, and the errors people hit most. The code uses plain `fetch` against the Cloudflare API, then [Domain SDK's Cloudflare adapter](/docs/providers/cloudflare). Every Cloudflare fact links to its page in the [Cloudflare for SaaS docs](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/), checked on 2026-11-01.
+The setup itself is short, and our [Cloudflare provider page](/docs/providers/cloudflare) covers it. This guide is about what comes after, the questions that decide whether it works in production:
+
+- **Cost.** What you pay, why abandoned signups still count toward your bill, and how to read your quota from the API.
+- **Validation.** The difference between hostname validation and certificate validation, and which combination to pick (real-time with HTTP, pre-validation with TXT, or delegated DCV) depending on whether the customer's domain can go down while it switches over.
+- **Readiness.** Which two status fields both have to be `active`, and how Cloudflare's retry schedule slows down a hostname whose records go in late.
+- **Errors.** "Does not CNAME to this zone", error 1016, certificates stuck pending, and the 15-certificates-a-minute limit.
+- **Fit.** When Cloudflare for SaaS is the right tool, and when your host's own domains API or a hosted proxy is simpler.
+
+The code uses plain `fetch` against the Cloudflare API, then [Domain SDK's Cloudflare adapter](/docs/providers/cloudflare). Every Cloudflare fact links to its page in the [Cloudflare for SaaS docs](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/), checked on 2026-11-01.
 
 ## How a request reaches your app
 
@@ -203,7 +212,7 @@ The adapter covers custom hostnames only. It doesn't set the fallback origin, cr
 
 It fits when your app already runs behind Cloudflare, or you want Cloudflare's edge (caching, WAF, DDoS protection) in front of every customer domain. It's also cheap at small scale, since the first 100 hostnames are included.
 
-It's more than you need when your host has its own custom domains API. Vercel, Netlify, Render, and Railway all attach customer domains to a project directly, with their own certificates, and Domain SDK covers each of them with the same calls as above. Cloudflare for SaaS routes customers with a CNAME, and most DNS providers don't allow a CNAME at the apex, so apex domains like `customer.com` need a DNS provider that flattens CNAMEs (Cloudflare's own DNS does), Enterprise apex proxying, or a host that accepts A or ALIAS records ([Apex domains and subdomains](/docs/guides/apex-and-subdomains)). Hosted custom-domain services such as Approximated and SaaS Custom Domains run the proxy and certificates for you with no Cloudflare account, which suits teams that would rather not run any of this themselves.
+It's more than you need when your host has its own custom domains API. Vercel, Netlify, Render, and Railway all attach customer domains to a project directly, with their own certificates, and Domain SDK covers each of them with the same calls as above. Cloudflare for SaaS routes customers with a CNAME, and most DNS providers don't allow a CNAME at the apex, so apex domains like `customer.com` need a DNS provider that flattens CNAMEs (Cloudflare's own DNS does), Enterprise apex proxying, or a host that accepts A or ALIAS records. [Apex domains: A records, ALIAS, and CNAME flattening](/blog/apex-domain) compares the options. Hosted custom-domain services such as Approximated and SaaS Custom Domains run the proxy and certificates for you with no Cloudflare account, which suits teams that would rather not run any of this themselves.
 
 ## Common questions
 

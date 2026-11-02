@@ -28,7 +28,7 @@ bunny.net account API keys are account-wide, so they can reach every zone on the
 
 Subdomains return a CNAME pointing at the pull zone's system hostname, normally `<zone>.b-cdn.net`. The adapter reads that target from the pull zone rather than assuming it, so a renamed zone still produces correct instructions.
 
-Apex domains return an ALIAS to the same target. bunny.net publishes no fixed A record for pull zones, so the customer's DNS host must support ALIAS, ANAME, or CNAME flattening — Bunny DNS does, as do Cloudflare and Route 53.
+Apex domains return an ALIAS to the same target. bunny.net publishes no fixed A record for pull zones, so the customer's DNS host must support ALIAS, ANAME, or CNAME flattening — Bunny DNS and Cloudflare do. Route 53 alias records only target AWS resources and records in the same hosted zone, so they can't point at a bunny.net hostname. [Apex domains](/blog/apex-domain) lists the options.
 
 Adding a hostname does not issue a certificate. bunny.net validates the hostname while issuing one, so the domain stays `pending_dns` until you call `verify()`:
 
