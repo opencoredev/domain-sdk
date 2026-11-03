@@ -136,6 +136,21 @@ describe("Render adapter", () => {
     ).rejects.toMatchObject({ code: "REQUEST_FAILED" });
   });
 
+  test("does not create a wildcard domain when its DNS targets cannot be derived", async () => {
+    const mock = mockFetch((url, init) =>
+      url.pathname === "/v1/services/srv_123"
+        ? json({ serviceDetails: { url: "https://svelte.example.com" } })
+        : init?.method === "POST"
+          ? json([{ ...pendingDomain, name: "*.customer.com" }], 201)
+          : json({ message: "not found" }, 404),
+    );
+    const provider = render({ apiKey: "key", serviceId: "srv_123", fetch: mock.fetch });
+    await expect(
+      provider.add({ hostname: "*.customer.com" }, { logger: {} }),
+    ).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+    expect(mock.calls.some((call) => call.init?.method === "POST")).toBe(false);
+  });
+
   test("fetches the service hostname once per instance and retries after a failure", async () => {
     let serviceCalls = 0;
     const mock = mockFetch((url, init) => {

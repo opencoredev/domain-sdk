@@ -252,6 +252,8 @@ export function render(options: RenderOptions): RenderProvider {
     async add({ hostname }, context) {
       const existing = await getRaw(hostname, context, true);
       if (existing) return normalize(existing, await getServiceHostname(context));
+      const serviceHostname = await getServiceHostname(context);
+      if (hostname.startsWith("*.")) onrenderSubdomain(serviceHostname);
 
       let raw: RenderCustomDomain[] | undefined;
       try {
@@ -262,7 +264,7 @@ export function render(options: RenderOptions): RenderProvider {
       } catch (error) {
         if (error instanceof DomainSdkError && error.code === "DOMAIN_CONFLICT") {
           const conflicted = await getRaw(hostname, context, true);
-          if (conflicted) return normalize(conflicted, await getServiceHostname(context));
+          if (conflicted) return normalize(conflicted, serviceHostname);
         }
         throw error;
       }
@@ -277,7 +279,7 @@ export function render(options: RenderOptions): RenderProvider {
           "Render did not return the requested custom domain.",
           { provider: "render" },
         );
-      return normalize(created, await getServiceHostname(context));
+      return normalize(created, serviceHostname);
     },
     get,
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
