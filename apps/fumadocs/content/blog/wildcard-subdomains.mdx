@@ -9,7 +9,7 @@ A **wildcard subdomain** is a DNS record named `*.example.com`. It answers for a
 A working setup needs three parts, and most guides only cover the first:
 
 1. **A wildcard DNS record** that sends every tenant name to your host.
-2. **A wildcard TLS certificate** for `*.example.com`. Certificate authorities only issue these through DNS validation, so your host needs a way to write `_acme-challenge` records in your zone.
+2. **A wildcard TLS certificate** for `*.example.com`. Let's Encrypt, which most hosting platforms use, issues these only through DNS validation, so your host needs a way to write `_acme-challenge` records in your zone.
 3. **Routing in the app** that reads the hostname, finds the tenant, and refuses names that don't belong to anyone.
 
 This post covers all three, with the records each hosting platform asks for as of 2026-11-03, and how to provision the wildcard with [Domain SDK](/docs).
