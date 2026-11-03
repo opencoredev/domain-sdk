@@ -17,4 +17,6 @@ const active = await domains.waitUntilActive("app.customer.com", {
 
 Polling checks immediately, never overlaps checks, defaults to five-second intervals and a five-minute timeout, honors longer `Retry-After` values, and stops on permanent errors. It throws `TIMEOUT` or `ABORTED`; it does not guarantee DNS propagation time.
 
+If a domain never becomes active because its certificate stays pending, see [Troubleshoot custom domain SSL certificates](./troubleshoot-certificates.mdx).
+
 Read next: [`waitUntilActive`](../api-reference/wait-until-active.mdx).

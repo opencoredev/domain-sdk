@@ -1,10 +1,55 @@
 ---
-title: Troubleshoot certificate issuance
-description: "Fix custom domain SSL certificates stuck pending: check routing and ownership first, then certificate DNS records, CAA, DNSSEC, and proxy settings."
+title: Troubleshoot custom domain SSL certificates
+description: "Check when a custom domain's SSL certificate is ready with domain.certificate.status, and fix certificates stuck pending: routing, ownership, CAA, DNSSEC, and proxies."
 ---
 
-Confirm routing and ownership first, then render records with `purpose: "certificate"`. Check CAA/DNSSEC and proxy configuration when the provider reports validation errors. Cloudflare may return HTTP validation instead of DNS; the SDK preserves that as a message. For Cloudflare for SaaS, the blog's [common errors](/blog/cloudflare-for-saas#common-errors) section covers certificates stuck in pending validation, CAA records, and the 15-certificates-a-minute limit.
+To check whether a customer's SSL certificate is ready, call `refresh()` and read [`domain.certificate.status`](../api-reference/domain.mdx). It is `active` once the provider reports an issued certificate, `pending` while issuance hasn't finished, `failed` when the provider has given up, and `unknown` when the provider confirms the domain but doesn't expose certificate state. Domain SDK does not issue certificates. It reports what the provider says, so use `domain.certificate.status` and `domain.issues` as the source of truth rather than probing HTTPS yourself.
 
-Use `domain.certificate.status` and issues rather than probing HTTPS yourself as the source of truth.
+```ts title="check-certificate.ts"
+const domain = await domains.refresh("app.customer.com");
+
+if (domain.certificate.status === "failed") {
+  for (const issue of domain.issues) console.warn(issue.code, issue.message);
+}
+```
+
+## What each adapter reports
+
+| Provider                                           | Source of `certificate.status`                   | `active` means                                                                                                                                                                               |
+| -------------------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Cloudflare for SaaS](../providers/cloudflare.mdx) | The custom hostname's `ssl.status`               | Cloudflare reports SSL `active`. `failed` and the validation, issuance and deploying timeouts map to `failed`, and Cloudflare's validation errors appear as `CERTIFICATE_VALIDATION` issues. |
+| [Railway](../providers/railway.mdx)                | The domain's `certificateStatus`                 | Railway reports `ISSUED`. `FAILED` maps to `failed`.                                                                                                                                         |
+| [Netlify](../providers/netlify.mdx)                | The site's TLS certificate                       | The certificate covers the hostname, exactly or by wildcard, and is issued. A failed certificate adds a `CERTIFICATE_FAILED` issue.                                                          |
+| [bunny.net](../providers/bunny.mdx)                | Whether the pull zone hostname has a certificate | A certificate exists. `verify()` requests bunny.net's free certificate once the routing record resolves.                                                                                     |
+| [Vercel](../providers/vercel.mdx)                  | Not exposed by the API                           | Never `active`: it is `pending` until the domain is active, then `unknown`.                                                                                                                  |
+| [Render](../providers/render.mdx)                  | Not exposed by the API                           | Never `active`: it is `pending` until the domain is verified, then `unknown`.                                                                                                                |
+
+## When a certificate stays pending
+
+1. Confirm routing and ownership first. Issuance usually waits on them, so a domain still in `pending_dns` or `pending_verification` is the first thing to fix; see [Troubleshoot pending DNS](./troubleshoot-dns.mdx).
+2. Render the records with `purpose: "certificate"`, such as Cloudflare's DCV records or Render's `_acme-challenge` CNAME for wildcards, and check that each one exists exactly as returned.
+3. Check CAA records on the customer's domain. If the domain has any, they must allow the certificate authority the provider uses.
+4. Check DNSSEC. A broken DNSSEC chain makes validation lookups fail even when the records look right.
+5. Check proxies and CDNs in front of the hostname. Cloudflare may return HTTP validation instead of DNS records; the SDK keeps that as `domain.certificate.message`, because it can't be shown as a DNS record.
+
+For Cloudflare for SaaS, the blog's [common errors](/blog/cloudflare-for-saas#common-errors) section covers certificates stuck in pending validation, CAA records, and the 15-certificates-a-minute limit. Wildcard certificates such as `*.customer.com` follow their own validation rules; [Wildcard subdomains for multi-tenant apps](/blog/wildcard-subdomains) lists the records each platform needs.
+
+## FAQ
+
+### How do I check when a custom domain's SSL certificate is ready?
+
+Call `domains.refresh(hostname)` and check `domain.certificate.status === "active"`. On Cloudflare for SaaS, Railway, Netlify and bunny.net, `domain.status` only becomes `active` after the certificate is active too, so [`waitUntilActive`](./poll-until-active.mdx) waits for it. On bunny.net, call `verify()` first: it requests the certificate, and polling only reads the state.
+
+### Does `waitUntilActive` wait for the certificate on Vercel and Render?
+
+No. Their APIs don't expose certificate state, so `active` there means Vercel reports a valid domain configuration or Render has verified the domain, and `certificate.status` is `unknown`. The platform then issues the certificate on its own.
+
+### How long should I wait for a certificate?
+
+Domain SDK doesn't promise an issuance time; the provider sets it. `waitUntilActive` stops after five minutes by default, so pass a longer `timeoutMs` or check again later from a background job instead of failing the customer's setup.
+
+### What should I do when the status is `failed`?
+
+Read `domain.issues` and `domain.certificate.message`, fix the cause (usually a missing record, a CAA record, or a proxy), then refresh. Some providers report a failure without details: Railway's adapter has no certificate message or issue unless a routing record is invalid, so check the domain in the provider's dashboard. Don't delete and re-add the domain in a loop.
 
 Read next: [Managed certificates](../concepts/managed-certificates.mdx).
