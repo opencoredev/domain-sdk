@@ -1,0 +1,193 @@
+---
+title: "Wildcard subdomains for multi-tenant apps: DNS, SSL, and routing"
+description: "How a wildcard subdomain (*.example.com) works, why its SSL certificate needs DNS-01, the records Vercel, Render, Railway, Netlify, and bunny.net need, and tenant routing."
+date: 2026-11-03
+---
+
+A **wildcard subdomain** is a DNS record named `*.example.com`. It answers for any name under `example.com` that has no record of its own, so `acme.example.com`, `globex.example.com`, and every tenant you sign up next all reach the same app without a new DNS record each time. Multi-tenant SaaS apps use it to give every customer their own subdomain on day one.
+
+A working setup needs three parts, and most guides only cover the first:
+
+1. **A wildcard DNS record** that sends every tenant name to your host.
+2. **A wildcard TLS certificate** for `*.example.com`. Certificate authorities only issue these through DNS validation, so your host needs a way to write `_acme-challenge` records in your zone.
+3. **Routing in the app** that reads the hostname, finds the tenant, and refuses names that don't belong to anyone.
+
+This post covers all three, with the records each hosting platform asks for as of 2026-11-03, and how to provision the wildcard with [Domain SDK](/docs).
+
+## How a wildcard DNS record matches
+
+[RFC 4592](https://www.rfc-editor.org/rfc/rfc4592) defines the rules, and three of them catch people out:
+
+- **The wildcard only answers for names that don't exist.** If `api.example.com` has any record at all, even just a TXT record, the wildcard no longer answers for it. Queries for its A record get "no data", not the wildcard's answer. Give each subdomain you use for something else its own complete records.
+- **It doesn't cover the apex.** `*.example.com` says nothing about `example.com` itself, which needs its own A or ALIAS record (see [Apex domains](/blog/apex-domain)).
+- **In DNS, it can match more than one level.** `*.example.com` also answers for `a.b.example.com` when `b.example.com` doesn't exist. TLS doesn't follow suit, as the next section explains.
+
+## Why the certificate is the hard part
+
+A wildcard certificate for `*.example.com` covers exactly one label. [RFC 9525](https://www.rfc-editor.org/rfc/rfc9525#section-6.3) says a wildcard "can only match one label", so the certificate is valid for `acme.example.com` but not for `example.com` or `eu.acme.example.com`. Keep tenant hostnames to one label under the base domain, or plan a separate certificate for each deeper level.
+
+Let's Encrypt, which most platforms use, issues wildcard certificates only through the DNS-01 challenge. The HTTP-01 challenge "cannot be used to issue wildcard certificates" ([challenge types](https://letsencrypt.org/docs/challenge-types/)). DNS-01 means the platform publishes a TXT record at `_acme-challenge.example.com` and keeps doing so for every renewal. There are three ways to let it:
+
+- Move the zone's nameservers to the platform, so it controls the whole zone.
+- Delegate just `_acme-challenge` to the platform, with an `NS` or `CNAME` record at that name.
+- Issue the certificate yourself, for example with certbot's DNS plugins, and upload it.
+
+Each platform picks one of these, which is why their instructions look so different.
+
+## What each platform asks for
+
+Checked against each platform's docs on 2026-11-03. The last column says whether Domain SDK's adapter for that platform can provision `*.example.com` today.
+
+| Platform              | Wildcard records you add                                                                                                                                                                 | Rules that bite                                                                                                                                       | Domain SDK wildcard |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------- |
+| Vercel                | Vercel nameservers, or `NS` `_acme-challenge` to `ns1.vercel-dns.com` and `ns2.vercel-dns.com` plus `CNAME` `*` to `cname.vercel-dns-0.com`                                              | The `NS` route also needs **Enable Vercel DNS** on the domain. Vercel warns delegation can block other hosts' certificates on the same challenge name | Yes                 |
+| Render                | `CNAME` `*` to the service's `onrender.com` hostname, `CNAME` `_acme-challenge` to `<service>.verify.renderdns.com`, `CNAME` `_cf-custom-hostname` to `<service>.hostname.renderdns.com` | The root domain must also point to Render, or the wildcard fails. With `CAA` records, add `issuewild` for `letsencrypt.org` and `pki.goog`            | Yes                 |
+| Railway               | Two `CNAME` records (the wildcard and `_acme-challenge`) and one `TXT` for ownership, shown when you add the domain                                                                      | No nested wildcards like `*.*.example.com`. On Cloudflare, don't proxy `_acme-challenge`                                                              | No (v0.1)           |
+| Netlify               | Each tenant subdomain is added as a domain alias. With Netlify DNS, Netlify issues a wildcard certificate for the domain automatically                                                   | With external DNS, more than 5 subdomain aliases of one domain can hit certificate rate limits; Netlify suggests a wildcard certificate first         | No                  |
+| bunny.net             | `CNAME` `*` to the pull zone's `b-cdn.net` hostname                                                                                                                                      | Free wildcard certificates need the domain on Bunny DNS; otherwise upload your own                                                                    | Yes                 |
+| Cloudflare (own zone) | Proxied `*` record in your zone, and a Worker route `*.example.com/*` if Workers serve tenants                                                                                           | Universal SSL covers the apex and first-level subdomains on a full setup. Wildcard **custom hostnames** in Cloudflare for SaaS are Enterprise only    | No                  |
+
+Sources: [Vercel wildcard domains](https://vercel.com/docs/domains/working-with-domains/add-a-domain#using-wildcard-domain), [Render wildcard domains](https://render.com/docs/custom-domains#wildcard-domains), [Railway wildcard domains](https://docs.railway.com/networking/domains/working-with-domains#wildcard-domains), [Netlify HTTPS](https://docs.netlify.com/manage/domains/secure-domains-with-https/https-ssl/), [bunny.net wildcard certificates](https://bunny.net/docs/cdn/ssl-setup), [Cloudflare Universal SSL](https://developers.cloudflare.com/ssl/edge-certificates/universal-ssl/), [Cloudflare for SaaS plans](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/plans/), and [Workers for Platforms subdomain routing](https://developers.cloudflare.com/cloudflare-for-platforms/workers-for-platforms/configuration/hostname-routing/).
+
+Railway's API does accept wildcard domains, but Domain SDK's Railway adapter keeps them disabled in v0.1, so it attaches each tenant hostname on its own. The same fallback works on Netlify and Cloudflare: one `add()` per tenant, each with its own certificate.
+
+## Provision the wildcard with Domain SDK
+
+`createSubdomainClient` wraps a domain client for one parent domain you own. It checks that every label is a single DNS label under that domain, rejects labels you reserve, and gives you `provisionWildcard()` when the platform supports it. The sample below runs on Vercel, writes the routing record into a Porkbun zone, and falls back to per-tenant hostnames on platforms without wildcard support:
+
+```ts title="provision-tenant-domains.ts"
+import {
+  createDnsClient,
+  createDomainClient,
+  createSubdomainClient,
+} from "@opencoredev/domain-sdk";
+import { porkbun } from "@opencoredev/domain-sdk/porkbun";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+  }),
+});
+
+export const subdomains = createSubdomainClient({
+  domainClient: domains,
+  baseDomain: "example.com",
+  // These never become tenants, so a signup can't claim them.
+  reservedLabels: ["www", "api", "app", "admin", "mail", "status"],
+});
+
+const dns = createDnsClient({
+  provider: porkbun({
+    apiKey: process.env.PORKBUN_API_KEY!,
+    secretApiKey: process.env.PORKBUN_SECRET_API_KEY!,
+  }),
+});
+
+if (subdomains.supportsWildcard) {
+  // Attaches *.example.com to the Vercel project once.
+  const wildcard = await subdomains.provisionWildcard();
+
+  // Writes the required routing and ownership records Vercel returned.
+  await dns.applyDomainRecords(wildcard, { zone: "example.com" });
+
+  // Vercel's certificate also needs DNS-01 access: Vercel nameservers, or the two
+  // _acme-challenge NS records from the table above. The Porkbun, Namecheap, and
+  // Spaceship adapters don't write NS records, so add those in the DNS host's dashboard.
+  await subdomains.waitUntilWildcardActive();
+} else {
+  // Netlify, Railway, and Cloudflare for SaaS: one hostname per tenant.
+  const domain = await subdomains.add("acme");
+  await dns.applyDomainRecords(domain, { zone: "example.com" });
+  await subdomains.waitUntilActive("acme");
+}
+```
+
+After the wildcard is active, signing up a tenant is a database write, not a platform call. Claim the label with a unique constraint and store the full hostname:
+
+```ts title="claim-label.ts"
+import { subdomains } from "./provision-tenant-domains";
+
+// toHostname throws INVALID_HOSTNAME for "admin", "a.b", or "*".
+// fromHostname also rejects hostnames outside example.com.
+const hostname = subdomains.toHostname("Acme"); // "acme.example.com"
+const label = subdomains.fromHostname(hostname); // "acme"
+```
+
+`waitUntilWildcardActive()` returns once the platform reports the wildcard as active. That's the platform's own status, not a separate certificate check, so open one tenant URL over HTTPS before you announce it. [Poll until active](/docs/guides/poll-until-active) covers the polling options.
+
+## Route tenants in Next.js
+
+Next.js 16 renamed `middleware.ts` to `proxy.ts` ([proxy file convention](https://nextjs.org/docs/app/api-reference/file-conventions/proxy)). The proxy runs before every route, reads the `Host` header, and rewrites tenant requests to a route that takes the tenant as a parameter:
+
+```ts title="src/proxy.ts"
+import { NextResponse, type NextRequest } from "next/server";
+
+const BASE_DOMAIN = "example.com";
+const RESERVED = new Set(["www", "api", "app", "admin", "mail", "status"]);
+
+export function proxy(request: NextRequest) {
+  const host = (request.headers.get("host") ?? "").toLowerCase().replace(/:\d+$/, "");
+  const url = request.nextUrl.clone();
+  const label = host.endsWith(`.${BASE_DOMAIN}`) ? host.slice(0, -BASE_DOMAIN.length - 1) : "";
+
+  // The main site, reserved names, and deeper names like eu.acme.example.com,
+  // which the *.example.com certificate doesn't cover anyway.
+  if (!label || label.includes(".") || RESERVED.has(label)) {
+    // Keep the internal tenant routes unreachable from the main site.
+    if (url.pathname.startsWith("/tenants/")) return new NextResponse(null, { status: 404 });
+    return NextResponse.next();
+  }
+
+  url.pathname = `/tenants/${label}${url.pathname}`;
+  return NextResponse.rewrite(url);
+}
+
+export const config = {
+  matcher: ["/((?!_next/|favicon.ico).*)"],
+};
+```
+
+Then `app/tenants/[tenant]/[[...path]]/page.tsx` looks the label up and calls `notFound()` when no tenant owns it. Never fall back to a default tenant: with a wildcard record in place, any name anyone types reaches your app.
+
+## Security notes
+
+- **Reserve labels before launch.** `www`, `api`, `admin`, `mail`, `status`, and anything you might use later. Renaming a tenant who signed up as `admin` is harder than blocking it.
+- **Keep cookies host-only.** A cookie set with `Domain=example.com` goes to every tenant's subdomain. Leave out the `Domain` attribute for session cookies so each tenant's cookie stays on its own hostname.
+- **Think about the Public Suffix List** if tenants can publish their own HTML or scripts. Pages on `acme.example.com` can set cookies for `example.com`, which is why hosts like `github.io` are listed on the [Public Suffix List](https://publicsuffix.org/).
+- **Remove the wildcard when you shut a service down.** A `*` CNAME that still points at a platform hostname you no longer own is an open invitation for a subdomain takeover.
+
+## When not to use a wildcard
+
+Wildcards suit subdomains of a domain you own. When customers bring their own domains, like `app.customer.com`, every hostname is in a different zone, so each one needs its own record and certificate. That's the custom-domain flow covered in the [Cloudflare for SaaS guide](/blog/cloudflare-for-saas) and the [provider docs](/docs/providers). Many apps offer both: a free `acme.example.com` from the wildcard, and a custom domain as an upgrade.
+
+## Common questions
+
+### What is a wildcard subdomain?
+
+A DNS record whose leftmost label is `*`, such as `*.example.com`. It answers for any subdomain that has no records of its own, so new subdomains work without new DNS records.
+
+### Does `*.example.com` cover `example.com`?
+
+No. Neither the DNS record nor the certificate covers the apex. Add an A or ALIAS record for `example.com`, and make sure the certificate lists it too. Render requires the root domain to point to Render before a wildcard works there.
+
+### Does a wildcard certificate cover `a.b.example.com`?
+
+No. A wildcard in a certificate matches exactly one label. The DNS wildcard may answer for `a.b.example.com`, but browsers will reject the certificate, so keep tenants one level deep or issue `*.b.example.com` separately.
+
+### Can I get a free wildcard certificate from Let's Encrypt?
+
+Yes, through the DNS-01 challenge only. Most platforms do it for you once they can write `_acme-challenge` records in your zone, through their nameservers or a delegated `_acme-challenge` record.
+
+### Can I still give some subdomains their own records?
+
+Yes. An explicit record always beats the wildcard for that name. Just remember that any record at a name, even a TXT record, stops the wildcard from answering there.
+
+## Next steps
+
+- [Give tenants managed subdomains](/docs/guides/managed-subdomains): the full `createSubdomainClient` guide, including label claiming.
+- [`createSubdomainClient` reference](/docs/api-reference/create-subdomain-client): every method and what it rejects.
+- [Vercel custom domains](/docs/providers/vercel), [Render custom domain](/docs/providers/render), and [bunny.net](/docs/providers/bunny): the adapters with wildcard support.
+- [Apex domains: A records, ALIAS, and CNAME flattening](/blog/apex-domain): the record the wildcard doesn't cover.
+- [Porkbun API](/blog/porkbun-api) and [Namecheap API](/blog/namecheap-api): writing the records from TypeScript.
