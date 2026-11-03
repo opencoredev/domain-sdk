@@ -53,9 +53,9 @@ Railway's API does accept wildcard domains, but Domain SDK's Railway adapter kee
 
 ## Provision the wildcard with Domain SDK
 
-`createSubdomainClient` wraps a domain client for one parent domain you own. It checks that every label is a single DNS label under that domain, rejects labels you reserve, and gives you `provisionWildcard()` when the platform supports it. The sample below runs on Vercel, writes the routing record into a Porkbun zone, and falls back to per-tenant hostnames on platforms without wildcard support:
+`createSubdomainClient` wraps a domain client for one parent domain you own. It checks that every label is a single DNS label under that domain, rejects labels you reserve, and gives you `provisionWildcard()` when the platform supports it. Create the clients in a module with no side effects, so any part of the app can import them:
 
-```ts title="provision-tenant-domains.ts"
+```ts title="lib/subdomains.ts"
 import {
   createDnsClient,
   createDomainClient,
@@ -78,41 +78,54 @@ export const subdomains = createSubdomainClient({
   reservedLabels: ["www", "api", "app", "admin", "mail", "status"],
 });
 
-const dns = createDnsClient({
+export const dns = createDnsClient({
   provider: porkbun({
     apiKey: process.env.PORKBUN_API_KEY!,
     secretApiKey: process.env.PORKBUN_SECRET_API_KEY!,
   }),
 });
-
-if (subdomains.supportsWildcard) {
-  // Attaches *.example.com to the Vercel project once.
-  const wildcard = await subdomains.provisionWildcard();
-
-  // Writes the required routing and ownership records Vercel returned.
-  await dns.applyDomainRecords(wildcard, { zone: "example.com" });
-
-  // Vercel's certificate also needs DNS-01 access: Vercel nameservers, or the two
-  // _acme-challenge NS records from the table above. The Porkbun, Namecheap, and
-  // Spaceship adapters don't write NS records, so add those in the DNS host's dashboard.
-  await subdomains.waitUntilWildcardActive();
-} else {
-  // Netlify, Railway, and Cloudflare for SaaS: one hostname per tenant.
-  const domain = await subdomains.add("acme");
-  await dns.applyDomainRecords(domain, { zone: "example.com" });
-  await subdomains.waitUntilActive("acme");
-}
 ```
 
-After the wildcard is active, signing up a tenant is a database write, not a platform call. Claim the label with a unique constraint and store the full hostname:
+Then provision the wildcard once, from a setup script rather than from request code. The sample runs on Vercel and writes the routing record into a Porkbun zone:
 
-```ts title="claim-label.ts"
-import { subdomains } from "./provision-tenant-domains";
+```ts title="scripts/provision-wildcard.ts"
+import { dns, subdomains } from "../lib/subdomains";
 
-// toHostname throws INVALID_HOSTNAME for "admin", "a.b", or "*".
-// fromHostname also rejects hostnames outside example.com.
-const hostname = subdomains.toHostname("Acme"); // "acme.example.com"
-const label = subdomains.fromHostname(hostname); // "acme"
+if (!subdomains.supportsWildcard) {
+  throw new Error("This platform has no wildcard support: attach each tenant at signup.");
+}
+
+// Attaches *.example.com to the Vercel project.
+const wildcard = await subdomains.provisionWildcard();
+
+// Writes the required routing and ownership records Vercel returned.
+await dns.applyDomainRecords(wildcard, { zone: "example.com" });
+
+// Vercel's certificate also needs DNS-01 access: Vercel nameservers, or the two
+// _acme-challenge NS records from the table above. The Porkbun, Namecheap, and
+// Spaceship adapters don't write NS records, so add those in the DNS host's dashboard.
+await subdomains.waitUntilWildcardActive();
+```
+
+With the wildcard active, signing up a tenant is a database write, not a platform call. On platforms without wildcard support (Netlify, Railway, and Cloudflare for SaaS in Domain SDK), each signup attaches its own hostname instead:
+
+```ts title="lib/claim-subdomain.ts"
+import { dns, subdomains } from "./subdomains";
+
+export async function claimSubdomain(input: string) {
+  // Throws INVALID_HOSTNAME for "admin", "a.b", or "*".
+  const hostname = subdomains.toHostname(input); // "Acme" -> "acme.example.com"
+  const label = subdomains.fromHostname(hostname); // "acme"
+
+  // Save { label, hostname } here, with a unique constraint on label.
+
+  if (!subdomains.supportsWildcard) {
+    const domain = await subdomains.add(label);
+    await dns.applyDomainRecords(domain, { zone: "example.com" });
+    await subdomains.waitUntilActive(label);
+  }
+  return hostname;
+}
 ```
 
 `waitUntilWildcardActive()` returns once the platform reports the wildcard as active. That's the platform's own status, not a separate certificate check, so open one tenant URL over HTTPS before you announce it. [Poll until active](/docs/guides/poll-until-active) covers the polling options.
@@ -136,7 +149,8 @@ export function proxy(request: NextRequest) {
   // which the *.example.com certificate doesn't cover anyway.
   if (!label || label.includes(".") || RESERVED.has(label)) {
     // Keep the internal tenant routes unreachable from the main site.
-    if (url.pathname.startsWith("/tenants/")) return new NextResponse(null, { status: 404 });
+    if (url.pathname === "/tenants" || url.pathname.startsWith("/tenants/"))
+      return new NextResponse(null, { status: 404 });
     return NextResponse.next();
   }
 
@@ -145,7 +159,8 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/|favicon.ico).*)"],
+  // API routes and static assets stay shared; route handlers can read the Host header.
+  matcher: ["/((?!api/|_next/|favicon.ico).*)"],
 };
 ```
 
