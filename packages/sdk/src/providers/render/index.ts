@@ -40,6 +40,21 @@ interface RenderService {
   };
 }
 
+const onrenderSuffix = ".onrender.com";
+
+function onrenderSubdomain(serviceHostname: string): string {
+  const subdomain = serviceHostname.endsWith(onrenderSuffix)
+    ? serviceHostname.slice(0, -onrenderSuffix.length)
+    : "";
+  if (!subdomain || subdomain.includes("."))
+    throw new DomainSdkError(
+      "REQUEST_FAILED",
+      `Render returned the service hostname ${serviceHostname}, which is not an onrender.com subdomain, so the wildcard DNS targets cannot be derived.`,
+      { provider: "render" },
+    );
+  return subdomain;
+}
+
 export function render(options: RenderOptions): RenderProvider {
   const apiKey = requireString(options.apiKey, "apiKey", "render");
   const serviceId = requireString(options.serviceId, "serviceId", "render");
@@ -165,12 +180,13 @@ export function render(options: RenderOptions): RenderProvider {
             status: recordStatus,
           },
     ];
-    const ownership: DnsRecord[] = wildcard
+    const subdomain = wildcard ? onrenderSubdomain(serviceHostname) : undefined;
+    const ownership: DnsRecord[] = subdomain
       ? [
           {
             type: "CNAME",
             name: `_acme-challenge.${raw.name.slice(2)}`,
-            value: `${serviceId}.verify.renderdns.com`,
+            value: `${subdomain}.verify.renderdns.com`,
             purpose: "certificate",
             required: true,
             status: recordStatus,
@@ -179,7 +195,7 @@ export function render(options: RenderOptions): RenderProvider {
           {
             type: "CNAME",
             name: `_cf-custom-hostname.${raw.name.slice(2)}`,
-            value: `${serviceId}.hostname.renderdns.com`,
+            value: `${subdomain}.hostname.renderdns.com`,
             purpose: "ownership",
             required: true,
             status: recordStatus,
@@ -236,6 +252,8 @@ export function render(options: RenderOptions): RenderProvider {
     async add({ hostname }, context) {
       const existing = await getRaw(hostname, context, true);
       if (existing) return normalize(existing, await getServiceHostname(context));
+      const serviceHostname = await getServiceHostname(context);
+      if (hostname.startsWith("*.")) onrenderSubdomain(serviceHostname);
 
       let raw: RenderCustomDomain[] | undefined;
       try {
@@ -246,7 +264,7 @@ export function render(options: RenderOptions): RenderProvider {
       } catch (error) {
         if (error instanceof DomainSdkError && error.code === "DOMAIN_CONFLICT") {
           const conflicted = await getRaw(hostname, context, true);
-          if (conflicted) return normalize(conflicted, await getServiceHostname(context));
+          if (conflicted) return normalize(conflicted, serviceHostname);
         }
         throw error;
       }
@@ -261,7 +279,7 @@ export function render(options: RenderOptions): RenderProvider {
           "Render did not return the requested custom domain.",
           { provider: "render" },
         );
-      return normalize(created, await getServiceHostname(context));
+      return normalize(created, serviceHostname);
     },
     get,
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
