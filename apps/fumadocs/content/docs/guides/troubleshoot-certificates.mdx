@@ -38,7 +38,7 @@ For Cloudflare for SaaS, the blog's [common errors](/blog/cloudflare-for-saas#co
 
 ### How do I check when a custom domain's SSL certificate is ready?
 
-Call `domains.refresh(hostname)` and check `domain.certificate.status === "active"`. On Cloudflare for SaaS, Railway, Netlify and bunny.net, `domain.status` only becomes `active` after the certificate is active too, so [`waitUntilActive`](./poll-until-active.mdx) waits for it.
+Call `domains.refresh(hostname)` and check `domain.certificate.status === "active"`. On Cloudflare for SaaS, Railway, Netlify and bunny.net, `domain.status` only becomes `active` after the certificate is active too, so [`waitUntilActive`](./poll-until-active.mdx) waits for it. On bunny.net, call `verify()` first: it requests the certificate, and polling only reads the state.
 
 ### Does `waitUntilActive` wait for the certificate on Vercel and Render?
 
@@ -50,6 +50,6 @@ Domain SDK doesn't promise an issuance time; the provider sets it. `waitUntilAct
 
 ### What should I do when the status is `failed`?
 
-Read `domain.issues` and `domain.certificate.message`, fix the cause (usually a missing record, a CAA record, or a proxy), then refresh. Don't delete and re-add the domain in a loop.
+Read `domain.issues` and `domain.certificate.message`, fix the cause (usually a missing record, a CAA record, or a proxy), then refresh. Some providers report a failure without details: Railway's adapter has no certificate message or issue unless a routing record is invalid, so check the domain in the provider's dashboard. Don't delete and re-add the domain in a loop.
 
 Read next: [Managed certificates](../concepts/managed-certificates.mdx).
