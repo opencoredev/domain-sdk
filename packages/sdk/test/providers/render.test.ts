@@ -95,6 +95,47 @@ describe("Render adapter", () => {
     );
   });
 
+  test("builds wildcard certificate and ownership targets from the onrender.com subdomain", async () => {
+    const wildcardService = (serviceUrl: string) =>
+      mockFetch((url) =>
+        url.pathname === "/v1/services/srv-d0abc123"
+          ? json({ id: "srv-d0abc123", serviceDetails: { url: serviceUrl } })
+          : json({ ...pendingDomain, id: "wildcard", name: "*.customer.com" }),
+      );
+    const provider = (serviceUrl: string) =>
+      render({
+        apiKey: "key",
+        serviceId: "srv-d0abc123",
+        fetch: wildcardService(serviceUrl).fetch,
+      });
+
+    const domain = await createDomainClient({
+      provider: provider("https://svelte.onrender.com"),
+    }).get("*.customer.com");
+    expect(domain.records).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "*.customer.com", value: "svelte.onrender.com" }),
+        expect.objectContaining({
+          name: "_acme-challenge.customer.com",
+          value: "svelte.verify.renderdns.com",
+        }),
+        expect.objectContaining({
+          name: "_cf-custom-hostname.customer.com",
+          value: "svelte.hostname.renderdns.com",
+        }),
+      ]),
+    );
+    expect(domain.verification.records).toEqual([
+      expect.objectContaining({ value: "svelte.hostname.renderdns.com" }),
+    ]);
+
+    await expect(
+      createDomainClient({ provider: provider("https://svelte.example.com") }).get(
+        "*.customer.com",
+      ),
+    ).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+  });
+
   test("fetches the service hostname once per instance and retries after a failure", async () => {
     let serviceCalls = 0;
     const mock = mockFetch((url, init) => {
