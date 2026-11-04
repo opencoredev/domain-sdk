@@ -7,6 +7,7 @@ import { notFound } from "next/navigation";
 import { DocsPageActions } from "@/components/docs-page-actions";
 import { JsonLd } from "@/components/json-ld";
 import { getMDXComponents } from "@/components/mdx";
+import { extractFaq, faqPageSchema } from "@/lib/faq";
 import { absoluteUrl, pageNameFromSlug } from "@/lib/seo";
 import { gitConfig } from "@/lib/shared";
 import { getPageMarkdownUrl, source } from "@/lib/source";
@@ -32,6 +33,10 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
       url: `/${breadcrumbSegments.slice(0, index + 1).join("/")}`,
     })),
   ];
+  const faq = faqPageSchema({
+    url: absoluteUrl(page.url),
+    entries: extractFaq(await page.data.getText("processed")),
+  });
   const structuredData = {
     "@context": "https://schema.org",
     "@graph": [
@@ -56,6 +61,7 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
           item: absoluteUrl(breadcrumb.url),
         })),
       },
+      ...(faq ? [faq] : []),
     ],
   };
 

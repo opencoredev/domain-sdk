@@ -185,7 +185,7 @@ for (const record of domain.records) {
 }
 ```
 
-`domain.status` folds the two Cloudflare checks into one value: `pending_verification` while hostname validation is pending (or `pending_dns` when there is no TXT record to show), `pending_certificate` once the hostname is active but `ssl.status` isn't, and `active` only when both are. Cloudflare's `moved` and `deleted` statuses, and certificate timeouts, become `failed`. Messages from `verification_errors` and `ssl.validation_errors` land in `domain.issues`.
+`domain.status` folds the two Cloudflare checks into one value: `pending_verification` while hostname validation is pending (or `pending_dns` when there is no TXT record to show), `pending_certificate` once the hostname is active but `ssl.status` isn't, and `active` only when both are. Cloudflare's `moved` and `deleted` statuses, and certificate timeouts, become `failed`. Messages from `verification_errors` and `ssl.validation_errors` land in `domain.issues`. The [`Domain`](/docs/api-reference/domain) and [`DnsRecord`](/docs/api-reference/dns-record) references list every field.
 
 To wait for a hostname, run `waitUntilActive` in a background job. It polls with backoff and stops at `active` or when it times out:
 
