@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import { JsonLd } from "@/components/json-ld";
 import { getMDXComponents } from "@/components/mdx";
 import { blog, blogRoute, formatPostDate } from "@/lib/blog";
+import { extractFaq, faqPageSchema } from "@/lib/faq";
 import { absoluteUrl, siteConfig } from "@/lib/seo";
 import { socialImageAlt, socialImageSize } from "@/lib/social-image";
 
@@ -16,6 +17,10 @@ export default async function BlogPostPage(props: PageProps<"/blog/[slug]">) {
 
   const MDX = post.data.body;
   const modified = post.data.updated ?? post.data.date;
+  const faq = faqPageSchema({
+    url: absoluteUrl(post.url),
+    entries: extractFaq(await post.data.getText("processed")),
+  });
   const structuredData = {
     "@context": "https://schema.org",
     "@graph": [
@@ -42,6 +47,7 @@ export default async function BlogPostPage(props: PageProps<"/blog/[slug]">) {
           { "@type": "ListItem", position: 3, name: post.data.title, item: absoluteUrl(post.url) },
         ],
       },
+      ...(faq ? [faq] : []),
     ],
   };
 
