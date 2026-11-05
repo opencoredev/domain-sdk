@@ -1,8 +1,12 @@
 ---
-title: Spaceship DNS
-description: Write routing and verification records in Spaceship DNS with the Domain SDK.
+title: "Spaceship API: DNS records from TypeScript"
+description: "Write DNS records with the Spaceship API from TypeScript: API key and secret headers, dnsrecords permissions, save and delete calls, rate limits, and the SDK adapter."
 icon: spaceship
 ---
+
+Spaceship's public API manages a domain's DNS records with three calls on `/dns/records/{domain}`, under the base URL `https://spaceship.dev/api/v1`: `GET` lists records a page at a time (`take` and `skip`), `PUT` saves up to 500 records in one request, and `DELETE` removes the records you name. Every request carries an `X-API-Key` and an `X-API-Secret` header, both created in Spaceship's API Manager. Reads need the `dnsrecords:read` permission and writes need `dnsrecords:write`. Saves and deletes are each limited to 300 requests per user, per domain, every 300 seconds.
+
+The `spaceship` adapter makes those calls for you. It lists the zone, saves only the records your hosting provider asks for with `force: false`, and turns conflicts and rate limits into typed errors. Spaceship API details are from the [Spaceship API documentation](https://docs.spaceship.dev/), checked on 2026-11-05.
 
 ## Credentials and scope
 
