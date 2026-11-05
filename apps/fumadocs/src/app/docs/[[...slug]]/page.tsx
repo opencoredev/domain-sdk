@@ -8,7 +8,8 @@ import { DocsPageActions } from "@/components/docs-page-actions";
 import { JsonLd } from "@/components/json-ld";
 import { getMDXComponents } from "@/components/mdx";
 import { extractFaq, faqPageSchema } from "@/lib/faq";
-import { absoluteUrl, pageNameFromSlug } from "@/lib/seo";
+import { gitLastModified } from "@/lib/last-modified";
+import { absoluteUrl, docsContentDir, pageNameFromSlug } from "@/lib/seo";
 import { gitConfig } from "@/lib/shared";
 import { getPageMarkdownUrl, source } from "@/lib/source";
 import { socialImageAlt, socialImageSize } from "@/lib/social-image";
@@ -37,6 +38,8 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
     url: absoluteUrl(page.url),
     entries: extractFaq(await page.data.getText("processed")),
   });
+  // Same source as the sitemap's lastmod; omitted when git can't tell.
+  const lastModified = gitLastModified([`${docsContentDir}/${page.path}`]);
   const structuredData = {
     "@context": "https://schema.org",
     "@graph": [
@@ -48,6 +51,7 @@ export default async function Page(props: PageProps<"/docs/[[...slug]]">) {
         url: absoluteUrl(page.url),
         mainEntityOfPage: absoluteUrl(page.url),
         inLanguage: "en-US",
+        ...(lastModified && { dateModified: lastModified.toISOString() }),
         isPartOf: { "@id": absoluteUrl("/#website") },
         author: { "@id": absoluteUrl("/#organization") },
         publisher: { "@id": absoluteUrl("/#organization") },
