@@ -16,6 +16,10 @@ export const legacyDocRoutes = new Set([
   "/docs/quickstart",
 ]);
 
+// Docs MDX directory, relative to the app root (the build's working directory). The sitemap and
+// docs JSON-LD both read each page's last git commit from here, so their dates agree.
+export const docsContentDir = "content/docs";
+
 export function absoluteUrl(path: string) {
   return new URL(path, siteConfig.url).toString();
 }

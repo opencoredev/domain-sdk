@@ -2,10 +2,8 @@ import type { MetadataRoute } from "next";
 
 import { blog, blogContentDir, blogRoute } from "@/lib/blog";
 import { gitLastModified } from "@/lib/last-modified";
-import { legacyDocRoutes, siteConfig } from "@/lib/seo";
+import { docsContentDir, legacyDocRoutes, siteConfig } from "@/lib/seo";
 import { source } from "@/lib/source";
-
-const docsContentDir = "content/docs";
 
 // The files whose last commit is each route's real last content change.
 function routeSourcePaths(): Map<string, readonly string[]> {
