@@ -1,14 +1,16 @@
 ---
-title: Porkbun DNS
-description: Write hosting and verification records to a Porkbun DNS zone with the server-side Domain SDK.
+title: "Porkbun DNS records: the TypeScript adapter"
+description: "Write Porkbun DNS records (A, AAAA, CNAME, ALIAS, TXT, CAA) from TypeScript: API keys, per-domain API Access, nameserver checks, TTLs from 600 seconds, and errors."
 icon: porkbun
 ---
+
+The Porkbun API can write DNS records for a domain in your account once you create an API key pair and turn on **API Access** for that domain. The records only take effect while the domain uses Porkbun's nameservers: Porkbun keeps a zone even when a domain is delegated elsewhere, so a write there succeeds and public DNS doesn't change. The `porkbun` adapter checks delegation with `getZone()`, reads records with `/dns/retrieve`, creates them with `/dns/create`, and deletes only the record IDs it selected.
 
 ## Credentials and scope
 
 Create an API key and secret API key in Porkbun's account API settings. Enable **API Access** for each domain you want to manage. Store both keys in server-only configuration as `PORKBUN_API_KEY` and `PORKBUN_SECRET_API_KEY`. For a walkthrough of the Porkbun API itself, with raw `fetch` calls next to the adapter, see [Porkbun API: create DNS records from TypeScript](/blog/porkbun-api). To compare Porkbun's API access and DNS automation with Namecheap's, see [Namecheap vs Porkbun for developers](/blog/namecheap-vs-porkbun). For domains whose DNS is on Spaceship's basic nameservers, use the [Spaceship adapter](/docs/providers/spaceship).
 
-The adapter writes DNS records, not hosting-provider domains or certificates. A Porkbun DNS zone must already exist for the domain. Writes to a zone delegated to another DNS host do not change public DNS.
+The adapter writes DNS records, not hosting-provider domains or certificates. A Porkbun DNS zone must already exist for the domain.
 
 ## Apply a hosting provider's records
 
