@@ -5,6 +5,6 @@ description: "Secure customer custom domains in a multi-tenant app: authorize ev
 
 Authorize every add, get, verify, refresh, and remove by tenant. Normalize before uniqueness checks. Rate-limit mutations. Remove provider configuration when a tenant disconnects a hostname. Do not reassign an abandoned hostname until provider ownership is safely re-established.
 
-Never trust current DNS resolution as ownership proof, collect registrar passwords, or expose provider credentials. Provider verification is authoritative.
+Never trust current DNS resolution as ownership proof, collect registrar passwords, or expose provider credentials. Provider verification is authoritative. To prove which tenant controls a hostname, issue each tenant its own TXT token and check it before attaching the domain; [Domain verification with TXT records](/blog/domain-verification) has a sample.
 
 Read next: [Build a settings page](./custom-domain-settings-page.mdx).
