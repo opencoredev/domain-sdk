@@ -1,6 +1,6 @@
 ---
 title: "Domain verification with TXT records: how SaaS apps verify customer domains"
-description: "How to verify that a customer owns their custom domain with a DNS TXT record: token format, the DNS check, re-verification, and the TXT records Vercel, Cloudflare, and Railway ask for."
+description: "Verify that a customer owns their custom domain with a DNS TXT record: the token, the DNS check, re-verification, and the TXT records Vercel, Cloudflare and Railway need."
 date: 2026-11-08
 ---
 
@@ -26,7 +26,7 @@ The flow has four steps, and each one has a detail that matters.
 
 1. **Issue a token per tenant and hostname.** Generate at least 128 random bits with a cryptographic RNG and store it with the tenant ID, the normalized hostname and a created date. Never derive it from the hostname or tenant ID, which an attacker could compute.
 2. **Show one record.** Use a name under the customer's hostname with a prefix that belongs to you, such as `_yourapp-challenge.app.customer.com`, and a value with a recognizable prefix, such as `yourapp-verify=7f3c…`. A prefixed name keeps the record out of the way of the customer's own records and works when `app.customer.com` is itself a CNAME, because a CNAME can't share its name with a TXT record.
-3. **Check from public resolvers.** Look the name up and compare every TXT value exactly. Use public resolvers rather than the machine's default, so a stale corporate cache or split-horizon DNS doesn't decide the result. If the first lookup fails, remember that resolvers cache the negative answer too, for the zone's SOA minimum TTL, so polling every few seconds just returns the cached miss.
+3. **Check from public resolvers.** Look the name up and compare every TXT value exactly. Use public resolvers rather than the machine's default, so a stale corporate cache or split-horizon DNS doesn't decide the result. If the first lookup fails, remember that resolvers cache the negative answer too, for up to the smaller of the zone's SOA record TTL and its SOA minimum field ([RFC 2308](https://www.rfc-editor.org/rfc/rfc2308#section-5)), so polling every few seconds can keep returning the cached miss.
 4. **Mark it verified, then keep checking.** Record when the check passed. Re-check on a schedule, for example daily, and before you reassign a hostname or let a second tenant claim it. If the record disappears for a sustained period, ask the customer to restore it before you treat the domain as abandoned.
 
 The check itself is a few lines with `node:dns`:
@@ -65,7 +65,7 @@ export async function hasVerificationToken(hostname: string, token: string): Pro
 
 Two details in that sample are easy to get wrong. `resolveTxt` returns each record as an array of strings, because DNS stores TXT values in chunks of up to 255 bytes, so join the chunks before comparing. And a lookup that times out is not a failed verification: treat `ENOTFOUND` and `ENODATA` as "not there yet", and anything else as a retry.
 
-`node:dns` runs on Node and Bun. On Cloudflare Workers or Vercel Edge there's no DNS module, so run the check from a Node route or a queue worker, or query a DNS-over-HTTPS endpoint with `fetch`.
+`node:dns` runs on Node and Bun. Cloudflare Workers supports it with Node.js compatibility on, resolving over DNS over HTTPS through 1.1.1.1 ([Workers `node:dns`](https://developers.cloudflare.com/workers/runtime-apis/nodejs/dns/), checked 2026-11-08), so test the `Resolver` options there rather than assuming they carry over. Vercel's Edge runtime has no DNS module: run the check from a Node.js function or a queue worker, or query a DNS-over-HTTPS endpoint with `fetch`.
 
 ### What to show the customer
 
@@ -161,7 +161,7 @@ Add a TXT record with the exact name and value the service shows, at the DNS hos
 
 ### How long does TXT record verification take?
 
-Usually a few minutes after the record is saved. It can take longer if the DNS host publishes changes slowly, or if a resolver cached a "not found" answer from an earlier check, which lasts for the zone's SOA minimum TTL. Waiting and retrying fixes both; changing the record again doesn't.
+Usually a few minutes after the record is saved. It can take longer if the DNS host publishes changes slowly, or if a resolver cached a "not found" answer from an earlier check, which can last up to the zone's negative-caching TTL (the smaller of the SOA record's TTL and its minimum field). Waiting and retrying fixes both; changing the record again doesn't.
 
 ### Can I delete the TXT record after verification?
 
