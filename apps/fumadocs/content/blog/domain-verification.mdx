@@ -25,7 +25,7 @@ A DNS record that already routes to you proves nothing about who is asking. A fr
 The flow has four steps, and each one has a detail that matters.
 
 1. **Issue a token per tenant and hostname.** Generate at least 128 random bits with a cryptographic RNG and store it with the tenant ID, the normalized hostname and a created date. Never derive it from the hostname or tenant ID, which an attacker could compute.
-2. **Show one record.** Use a name under the customer's hostname with a prefix that belongs to you, such as `_yourapp-challenge.app.customer.com`, and a value with a recognizable prefix, such as `yourapp-verify=7f3c…`. A prefixed name keeps the record out of the way of the customer's own records and works when `app.customer.com` is itself a CNAME, because a CNAME can't share its name with a TXT record.
+2. **Show one record.** Use a name under the customer's hostname with a prefix that belongs to you, such as `_yourapp-challenge.app.customer.com`, and a value with a recognizable prefix, such as `yourapp-verify=7f3c…`. For a wildcard such as `*.customer.com`, verify the base domain (`_yourapp-challenge.customer.com`), because a `*` label can't sit in the middle of a record name. A prefixed name keeps the record out of the way of the customer's own records and works when `app.customer.com` is itself a CNAME, because a CNAME can't share its name with a TXT record.
 3. **Check from public resolvers.** Look the name up and compare every TXT value exactly. Use public resolvers rather than the machine's default, so a stale corporate cache or split-horizon DNS doesn't decide the result. If the first lookup fails, remember that resolvers cache the negative answer too, for up to the smaller of the zone's SOA record TTL and its SOA minimum field ([RFC 2308](https://www.rfc-editor.org/rfc/rfc2308#section-5)), so polling every few seconds can keep returning the cached miss.
 4. **Mark it verified, then keep checking.** Record when the check passed. Re-check on a schedule, for example daily, and before you reassign a hostname or let a second tenant claim it. If the record disappears for a sustained period, ask the customer to restore it before you treat the domain as abandoned.
 
@@ -44,9 +44,9 @@ export function createVerificationToken(): string {
   return PREFIX + randomBytes(16).toString("hex");
 }
 
-/** The record name the customer creates. */
+/** The record name the customer creates. A wildcard is verified at its base domain. */
 export function challengeName(hostname: string): string {
-  return `_yourapp-challenge.${hostname}`;
+  return `_yourapp-challenge.${hostname.replace(/^\*\./, "")}`;
 }
 
 /** True when the customer's DNS publishes exactly this token. */
@@ -136,7 +136,7 @@ export async function checkPlatform(hostname: string) {
 }
 ```
 
-Swap `railway` for `vercel`, `cloudflare`, `render`, `netlify` or `bunny` and the rest stays the same; `capabilities.explicitVerification` tells you whether the platform has a verify call to trigger (Vercel, Render and bunny.net) or only reports status (Cloudflare, Railway and Netlify). The [providers overview](/docs/providers) lists each adapter's options.
+To use another provider, replace `railway` with `vercel`, `cloudflareSaaS`, `render`, `netlify` or `bunny`, update the import, and pass that adapter's required options. The code after client setup stays the same; `capabilities.explicitVerification` tells you whether the platform has a verify call to trigger (Vercel, Render and bunny.net) or only reports status (Cloudflare, Railway and Netlify). The [providers overview](/docs/providers) lists each adapter's options.
 
 If you control the customer's zone, for example because the tenant connected their Porkbun, Namecheap or Spaceship account, a [DNS adapter](/docs/providers#dns-adapters) can write those records for them with `createDnsClient().applyDomainRecords(domain)`, and refuses to overwrite a conflicting record unless you pass `onConflict: "replace"`.
 
