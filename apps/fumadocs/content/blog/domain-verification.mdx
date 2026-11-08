@@ -1,0 +1,179 @@
+---
+title: "Domain verification with TXT records: how SaaS apps verify customer domains"
+description: "Verify that a customer owns their custom domain with a DNS TXT record: the token, the DNS check, re-verification, and the TXT records Vercel, Cloudflare and Railway need."
+date: 2026-11-08
+---
+
+**Domain verification** is how an app confirms that the person who typed `app.customer.com` into a settings page actually controls that domain. The usual method is a DNS TXT record: you generate a random token, the customer publishes it at a name under their domain, and your server looks it up. Only someone who can edit the domain's DNS can make the lookup succeed.
+
+Google Workspace, Microsoft 365 and Meta all verify domains this way, and most guides you'll find explain their dashboards. This post is about the other side: you run a multi-tenant SaaS app, customers bring their own domains, and you need to verify them in code. It covers:
+
+1. Why a SaaS app needs its own ownership check even when the hosting platform verifies the domain too.
+2. A TXT verification flow you can build in an afternoon, with TypeScript.
+3. The ownership records Vercel, Cloudflare for SaaS, Railway, Render, Netlify and bunny.net ask for, as of 2026-11-08, and how [Domain SDK](/docs) reports them.
+
+## Why the platform's check isn't enough
+
+When you attach a customer's hostname to Vercel, Cloudflare for SaaS or Railway, the platform runs its own check before it serves traffic or issues a certificate. That check answers one question: does someone who controls this domain want it pointed at **your account**? It doesn't know which of **your tenants** asked for it.
+
+Here is the gap. Customer B already points `shop.bigco.com` at your app with a CNAME, and it works. Tenant A, who has nothing to do with BigCo, opens their settings page and adds `shop.bigco.com`. The routing record is valid, the platform is satisfied, and if your app maps hostnames to tenants on a first-come or last-write basis, BigCo's visitors could land in tenant A's workspace.
+
+A DNS record that already routes to you proves nothing about who is asking. A fresh token that you issued to tenant A, published in BigCo's DNS, does. That's why the [tenant security guide](/docs/guides/tenant-security) says never to treat current DNS resolution as ownership proof. Keep your own check for "which tenant owns this hostname", and let the platform's check gate traffic and certificates.
+
+## The TXT verification flow
+
+The flow has four steps, and each one has a detail that matters.
+
+1. **Issue a token per tenant and hostname.** Generate at least 128 random bits with a cryptographic RNG and store it with the tenant ID, the normalized hostname and a created date. Never derive it from the hostname or tenant ID, which an attacker could compute.
+2. **Show one record.** Use a name under the customer's hostname with a prefix that belongs to you, such as `_yourapp-challenge.app.customer.com`, and a value with a recognizable prefix, such as `yourapp-verify=7f3c…`. For a wildcard such as `*.customer.com`, verify the base domain (`_yourapp-challenge.customer.com`), because a `*` label can't sit in the middle of a record name. A prefixed name keeps the record out of the way of the customer's own records and works when `app.customer.com` is itself a CNAME, because a CNAME can't share its name with a TXT record.
+3. **Check from public resolvers.** Look the name up and compare every TXT value exactly. Use public resolvers rather than the machine's default, so a stale corporate cache or split-horizon DNS doesn't decide the result. If the first lookup fails, remember that resolvers cache the negative answer too, for up to the smaller of the zone's SOA record TTL and its SOA minimum field ([RFC 2308](https://www.rfc-editor.org/rfc/rfc2308#section-5)), so polling every few seconds can keep returning the cached miss.
+4. **Mark it verified, then keep checking.** Record when the check passed. Re-check on a schedule, for example daily, and before you reassign a hostname or let a second tenant claim it. If the record disappears for a sustained period, ask the customer to restore it before you treat the domain as abandoned.
+
+The check itself is a few lines with `node:dns`:
+
+```ts title="lib/domain-verification.ts"
+import { randomBytes } from "node:crypto";
+import { Resolver } from "node:dns/promises";
+
+const PREFIX = "yourapp-verify=";
+const resolver = new Resolver({ timeout: 3_000, tries: 2 });
+resolver.setServers(["1.1.1.1", "8.8.8.8"]);
+
+/** A new token for one tenant and hostname. Store it; show it once per hostname. */
+export function createVerificationToken(): string {
+  return PREFIX + randomBytes(16).toString("hex");
+}
+
+/** The record name the customer creates. A wildcard is verified at its base domain. */
+export function challengeName(hostname: string): string {
+  return `_yourapp-challenge.${hostname.replace(/^\*\./, "")}`;
+}
+
+/** True when the customer's DNS publishes exactly this token. */
+export async function hasVerificationToken(hostname: string, token: string): Promise<boolean> {
+  try {
+    const records = await resolver.resolveTxt(challengeName(hostname));
+    // A long TXT value arrives split into 255-byte chunks; join them before comparing.
+    return records.some((chunks) => chunks.join("") === token);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOTFOUND" || code === "ENODATA") return false;
+    throw error; // Timeouts and SERVFAIL mean "try again later", not "not verified".
+  }
+}
+```
+
+Two details in that sample are easy to get wrong. `resolveTxt` returns each record as an array of strings, because DNS stores TXT values in chunks of up to 255 bytes, so join the chunks before comparing. And a lookup that times out is not a failed verification: treat `ENOTFOUND` and `ENODATA` as "not there yet", and anything else as a retry.
+
+`node:dns` runs on Node and Bun. Cloudflare Workers supports it with Node.js compatibility on, resolving over DNS over HTTPS through 1.1.1.1 ([Workers `node:dns`](https://developers.cloudflare.com/workers/runtime-apis/nodejs/dns/), checked 2026-11-08), so test the `Resolver` options there rather than assuming they carry over. Vercel's Edge runtime has no DNS module: run the check from a Node.js function or a queue worker, or query a DNS-over-HTTPS endpoint with `fetch`.
+
+### What to show the customer
+
+Customers copy records into a dashboard they rarely use, so show exactly what each field needs:
+
+| Field | Value                                                                                                                          |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Type  | `TXT`                                                                                                                          |
+| Name  | `_yourapp-challenge.app` (most DNS dashboards append the domain; show the full name `_yourapp-challenge.app.customer.com` too) |
+| Value | `yourapp-verify=7f3c…` (the full token)                                                                                        |
+| TTL   | Default or 300 seconds                                                                                                         |
+
+Add a "Check now" button that runs the lookup, and say what happened: found, not found yet, or "we couldn't reach DNS, try again". A spinner with no result is how support tickets start.
+
+## Combine it with the platform's ownership records
+
+Once your own check passes, attach the hostname to your hosting platform. Some platforms then ask for an ownership record of their own, and the names differ:
+
+| Platform            | Ownership record the platform asks for                                                                                                                                        | When                                                                                  | Domain SDK `verify()`              |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | ---------------------------------- |
+| Vercel              | `TXT` at `_vercel.<apex>`, for example `_vercel.customer.com`. Several hostnames on one apex each get their own value, and removing and re-adding a domain issues a new value | When the domain is already in use by another Vercel account or team                   | Yes (Vercel's verify endpoint)     |
+| Cloudflare for SaaS | `TXT` at `_cf-custom-hostname.<hostname>` from the custom hostname's `ownership_verification`, or an HTTP token instead                                                       | With pre-validation. Real-time validation uses the routing CNAME instead and skips it | No (status comes from `refresh()`) |
+| Railway             | `TXT` at `_railway-verify.<hostname>`, alongside the CNAME                                                                                                                    | Always. Railway returns 404 on the domain until both records are in place             | No (status comes from `refresh()`) |
+| Render              | No extra record for ordinary domains: Render verifies from the routing record. Wildcards add a `CNAME` at `_cf-custom-hostname`                                               | Wildcards only                                                                        | Yes (Render's verify endpoint)     |
+| Netlify             | None exposed per alias. An issued certificate covering the alias is the strongest signal                                                                                      | Never                                                                                 | No                                 |
+| bunny.net           | None. `verify()` requests the certificate, which only issues once the routing record resolves to the pull zone                                                                | Never                                                                                 | Yes (requests the certificate)     |
+
+Sources, checked 2026-11-08: [Vercel: verify domain access](https://vercel.com/docs/domains/working-with-domains/add-a-domain#verify-domain-access), [Cloudflare for SaaS pre-validation](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/domain-support/hostname-validation/pre-validation/) and [real-time validation](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/domain-support/hostname-validation/realtime-validation/), [Railway: working with domains](https://docs.railway.com/networking/domains/working-with-domains), and Domain SDK's [ownership verification](/docs/concepts/ownership-verification) notes for Render, Netlify and bunny.net.
+
+Cloudflare notes two more rules for pre-validation: it doesn't work for Orange-to-Orange hostnames (the customer's zone is already on Cloudflare), and the customer can delete the `_cf-custom-hostname` TXT record once the hostname is active. Railway is the opposite case: its `TXT` record is required before any traffic routes, so show it next to the CNAME from the first screen.
+
+### Read the platform's records with Domain SDK
+
+Domain SDK doesn't run your own TXT check; that part is yours, as above. What it does is normalize each platform's answer, so you don't have to learn three response shapes. Every record carries a `purpose`, and ownership records have `purpose: "ownership"`, separate from routing and certificate records even when they're all TXT or CNAME:
+
+```ts title="lib/attach-domain.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { railway } from "@opencoredev/domain-sdk/railway";
+
+const domains = createDomainClient({
+  provider: railway({
+    token: process.env.RAILWAY_TOKEN!,
+    projectId: process.env.RAILWAY_PROJECT_ID!,
+    environmentId: process.env.RAILWAY_ENVIRONMENT_ID!,
+    serviceId: process.env.RAILWAY_SERVICE_ID!,
+  }),
+});
+
+/** Call this only after hasVerificationToken() passed for this tenant. */
+export async function attachVerifiedDomain(hostname: string) {
+  const domain = await domains.add(hostname);
+
+  // Everything the customer must add: routing, the platform's ownership TXT, certificate records.
+  const toShow = domain.records.filter((record) => record.required);
+
+  // Just the platform's ownership challenge, e.g. _railway-verify.app.customer.com on Railway.
+  const ownership = domain.verification.records;
+
+  return { status: domain.status, toShow, ownership };
+}
+
+/** Run from the "Check now" button and from a background job. */
+export async function checkPlatform(hostname: string) {
+  const domain = domains.capabilities.explicitVerification
+    ? await domains.verify(hostname)
+    : await domains.refresh(hostname);
+  return domain.verification.status; // "pending" | "verified" | "failed" | "unknown"
+}
+```
+
+To use another provider, replace `railway` with `vercel`, `cloudflareSaaS`, `render`, `netlify` or `bunny`, update the import, and pass that adapter's required options. The code after client setup stays the same; `capabilities.explicitVerification` tells you whether the platform has a verify call to trigger (Vercel, Render and bunny.net) or only reports status (Cloudflare, Railway and Netlify). The [providers overview](/docs/providers) lists each adapter's options.
+
+If you control the customer's zone, for example because the tenant connected their Porkbun, Namecheap or Spaceship account, a [DNS adapter](/docs/providers#dns-adapters) can write those records for them with `createDnsClient().applyDomainRecords(domain)`, and refuses to overwrite a conflicting record unless you pass `onConflict: "replace"`.
+
+## Mistakes that break verification
+
+- **Asking for the TXT record at the hostname itself** when that hostname is also a CNAME. DNS doesn't allow other records next to a CNAME, so the customer's dashboard rejects it or silently drops one of them. Use a prefixed name.
+- **Reusing one token across tenants or hostnames.** A token should prove one tenant's claim on one hostname. If tenant A's token also verifies tenant B's hostname, you've rebuilt the gap from the start of this post.
+- **Treating "not found" as final after one try.** New records take minutes to show up, longer with high TTLs or a slow DNS host. Retry with backoff for an hour or so before you show an error, and tell the customer which record you looked for.
+- **Comparing loosely.** Trim nothing, lowercase nothing, and don't match substrings. Exact comparison of the joined chunks is the only safe check.
+- **Never re-checking.** Domains change hands. A hostname verified two years ago by a customer who has since sold the domain shouldn't stay attached to their workspace forever.
+- **Mixing up ownership and certificates.** A verified domain can still be waiting on its certificate. Show both states; [Troubleshoot custom domain SSL certificates](/docs/guides/troubleshoot-certificates) covers the certificate side.
+
+## Common questions
+
+### What is domain verification?
+
+Domain verification proves that whoever asked to use a domain controls it. The common method is a DNS TXT record: the service gives you a token, you publish it in the domain's DNS, and the service looks it up. Other methods are an HTML file or meta tag on the website, or an email to an address at the domain.
+
+### How do I verify domain ownership with a TXT record?
+
+Add a TXT record with the exact name and value the service shows, at the DNS host that serves the domain (which may not be the registrar). Save it, wait a few minutes, and click verify. If it fails, check the name: many dashboards append the domain automatically, so entering the full name produces `_challenge.example.com.example.com`.
+
+### How long does TXT record verification take?
+
+Usually a few minutes after the record is saved. It can take longer if the DNS host publishes changes slowly, or if a resolver cached a "not found" answer from an earlier check, which can last up to the zone's negative-caching TTL (the smaller of the SOA record's TTL and its minimum field). Waiting and retrying fixes both; changing the record again doesn't.
+
+### Can I delete the TXT record after verification?
+
+It depends on the service. Cloudflare for SaaS says the `_cf-custom-hostname` record can go once the hostname is active. For your own app, ask customers to keep it, so you can re-verify later before reassigning the hostname.
+
+### Does Domain SDK verify domain ownership?
+
+It triggers and reports the hosting platform's verification: `verify()` on platforms that have a verify call, `refresh()` elsewhere, with ownership records under `domain.verification.records`. It doesn't run your app's own tenant-level TXT check, which the sample above covers in a few lines.
+
+## Next steps
+
+- [Ownership verification](/docs/concepts/ownership-verification): how each adapter reports ownership records and status.
+- [Tenant authorization and domain security](/docs/guides/tenant-security): authorization, rate limits and abandoned-domain takeover.
+- [Apex domains](/blog/apex-domain): the A, ALIAS and CNAME flattening records customers need on a root domain.
+- [Cloudflare for SaaS](/blog/cloudflare-for-saas): custom hostnames, validation methods and pricing.

@@ -7,4 +7,6 @@ Ownership records have `purpose: "ownership"`. They are separate from routing an
 
 Vercel exposes project-domain verification challenges. Cloudflare exposes `ownership_verification` and may also offer HTTP validation. Railway requires a TXT verification token in addition to routing records. Render verifies ordinary domains from routing and returns extra ownership and certificate records for wildcards. Netlify does not expose per-alias ownership challenges, so an issued certificate covering the alias is the strongest state available through its site API. bunny.net has no separate ownership challenge either: `verify()` requests a certificate, and issuance only succeeds once the routing record resolves to the pull zone. Treat provider verification as authoritative; DNS resolution alone does not establish tenant ownership.
 
+To tie a hostname to one tenant before you attach it, add your own TXT challenge: [Domain verification with TXT records](/blog/domain-verification) walks through the token, the DNS check and re-verification.
+
 Read next: [Tenant authorization and domain security](../guides/tenant-security.mdx).
