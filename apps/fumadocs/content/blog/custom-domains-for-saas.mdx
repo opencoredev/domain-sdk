@@ -1,0 +1,237 @@
+---
+title: "Custom domains for SaaS: how to let customers use their own domain"
+description: "How to offer customer custom domains in a SaaS app: the DNS records, ownership check, TLS certificate and Host routing, four ways to build it, and the TypeScript code."
+date: 2026-11-09
+---
+
+To let customers use their own domain in a SaaS app, five things have to happen for every hostname a customer brings, such as `app.customer.com`:
+
+1. **Claim.** The customer enters the hostname in your app, you normalize it, and you tie it to exactly one tenant.
+2. **DNS.** The customer adds a record at their DNS host that sends traffic to whatever serves your app: a `CNAME` for a subdomain, or an `A`, `ALIAS` or flattened `CNAME` for a root domain like `customer.com`.
+3. **Ownership.** Someone checks that the person who asked controls the domain, usually with a `TXT` record.
+4. **Certificate.** Something gets a TLS certificate for that exact hostname and renews it.
+5. **Routing.** Your app reads the `Host` header on each request and serves that tenant.
+
+Removal runs the same list backwards. The hard parts are the certificate and the edge that terminates TLS for thousands of hostnames you don't control. There are four common ways to get that edge: your hosting platform's domain API, Cloudflare for SaaS, a hosted custom-domain proxy, or your own proxy with on-demand TLS. This post compares them, then builds the platform-API route in TypeScript with [Domain SDK](/docs).
+
+## The four ways to build it
+
+The difference between them is who runs the edge that holds the certificates. Your code does the claim, the routing and your own ownership check in every case.
+
+| Approach                                                                    | Who issues certificates                              | Traffic path                                  | What you pay (checked 2026-11-09)                                                                                     | Best when                                                       |
+| --------------------------------------------------------------------------- | ---------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| Hosting platform's domain API (Vercel, Render, Railway, Netlify, bunny.net) | The platform                                         | Customer → platform → your app                | Part of your hosting plan, within the plan's domain limits                                                            | Your app already runs on that platform                          |
+| Cloudflare for SaaS                                                         | Cloudflare                                           | Customer → Cloudflare → your origin, anywhere | 100 hostnames included, then $0.10 each a month, up to 50,000 on self-serve plans                                     | You want Cloudflare's edge in front of any origin               |
+| Hosted custom-domain proxy (Approximated, SaaS Custom Domains)              | The proxy service                                    | Customer → proxy → your app, anywhere         | Approximated: $0.25 a domain a month, $50 minimum. SaaS Custom Domains: $29 a month for 100 domains, $0.29 each after | You want no edge code at all, or your host has no domain API    |
+| Your own proxy with on-demand TLS (for example Caddy)                       | Your proxy, through an ACME CA such as Let's Encrypt | Customer → your proxy → your app              | Your servers and your time                                                                                            | You need full control and can run, scale and monitor a TLS edge |
+
+Prices come from each vendor's own page: [Cloudflare for SaaS plans](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/plans/) (last updated 2026-08-14), [Approximated pricing](https://approximated.app/pricing/) (reviewed 2026-08-05) and [SaaS Custom Domains pricing](https://saascustomdomains.com/pricing), all read on 2026-11-09. Volume discounts and self-hosted plans are on those pages.
+
+### Hosting platform's domain API
+
+If your app runs on Vercel, Render, Railway, Netlify or a bunny.net pull zone, the platform already terminates TLS for you. Each one has an API to attach a customer's hostname to your project or service, tell you which DNS records the customer needs, and issue the certificate once DNS resolves. There's no extra hop and usually no extra bill, only plan limits on how many domains a project or service can hold.
+
+The catch is that every platform's API is different. Vercel wants a `TXT` record at `_vercel.<apex>` only when another account already uses the domain, Railway always wants a `_railway-verify` `TXT` next to the `CNAME`, Netlify adds hostnames as site aliases, and the status fields don't line up. This is the route Domain SDK covers: one `add`, `refresh`, `verify`, `remove` and `waitUntilActive` API over all of them, with normalized records and statuses. The [providers overview](/docs/providers) lists each adapter.
+
+### Cloudflare for SaaS
+
+[Cloudflare for SaaS](/blog/cloudflare-for-saas) puts Cloudflare's edge in front of an origin that can run anywhere. You set a fallback origin and a `CNAME` target such as `customers.yourapp.com` once, then create a custom hostname per customer through the API. The customer points a `CNAME` at your target, and Cloudflare validates the hostname and issues its certificate. You get Cloudflare's CDN and WAF for customer traffic, and you pay per hostname past the first 100. Wildcard custom hostnames and apex proxying are Enterprise features. Domain SDK has a `cloudflareSaaS` adapter for the custom hostnames API.
+
+### Hosted custom-domain proxy
+
+Approximated, SaaS Custom Domains and similar services run the TLS edge as a product. You create a domain through their API, the customer points DNS at their servers, and they proxy requests to your app with the original hostname attached. They work in front of any host, including ones with no domain API, and they handle certificates, renewals and the edge for you. Their own guides cover setup well. The trade-offs are a per-domain monthly cost, one more company in your request path, and moving off them later means asking every customer to change DNS. Domain SDK has no adapter for them; use their APIs directly.
+
+### Your own proxy with on-demand TLS
+
+[Caddy's on-demand TLS](https://caddyserver.com/docs/automatic-https#on-demand-tls) gets a certificate during the first TLS handshake for a hostname it hasn't seen, so you never list customer domains in its config. You must restrict it: Caddy calls your `ask` endpoint with `?domain=<hostname>` and only issues a certificate when the endpoint returns a 2xx status ([global options](https://caddyserver.com/docs/caddyfile/options), read 2026-11-09). That endpoint should answer from your database of verified hostnames. Point it at anything looser and anyone can make your server request certificates for names you don't serve, which runs into your CA's rate limits.
+
+This is the most control and the most work: you run the servers, store certificates where every instance can reach them, scale them, and get paged when they break. It's the usual answer to "what's an open-source alternative to Approximated?". Domain SDK is a library, not a proxy, and doesn't replace Caddy here, though your `ask` endpoint can sit next to the same claim and ownership tables the rest of this post builds.
+
+## Build it with your platform's domain API
+
+The rest of this post builds the claim, DNS, certificate and removal steps with Domain SDK on Vercel. Swapping `vercel` for `render`, `railway`, `netlify`, `bunny` or `cloudflareSaaS` changes only the client setup.
+
+### 1. Create the client on the server
+
+The client holds a platform token, so it belongs in server code only:
+
+```ts title="server/domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+export const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+    teamId: process.env.VERCEL_TEAM_ID,
+  }),
+});
+```
+
+### 2. Claim the hostname and add it
+
+The endpoint behind your settings page authorizes the tenant, normalizes the hostname, refuses one that another tenant already holds, adds it to the platform and stores the result. It returns only the records the customer must create:
+
+```ts title="app/api/domains/route.ts"
+import { DomainSdkError, normalizeHostname } from "@opencoredev/domain-sdk";
+import { db } from "@/server/db";
+import { requireTenant } from "@/server/auth";
+import { domains } from "@/server/domains";
+
+export async function POST(request: Request) {
+  const tenant = await requireTenant(request);
+  const body = (await request.json()) as { hostname: string };
+
+  let hostname: string;
+  try {
+    // Lowercases and rejects protocols, paths, ports and empty labels.
+    hostname = normalizeHostname(body.hostname);
+  } catch {
+    return Response.json({ error: "Enter a hostname like app.example.com." }, { status: 400 });
+  }
+
+  const existing = await db.customDomains.findByHostname(hostname);
+  if (existing && existing.tenantId !== tenant.id) {
+    return Response.json(
+      { error: "This domain is connected to another account." },
+      { status: 409 },
+    );
+  }
+
+  try {
+    const domain = await domains.add(hostname);
+    await db.customDomains.upsert({
+      tenantId: tenant.id,
+      hostname: domain.hostname,
+      providerDomainId: domain.id,
+      status: domain.status,
+    });
+    return Response.json({
+      hostname: domain.hostname,
+      status: domain.status,
+      records: domain.records.filter((record) => record.required),
+    });
+  } catch (error) {
+    if (error instanceof DomainSdkError && error.code === "DOMAIN_CONFLICT") {
+      // The platform has this hostname on another project or account.
+      return Response.json({ error: error.message }, { status: 409 });
+    }
+    throw error;
+  }
+}
+```
+
+Each record has a `type`, `name`, `value` and a `purpose` (`routing`, `ownership` or `certificate`), so the settings page can group them and say why each one matters. [Display DNS records correctly](/docs/guides/display-dns-records) covers the UI, and [DNS records](/docs/concepts/dns-records) lists every field.
+
+### 3. Check until the domain is live
+
+DNS changes take minutes to hours, so check from a background job and from a "Check now" button rather than holding a request open. Platforms with a verify call (Vercel, Render and bunny.net) need it triggered; the others only report status:
+
+```ts title="server/check-domain.ts"
+import { db } from "@/server/db";
+import { domains } from "@/server/domains";
+
+export async function checkDomain(hostname: string) {
+  const domain = domains.capabilities.explicitVerification
+    ? await domains.verify(hostname)
+    : await domains.refresh(hostname);
+
+  await db.customDomains.updateStatus(hostname, domain.status);
+
+  return {
+    status: domain.status, // "pending_dns", "pending_verification", "pending_certificate", "active", ...
+    certificate: domain.certificate.status,
+    issues: domain.issues.map((issue) => issue.message),
+  };
+}
+```
+
+Route traffic only once `status` is `active`. For a short wait inside a job, `domains.waitUntilActive(hostname)` polls with backoff and throws a `TIMEOUT` error after 5 minutes by default. [Poll until a domain is active](/docs/guides/poll-until-active) has the options, and [Troubleshoot custom domain SSL certificates](/docs/guides/troubleshoot-certificates) covers domains that stay pending.
+
+### 4. Route requests by hostname
+
+Every customer hostname reaches the same deployment, so the app decides the tenant from the `Host` header. In Next.js 16 that happens in `proxy.ts` (the file Next.js 16 renamed from `middleware.ts`). Rewrite any hostname that isn't your own to an internal route, and let that route look the hostname up:
+
+```ts title="src/proxy.ts"
+import { NextResponse, type NextRequest } from "next/server";
+
+const APP_HOSTS = new Set(["yourapp.com", "www.yourapp.com", "localhost"]);
+
+export function proxy(request: NextRequest) {
+  const host = (request.headers.get("host") ?? "").toLowerCase().replace(/:\d+$/, "");
+  const url = request.nextUrl.clone();
+
+  if (APP_HOSTS.has(host)) {
+    // Keep the internal route unreachable from your own domain.
+    if (url.pathname === "/sites" || url.pathname.startsWith("/sites/"))
+      return new NextResponse(null, { status: 404 });
+    return NextResponse.next();
+  }
+
+  url.pathname = `/sites/${host}${url.pathname}`;
+  return NextResponse.rewrite(url);
+}
+
+export const config = {
+  matcher: ["/((?!api/|_next/|favicon.ico).*)"],
+};
+```
+
+Then `app/sites/[host]/[[...path]]/page.tsx` finds the tenant whose stored hostname matches and whose status is `active`, and calls `notFound()` when there is none. Never fall back to a default tenant. Read the `Host` header your platform passes through; only trust `X-Forwarded-Host` when you know your own proxy set it, because a client can send any value. If you serve tenants on subdomains of your own domain too, [Wildcard subdomains for multi-tenant apps](/blog/wildcard-subdomains) covers that side.
+
+### 5. Remove it when the customer leaves
+
+When a customer disconnects a domain or closes their account, remove it from the platform first, then from your database:
+
+```ts title="server/remove-domain.ts"
+import { db } from "@/server/db";
+import { domains } from "@/server/domains";
+
+export async function removeDomain(tenantId: string, hostname: string) {
+  const row = await db.customDomains.findByHostname(hostname);
+  if (!row || row.tenantId !== tenantId) throw new Error("Not your domain.");
+
+  await domains.remove(hostname);
+  await db.customDomains.delete(hostname);
+}
+```
+
+Removing the hostname from the platform matters more than the database row: a hostname that stays attached to your project keeps serving whatever your app returns for it. Also ask the customer to delete their DNS records, because a record left pointing at a hosting platform after you detach the hostname is how abandoned-domain takeovers start. Don't hand the same hostname to another tenant until they pass your ownership check again. [Tenant authorization and domain security](/docs/guides/tenant-security) covers both.
+
+## Root domains and www
+
+A root domain like `customer.com` can't hold a `CNAME`, so each platform gives it an `A` record or asks for `ALIAS`, `ANAME` or CNAME flattening at the customer's DNS host. Many customers want both `customer.com` and `www.customer.com`, which are two hostnames to add, and one should redirect to the other. Check `domains.capabilities.apexDomains` before you offer root domains. [Apex domains](/blog/apex-domain) has the per-platform records.
+
+## Verify ownership yourself too
+
+The platform's check proves someone who controls the domain wants it on **your account**. It doesn't prove which of **your tenants** asked. If tenant A adds `shop.bigco.com`, which already points at your app for tenant B, the platform has no reason to object. Issue your own `TXT` token per tenant and hostname before you attach it, and re-check it before reassigning a hostname. [Domain verification with TXT records](/blog/domain-verification) has the full flow and a `node:dns` sample.
+
+## Common questions
+
+### How do I let customers use their own custom domain in my SaaS app?
+
+Let the customer enter a hostname, tie it to one tenant, and attach it to whatever serves your app: your hosting platform's domain API, Cloudflare for SaaS, a hosted proxy, or your own proxy. Show the customer the DNS records that service returns, check until the domain is active and has a certificate, then route requests to the tenant by the `Host` header.
+
+### Should customers use a CNAME or an A record?
+
+A subdomain like `app.customer.com` should use a `CNAME` to the target your platform or proxy gives you, because the target's IP addresses can change without the customer doing anything. A root domain like `customer.com` can't hold a `CNAME`, so it needs an `A` record, or an `ALIAS`, `ANAME` or flattened `CNAME` if the customer's DNS host supports one.
+
+### How do SSL certificates work for customer domains?
+
+The service at the edge issues a certificate for each hostname once its DNS points there, usually from Let's Encrypt or another ACME CA, and renews it automatically. On Vercel, Render, Railway, Netlify and bunny.net that's the platform; with Cloudflare for SaaS it's Cloudflare; with a hosted proxy it's the proxy; with your own proxy it's your server. Your app has to wait until the certificate is ready before sending traffic.
+
+### How much do custom domains for SaaS cost?
+
+On a hosting platform's domain API they're usually part of your plan, within its domain limits. As of 2026-11-09, Cloudflare for SaaS includes 100 hostnames and charges $0.10 a month for each one after, Approximated charges $0.25 a domain a month with a $50 monthly minimum, and SaaS Custom Domains charges $29 a month for the first 100 domains and $0.29 for each one after. Running your own proxy costs servers and engineering time.
+
+### Is there an open-source alternative to Approximated or SaaS Custom Domains?
+
+If you want to run the TLS proxy yourself, Caddy with on-demand TLS is the common open-source choice. If your app runs on Vercel, Render, Railway, Netlify, bunny.net or behind Cloudflare for SaaS, you may not need a proxy at all: Domain SDK is an MIT-licensed TypeScript library that drives those platforms' own domain APIs.
+
+## Next steps
+
+- [Installation](/docs/installation): install Domain SDK and create your first client.
+- [Build a custom-domain settings page](/docs/guides/custom-domain-settings-page): the authenticated endpoint and the database model.
+- [Domain lifecycle](/docs/concepts/domain-lifecycle): how a domain moves from add to active to removed.
+- [Cloudflare for SaaS](/blog/cloudflare-for-saas): custom hostnames, validation methods and pricing.
+- [Domain verification with TXT records](/blog/domain-verification): your own tenant-level ownership check.
