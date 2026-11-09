@@ -70,7 +70,7 @@ export const domains = createDomainClient({
 
 ### 2. Claim the hostname, verify it, then add it
 
-The endpoint behind your settings page does four things in order. It authorizes the tenant and normalizes the hostname. It claims the hostname for that tenant in one atomic insert, so two tenants racing for the same name can't both win. It checks the tenant's own `TXT` token, because the platform's check alone doesn't prove which tenant controls the domain (see [Verify ownership yourself too](#verify-ownership-yourself-too)). Only then does it add the hostname to the platform and return the records the customer must create:
+The endpoint behind your settings page does four things in order. It authorizes the tenant and normalizes the hostname. It refuses a hostname another tenant has already verified. It checks this tenant's own `TXT` token, because the platform's check alone doesn't prove which tenant controls the domain (see [Verify ownership yourself too](#verify-ownership-yourself-too)), and marks the hostname verified in one atomic write, so two tenants racing for the same name can't both win. Pending challenges are per tenant, so a tenant who never proves ownership can't block the real owner. Only then does it add the hostname to the platform and return the records the customer must create:
 
 ```ts title="app/api/domains/route.ts"
 import { DomainSdkError, normalizeHostname } from "@opencoredev/domain-sdk";
@@ -95,33 +95,39 @@ export async function POST(request: Request) {
     return Response.json({ error: "Enter a hostname like app.example.com." }, { status: 400 });
   }
 
-  // One INSERT ... ON CONFLICT (hostname) DO NOTHING under a unique index, then a read.
-  // It returns whichever row owns the hostname and never changes an existing row's tenant.
-  const claim = await db.customDomains.claim({
-    tenantId: tenant.id,
-    hostname,
-    verificationToken: createVerificationToken(),
-  });
-  if (claim.tenantId !== tenant.id) {
+  // A verified hostname belongs to exactly one tenant.
+  const owner = await db.customDomains.findVerifiedOwner(hostname);
+  if (owner && owner !== tenant.id) {
     return Response.json(
       { error: "This domain is connected to another account." },
       { status: 409 },
     );
   }
 
-  if (!claim.verifiedAt) {
-    if (!(await hasVerificationToken(hostname, claim.verificationToken))) {
+  if (!owner) {
+    // One pending challenge per tenant and hostname. Several tenants can hold one,
+    // so an unverified claim never blocks the real owner.
+    const challenge = await db.customDomains.getOrCreateChallenge(tenant.id, hostname, () =>
+      createVerificationToken(),
+    );
+    if (!(await hasVerificationToken(hostname, challenge.token))) {
       // Not proven yet: show the TXT record and let the customer retry.
       return Response.json(
         {
           hostname,
           status: "pending_ownership",
-          records: [{ type: "TXT", name: challengeName(hostname), value: claim.verificationToken }],
+          records: [{ type: "TXT", name: challengeName(hostname), value: challenge.token }],
         },
         { status: 202 },
       );
     }
-    await db.customDomains.markVerified(hostname, tenant.id);
+    // Atomic under a unique index on verified hostnames: false if another tenant won the race.
+    if (!(await db.customDomains.markVerified(tenant.id, hostname))) {
+      return Response.json(
+        { error: "This domain is connected to another account." },
+        { status: 409 },
+      );
+    }
   }
 
   try {
@@ -214,8 +220,8 @@ import { db } from "@/server/db";
 import { domains } from "@/server/domains";
 
 export async function removeDomain(tenantId: string, hostname: string) {
-  const row = await db.customDomains.findByHostname(hostname);
-  if (!row || row.tenantId !== tenantId) throw new Error("Not your domain.");
+  const owner = await db.customDomains.findVerifiedOwner(hostname);
+  if (owner !== tenantId) throw new Error("Not your domain.");
 
   await domains.remove(hostname);
   await db.customDomains.delete(hostname);
