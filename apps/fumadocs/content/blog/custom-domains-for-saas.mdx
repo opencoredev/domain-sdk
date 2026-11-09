@@ -39,7 +39,7 @@ The catch is that every platform's API is different. Vercel wants a `TXT` record
 
 ### Hosted custom-domain proxy
 
-Approximated, SaaS Custom Domains and similar services run the TLS edge as a product. You create a domain through their API, the customer points DNS at their servers, and they proxy requests to your app with the original hostname attached. They work in front of any host, including ones with no domain API, and they handle certificates, renewals and the edge for you. Their own guides cover setup well. The trade-offs are a per-domain monthly cost, one more company in your request path, and moving off them later means asking every customer to change DNS. Domain SDK has no adapter for them; use their APIs directly.
+Approximated, SaaS Custom Domains and similar services run the TLS edge as a product. You create a domain through their API, the customer points DNS at their servers, and they proxy requests to your app with the original hostname attached. They work in front of any host, including ones with no domain API, and they handle certificates, renewals and the edge for you. Their own guides cover setup well. The trade-offs are a per-domain monthly cost and one more company in your request path. Plan the exit up front: if customers point their `CNAME` at a hostname you control, such as `domains.yourapp.com`, which in turn points at the proxy (Approximated documents this setup), you can move later without asking anyone to change DNS. Customers pointed straight at the vendor's addresses would have to. Domain SDK has no adapter for them; use their APIs directly.
 
 ### Your own proxy with on-demand TLS
 
@@ -68,15 +68,20 @@ export const domains = createDomainClient({
 });
 ```
 
-### 2. Claim the hostname and add it
+### 2. Claim the hostname, verify it, then add it
 
-The endpoint behind your settings page authorizes the tenant, normalizes the hostname, refuses one that another tenant already holds, adds it to the platform and stores the result. It returns only the records the customer must create:
+The endpoint behind your settings page does four things in order. It authorizes the tenant and normalizes the hostname. It claims the hostname for that tenant in one atomic insert, so two tenants racing for the same name can't both win. It checks the tenant's own `TXT` token, because the platform's check alone doesn't prove which tenant controls the domain (see [Verify ownership yourself too](#verify-ownership-yourself-too)). Only then does it add the hostname to the platform and return the records the customer must create:
 
 ```ts title="app/api/domains/route.ts"
 import { DomainSdkError, normalizeHostname } from "@opencoredev/domain-sdk";
 import { db } from "@/server/db";
 import { requireTenant } from "@/server/auth";
 import { domains } from "@/server/domains";
+import {
+  challengeName,
+  createVerificationToken,
+  hasVerificationToken,
+} from "@/lib/domain-verification";
 
 export async function POST(request: Request) {
   const tenant = await requireTenant(request);
@@ -90,19 +95,38 @@ export async function POST(request: Request) {
     return Response.json({ error: "Enter a hostname like app.example.com." }, { status: 400 });
   }
 
-  const existing = await db.customDomains.findByHostname(hostname);
-  if (existing && existing.tenantId !== tenant.id) {
+  // One INSERT ... ON CONFLICT (hostname) DO NOTHING under a unique index, then a read.
+  // It returns whichever row owns the hostname and never changes an existing row's tenant.
+  const claim = await db.customDomains.claim({
+    tenantId: tenant.id,
+    hostname,
+    verificationToken: createVerificationToken(),
+  });
+  if (claim.tenantId !== tenant.id) {
     return Response.json(
       { error: "This domain is connected to another account." },
       { status: 409 },
     );
   }
 
+  if (!claim.verifiedAt) {
+    if (!(await hasVerificationToken(hostname, claim.verificationToken))) {
+      // Not proven yet: show the TXT record and let the customer retry.
+      return Response.json(
+        {
+          hostname,
+          status: "pending_ownership",
+          records: [{ type: "TXT", name: challengeName(hostname), value: claim.verificationToken }],
+        },
+        { status: 202 },
+      );
+    }
+    await db.customDomains.markVerified(hostname, tenant.id);
+  }
+
   try {
     const domain = await domains.add(hostname);
-    await db.customDomains.upsert({
-      tenantId: tenant.id,
-      hostname: domain.hostname,
+    await db.customDomains.updateProvider(hostname, tenant.id, {
       providerDomainId: domain.id,
       status: domain.status,
     });
@@ -120,6 +144,8 @@ export async function POST(request: Request) {
   }
 }
 ```
+
+The three helpers from `@/lib/domain-verification` are the ones in [Domain verification with TXT records](/blog/domain-verification#the-txt-verification-flow): a random token, a prefixed record name, and a lookup through public resolvers. The customer calls this endpoint twice: once to get the `TXT` record, and again after adding it.
 
 Each record has a `type`, `name`, `value` and a `purpose` (`routing`, `ownership` or `certificate`), so the settings page can group them and say why each one matters. [Display DNS records correctly](/docs/guides/display-dns-records) covers the UI, and [DNS records](/docs/concepts/dns-records) lists every field.
 
@@ -204,7 +230,7 @@ A root domain like `customer.com` can't hold a `CNAME`, so each platform gives i
 
 ## Verify ownership yourself too
 
-The platform's check proves someone who controls the domain wants it on **your account**. It doesn't prove which of **your tenants** asked. If tenant A adds `shop.bigco.com`, which already points at your app for tenant B, the platform has no reason to object. Issue your own `TXT` token per tenant and hostname before you attach it, and re-check it before reassigning a hostname. [Domain verification with TXT records](/blog/domain-verification) has the full flow and a `node:dns` sample.
+The platform's check proves someone who controls the domain wants it on **your account**. It doesn't prove which of **your tenants** asked. If tenant A adds `shop.bigco.com`, which already points at your app for tenant B, the platform has no reason to object. That's why step 2 checks your own `TXT` token per tenant and hostname before it attaches anything, and you should re-check it before reassigning a hostname. [Domain verification with TXT records](/blog/domain-verification) has the full flow and a `node:dns` sample.
 
 ## Common questions
 
