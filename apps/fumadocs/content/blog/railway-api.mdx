@@ -209,7 +209,7 @@ The statuses mean:
 
 `currentValue` is what Railway sees in DNS right now. Showing it next to `requiredValue` is the fastest way for a customer to spot a typo.
 
-Railway issues a Let's Encrypt certificate (ECDSA, 90 days, renewed when 30 days remain) once DNS is right, usually within an hour. DNS changes themselves can take up to 72 hours to propagate worldwide. So don't poll in a tight loop. Check every 30 to 60 seconds while the customer is on the setup page, then back off to every few minutes. A domain behind Cloudflare's proxy (orange cloud) may never get its own Railway certificate. Cloudflare-to-Railway traffic is still encrypted with the default `*.up.railway.app` certificate, but `certificateStatus` may not reach `ISSUED`. If you need Railway's certificate, ask those customers to set the record to DNS only (grey cloud).
+Railway issues a Let's Encrypt certificate (ECDSA, 90 days, renewed when 30 days remain) once DNS is right, usually within an hour. DNS changes themselves can take up to 72 hours to propagate worldwide. So don't poll in a tight loop. Check every 30 to 60 seconds while the customer is on the setup page, then back off to every few minutes. A domain behind Cloudflare's proxy (orange cloud) may never get its own Railway certificate, so `certificateStatus` may not reach `ISSUED`. Cloudflare-to-Railway traffic is still encrypted with the default `*.up.railway.app` certificate, but only if the customer sets Cloudflare's SSL/TLS mode to **Full**; Railway warns that Full (Strict) won't work as intended. If you need Railway's certificate, ask those customers to set the record to DNS only (grey cloud).
 
 ## Rate limits
 
@@ -318,7 +318,7 @@ As of 2026-11-10, 100 requests per hour on the Free plan, 1,000 per hour and 10 
 
 ### Why does my Railway custom domain return a 404?
 
-Usually the TXT verification record is missing. Railway won't route traffic to a custom domain until both the CNAME and the TXT record are in place and verified, so a domain whose CNAME resolves can still return a 404. Check the TXT record's name and value against the dashboard or `status.verificationToken`.
+A missing TXT verification record is a common cause. Railway won't route traffic to a custom domain until both the CNAME and the TXT record are in place and verified, so a domain whose CNAME resolves can still return a 404. Check the TXT record's name and value against the dashboard or `status.verificationToken`.
 
 ## Next steps
 
