@@ -13,6 +13,7 @@ import {
 
 export interface RailwayOptions {
   token: string;
+  tokenType?: "bearer" | "project";
   projectId: string;
   environmentId: string;
   serviceId: string;
@@ -60,6 +61,17 @@ export function railway(options: RailwayOptions): RailwayProvider {
       "railway targetPort must be between 1 and 65535.",
       { provider: "railway" },
     );
+  const tokenType = options.tokenType === undefined ? "bearer" : options.tokenType;
+  if (tokenType !== "bearer" && tokenType !== "project")
+    throw new DomainSdkError(
+      "INVALID_CONFIGURATION",
+      'railway tokenType must be "bearer" or "project".',
+      { provider: "railway" },
+    );
+  const authHeader: Record<string, string> =
+    tokenType === "project"
+      ? { "project-access-token": token }
+      : { authorization: `Bearer ${token}` };
   const doFetch = options.fetch ?? globalThis.fetch;
   if (!doFetch)
     throw new DomainSdkError("INVALID_CONFIGURATION", "railway requires a fetch implementation.", {
@@ -75,7 +87,7 @@ export function railway(options: RailwayOptions): RailwayProvider {
       response = await doFetch("https://backboard.railway.com/graphql/v2", {
         method: "POST",
         signal: context.signal,
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        headers: { ...authHeader, "content-type": "application/json" },
         body: JSON.stringify({ query, variables }),
       });
     } catch (error) {

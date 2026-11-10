@@ -292,7 +292,7 @@ console.log(current.status, current.certificate.status);
 
 A few things to know about the adapter in version 0.3:
 
-- It authenticates with `Authorization: Bearer`, so pass a workspace or account token. Project tokens, which need the `Project-Access-Token` header, aren't supported yet.
+- It sends `Authorization: Bearer` by default, which fits workspace and account tokens. For a project token, pass `tokenType: "project"` and it sends the `Project-Access-Token` header instead.
 - The domain only becomes `active` when every routing record is valid and the certificate is `ISSUED`. Railway keeps returning the verification token after setup, so the issued certificate is what proves verification finished.
 - Railway has no explicit verify mutation in the public API, so `capabilities.explicitVerification` is `false`. Call `refresh()`, or `waitUntilActive()` with an interval that fits your rate limit.
 - Wildcard domains are disabled in the adapter for now, though Railway itself supports them (with two CNAMEs and a TXT record).

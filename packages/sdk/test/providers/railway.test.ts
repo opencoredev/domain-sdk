@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createDomainClient } from "../../src";
-import { railway } from "../../src/providers/railway";
+import { railway, type RailwayOptions } from "../../src/providers/railway";
 import { json, mockFetch } from "../helpers/fetch";
 
 const summary = {
@@ -134,5 +134,61 @@ describe("Railway adapter", () => {
     expect(() =>
       railway({ token: "token", projectId: "", environmentId: "env", serviceId: "svc" }),
     ).toThrow();
+  });
+
+  describe("token types", () => {
+    const base = {
+      token: "secret-token",
+      projectId: "project",
+      environmentId: "environment",
+      serviceId: "service",
+    };
+    const listHeaders = async (tokenType?: RailwayOptions["tokenType"]) => {
+      const mock = mockFetch(async () => json({ data: { domains: { customDomains: [details] } } }));
+      const provider = railway(
+        tokenType === undefined
+          ? { ...base, fetch: mock.fetch }
+          : { ...base, tokenType, fetch: mock.fetch },
+      );
+      await provider.list!({ limit: 10 }, { logger: {} });
+      return new Headers(mock.calls[0]?.init?.headers);
+    };
+
+    test("sends a Bearer authorization header by default", async () => {
+      const headers = await listHeaders();
+      expect(headers.get("authorization")).toBe("Bearer secret-token");
+      expect(headers.has("project-access-token")).toBe(false);
+    });
+
+    test("sends a Bearer authorization header for tokenType bearer", async () => {
+      const headers = await listHeaders("bearer");
+      expect(headers.get("authorization")).toBe("Bearer secret-token");
+      expect(headers.has("project-access-token")).toBe(false);
+    });
+
+    test("sends Project-Access-Token and no authorization header on every request for tokenType project", async () => {
+      const mock = setup();
+      const client = createDomainClient({
+        provider: railway({ ...base, tokenType: "project", fetch: mock.fetch }),
+      });
+      await client.add("app.customer.com");
+      expect(mock.calls.length).toBeGreaterThan(1);
+      for (const call of mock.calls) {
+        const headers = new Headers(call.init?.headers);
+        expect(headers.get("project-access-token")).toBe("secret-token");
+        expect(headers.has("authorization")).toBe(false);
+        expect(headers.get("content-type")).toBe("application/json");
+      }
+    });
+
+    test("rejects an unknown tokenType at construction", () => {
+      let error: unknown;
+      try {
+        railway({ ...base, tokenType: "workspace" as unknown as RailwayOptions["tokenType"] });
+      } catch (caught) {
+        error = caught;
+      }
+      expect(error).toMatchObject({ code: "INVALID_CONFIGURATION", provider: "railway" });
+    });
   });
 });

@@ -10,7 +10,7 @@ The adapter below does the same through Railway's public GraphQL API, so your ap
 
 ## Scope and credentials
 
-The adapter checks availability, creates, retrieves, lists, and deletes Railway custom domains. It does not deploy services or edit customer DNS. Set `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, and `RAILWAY_SERVICE_ID`. Use a workspace token (or an account token for personal scripts): the adapter sends `Authorization: Bearer`, and Railway project tokens need the `Project-Access-Token` header instead, so they don't work with it yet.
+The adapter checks availability, creates, retrieves, lists, and deletes Railway custom domains. It does not deploy services or edit customer DNS. Set `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, and `RAILWAY_SERVICE_ID`. A project token is the narrowest choice, since it covers one environment in one project. Railway expects it in the `Project-Access-Token` header, so pass `tokenType: "project"`. Workspace and account tokens use the default `tokenType: "bearer"`, which sends `Authorization: Bearer`. Any other value throws `INVALID_CONFIGURATION`.
 
 ```ts title="domains.ts"
 import { createDomainClient } from "@opencoredev/domain-sdk";
@@ -19,6 +19,7 @@ import { railway } from "@opencoredev/domain-sdk/railway";
 export const domains = createDomainClient({
   provider: railway({
     token: process.env.RAILWAY_TOKEN!,
+    tokenType: "project",
     projectId: process.env.RAILWAY_PROJECT_ID!,
     environmentId: process.env.RAILWAY_ENVIRONMENT_ID!,
     serviceId: process.env.RAILWAY_SERVICE_ID!,
