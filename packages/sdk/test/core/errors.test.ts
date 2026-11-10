@@ -2,6 +2,16 @@ import { expect, test } from "bun:test";
 import { DomainSdkError } from "../../src";
 import { parseRetryAfter, redact } from "../../src/core/errors";
 
+test("redacts Railway project access token headers", () => {
+  expect(
+    redact({
+      headers: { "project-access-token": "secret-token", "content-type": "application/json" },
+    }),
+  ).toEqual({
+    headers: { "project-access-token": "[REDACTED]", "content-type": "application/json" },
+  });
+});
+
 test("redacts secrets recursively and bounds strings", () => {
   const safe = redact({
     apiToken: "secret",
