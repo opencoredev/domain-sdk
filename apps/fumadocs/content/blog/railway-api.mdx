@@ -248,7 +248,8 @@ export async function removeCustomDomain(hostname: string): Promise<void> {
       serviceId: process.env.RAILWAY_SERVICE_ID!,
     },
   );
-  const match = domains.customDomains.find((item) => item.domain === hostname);
+  const wanted = hostname.trim().toLowerCase().replace(/\.$/, "");
+  const match = domains.customDomains.find((item) => item.domain.toLowerCase() === wanted);
   if (!match) return;
   await railwayGraphql<{ customDomainDelete: boolean }>(
     `mutation ($id: String!) { customDomainDelete(id: $id) }`,
