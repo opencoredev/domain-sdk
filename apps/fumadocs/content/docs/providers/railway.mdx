@@ -10,7 +10,7 @@ The adapter below does the same through Railway's public GraphQL API, so your ap
 
 ## Scope and credentials
 
-The adapter checks availability, creates, retrieves, lists, and deletes Railway custom domains. It does not deploy services or edit customer DNS. Set `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, and `RAILWAY_SERVICE_ID`. Use a project/workspace token with access only to the target resources.
+The adapter checks availability, creates, retrieves, lists, and deletes Railway custom domains. It does not deploy services or edit customer DNS. Set `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, and `RAILWAY_SERVICE_ID`. Use a workspace token (or an account token for personal scripts): the adapter sends `Authorization: Bearer`, and Railway project tokens need the `Project-Access-Token` header instead, so they don't work with it yet.
 
 ```ts title="domains.ts"
 import { createDomainClient } from "@opencoredev/domain-sdk";
@@ -37,4 +37,4 @@ GraphQL errors are detected even with HTTP 200. Unavailable domains map to `DOMA
 
 Official references: [Public API](https://docs.railway.com/integrations/api), [manage domains](https://docs.railway.com/integrations/api/manage-domains), and [working with domains](https://docs.railway.com/networking/domains/working-with-domains).
 
-Read next: [Poll until active](../guides/poll-until-active.mdx).
+Read next: [Poll until active](../guides/poll-until-active.mdx). For the raw GraphQL calls, tokens and rate limits, see [the Railway API](/blog/railway-api) on the blog.
