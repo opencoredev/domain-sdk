@@ -1,0 +1,329 @@
+---
+title: "Railway API: add custom domains with GraphQL from TypeScript"
+description: "Use the Railway public GraphQL API to add a custom domain, read its DNS records and certificate status, and remove it from TypeScript, with tokens and rate limits."
+date: 2026-11-10
+---
+
+The **Railway API** is a GraphQL API at `https://backboard.railway.com/graphql/v2`. It's the same API the Railway dashboard uses, so anything you can click in the dashboard you can do in code. For custom domains, that means four calls:
+
+1. `customDomainAvailable` checks that a hostname can be added.
+2. `customDomainCreate` attaches it to a service and returns the DNS records the customer has to create.
+3. `customDomain` reads the record and certificate status until the domain is live.
+4. `customDomainDelete` removes it.
+
+This post shows each call with plain `fetch`, covers the token types, the error format and the rate limits you'll hit when you poll, and ends with the same flow in [Domain SDK](/docs)'s Railway adapter. Railway facts come from its [Public API](https://docs.railway.com/integrations/api), [Manage Domains](https://docs.railway.com/integrations/api/manage-domains) and [Working with Domains](https://docs.railway.com/networking/domains/working-with-domains) docs, checked 2026-11-10.
+
+If you only need to add one domain by hand, use the dashboard: open the service, go to **Settings → Public Networking → + Custom Domain**, and copy the two records it shows. The API is for apps that add domains for their customers, or for scripts that do it repeatedly. For the dashboard steps and plan limits, see the [Railway custom domains](/docs/providers/railway) docs page.
+
+## Pick a token
+
+Railway has three kinds of API token, plus OAuth for apps that act on behalf of Railway users. They differ in scope and, for project tokens, in the header you send.
+
+| Token           | Scope                               | Header                          | Use it for                              |
+| --------------- | ----------------------------------- | ------------------------------- | --------------------------------------- |
+| Account token   | Everything your account can reach   | `Authorization: Bearer <token>` | Personal scripts, local development     |
+| Workspace token | One workspace and all its resources | `Authorization: Bearer <token>` | A SaaS backend, team CI/CD              |
+| Project token   | One environment in one project      | `Project-Access-Token: <token>` | Deploys and service-specific automation |
+
+Create account and workspace tokens on the [tokens page](https://railway.com/account/tokens): choose "No workspace" for an account token, or pick a workspace. Create project tokens in the project's settings. A SaaS backend that adds customer domains to one service should use the narrowest token that works. A project token is the narrowest, but note the different header.
+
+You also need three IDs: the project, the environment and the service that should answer on the customer's domain. In the Railway dashboard, press `Cmd/Ctrl + K` inside the project to copy them.
+
+## A small GraphQL client
+
+Railway follows GraphQL error conventions, so a failed request often comes back as **HTTP 200 with an `errors` array**. Authorization failures do this too: the message is `Not Authorized` and `extensions.code` is `INTERNAL_SERVER_ERROR`. Malformed queries and bad variables return HTTP 400, and going over the rate limit returns HTTP 429 with a `Retry-After` header. A client that only checks `response.ok` will treat a denied request as a success, so check both.
+
+```ts title="railway.ts"
+const RAILWAY_API = "https://backboard.railway.com/graphql/v2";
+
+type GraphqlError = { message: string; extensions?: { code?: string; traceId?: string } };
+
+export class RailwayApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly errors: GraphqlError[] = [],
+    readonly retryAfter?: string,
+  ) {
+    super(message);
+  }
+}
+
+function authHeaders(): Record<string, string> {
+  const projectToken = process.env.RAILWAY_PROJECT_TOKEN;
+  if (projectToken) return { "Project-Access-Token": projectToken };
+  return { Authorization: `Bearer ${process.env.RAILWAY_TOKEN}` };
+}
+
+export async function railwayGraphql<T>(
+  query: string,
+  variables: Record<string, unknown>,
+): Promise<T> {
+  const response = await fetch(RAILWAY_API, {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (response.status === 429)
+    throw new RailwayApiError(
+      "Railway rate limit reached",
+      429,
+      [],
+      response.headers.get("retry-after") ?? undefined,
+    );
+  const body = (await response.json().catch(() => ({}))) as {
+    data?: T | null;
+    errors?: GraphqlError[];
+  };
+  if (!response.ok || body.errors?.length || !body.data) {
+    const message = body.errors?.map((error) => error.message).join("; ") || response.statusText;
+    throw new RailwayApiError(`Railway API: ${message}`, response.status, body.errors);
+  }
+  return body.data;
+}
+```
+
+Keep the `traceId` from `extensions` in your logs. Railway support asks for it when you report a failed request.
+
+## Add a custom domain
+
+Check availability first. `customDomainAvailable` returns `available: false` and a `message` when the hostname can't be added, which is a better error to show a customer than a failed mutation.
+
+```ts title="add-domain.ts"
+import { railwayGraphql } from "./railway";
+
+const ids = {
+  projectId: process.env.RAILWAY_PROJECT_ID!,
+  environmentId: process.env.RAILWAY_ENVIRONMENT_ID!,
+  serviceId: process.env.RAILWAY_SERVICE_ID!,
+};
+
+type DnsRecord = {
+  hostlabel: string;
+  requiredValue: string;
+  currentValue: string | null;
+  status: "PENDING" | "VALID" | "INVALID";
+};
+
+export type RailwayCustomDomain = {
+  id: string;
+  domain: string;
+  status: {
+    verificationToken: string | null;
+    dnsRecords: DnsRecord[];
+    certificateStatus: "PENDING" | "ISSUED" | "FAILED" | null;
+  };
+};
+
+const DOMAIN_FIELDS = `
+  id
+  domain
+  status {
+    verificationToken
+    dnsRecords { hostlabel requiredValue currentValue status }
+    certificateStatus
+  }`;
+
+export async function addCustomDomain(hostname: string): Promise<RailwayCustomDomain> {
+  const { customDomainAvailable } = await railwayGraphql<{
+    customDomainAvailable: { available: boolean; message: string | null };
+  }>(`query ($domain: String!) { customDomainAvailable(domain: $domain) { available message } }`, {
+    domain: hostname,
+  });
+  if (!customDomainAvailable.available)
+    throw new Error(customDomainAvailable.message ?? `${hostname} can't be added on Railway`);
+
+  const { customDomainCreate } = await railwayGraphql<{
+    customDomainCreate: RailwayCustomDomain;
+  }>(
+    `mutation ($input: CustomDomainCreateInput!) {
+      customDomainCreate(input: $input) { ${DOMAIN_FIELDS} }
+    }`,
+    { input: { ...ids, domain: hostname } },
+  );
+  return customDomainCreate;
+}
+```
+
+`CustomDomainCreateInput` also takes an optional `targetPort` if the service listens on more than one port. Store the returned `id`: every later call uses it.
+
+Don't blindly retry `customDomainCreate`. Railway's guidance is to retry a mutation only after a network error or a 429 or 5xx where you got no response. If you got a 200, the mutation ran. Before retrying an add, list the service's domains (the `domains` query below) and look for the hostname.
+
+## Show the customer the right records
+
+A Railway custom domain needs two records, and the response has both:
+
+- **Routing.** `status.dnsRecords` holds the record that points the hostname at the service, with `requiredValue` set to a target like `abc123.up.railway.app`. For a subdomain such as `app.customer.com`, that's a `CNAME`.
+- **Ownership.** `status.verificationToken` is the value of a `TXT` record. It's returned separately from `dnsRecords`, so query it explicitly. Domain SDK's adapter writes it at `_railway-verify.<hostname>`; the dashboard shows the exact name for each domain.
+
+Both are required. Railway's docs are blunt about the TXT record: without it, requests to the custom domain return a 404 even after the CNAME resolves, because Railway confirms ownership before it routes traffic. Show both records on the first screen, not the CNAME first and the TXT later.
+
+Root domains like `customer.com` are different. Railway doesn't publish a static IP address, so `A` records aren't supported. The customer's DNS host needs CNAME flattening, `ALIAS` or `ANAME` support pointing at the same target. Cloudflare flattens CNAMEs at the apex on every plan; for other hosts, see [apex domains](/blog/apex-domain).
+
+## Wait for DNS and the certificate
+
+Read the domain by ID and check two things: every routing record is `VALID`, and `certificateStatus` is `ISSUED`.
+
+```ts title="domain-status.ts"
+import { railwayGraphql } from "./railway";
+import type { RailwayCustomDomain } from "./add-domain";
+
+export async function getCustomDomain(id: string): Promise<RailwayCustomDomain> {
+  const { customDomain } = await railwayGraphql<{ customDomain: RailwayCustomDomain }>(
+    `query ($id: String!, $projectId: String!) {
+      customDomain(id: $id, projectId: $projectId) {
+        id
+        domain
+        status {
+          verificationToken
+          dnsRecords { hostlabel requiredValue currentValue status }
+          certificateStatus
+        }
+      }
+    }`,
+    { id, projectId: process.env.RAILWAY_PROJECT_ID! },
+  );
+  return customDomain;
+}
+
+export function isLive(domain: RailwayCustomDomain): boolean {
+  const records = domain.status.dnsRecords;
+  return (
+    records.length > 0 &&
+    records.every((record) => record.status === "VALID") &&
+    domain.status.certificateStatus === "ISSUED"
+  );
+}
+```
+
+The statuses mean:
+
+| Field                 | Value     | Meaning                                     |
+| --------------------- | --------- | ------------------------------------------- |
+| `dnsRecords[].status` | `PENDING` | The record isn't configured yet             |
+|                       | `VALID`   | The record is correct                       |
+|                       | `INVALID` | The record exists but points somewhere else |
+| `certificateStatus`   | `PENDING` | Railway is issuing the certificate          |
+|                       | `ISSUED`  | The certificate is active                   |
+|                       | `FAILED`  | Issuance failed                             |
+
+`currentValue` is what Railway sees in DNS right now. Showing it next to `requiredValue` is the fastest way for a customer to spot a typo.
+
+Railway issues a Let's Encrypt certificate (ECDSA, 90 days, renewed when 30 days remain) once DNS is right, usually within an hour. DNS changes themselves can take up to 72 hours to propagate worldwide. So don't poll in a tight loop. Check every 30 to 60 seconds while the customer is on the setup page, then back off to every few minutes. A domain behind Cloudflare's proxy (orange cloud) may never get its own Railway certificate, so `certificateStatus` may not reach `ISSUED`. Cloudflare-to-Railway traffic is still encrypted with the default `*.up.railway.app` certificate, but only if the customer sets Cloudflare's SSL/TLS mode to **Full**; Railway warns that Full (Strict) won't work as intended. If you need Railway's certificate, ask those customers to set the record to DNS only (grey cloud).
+
+## Rate limits
+
+Polling eats into Railway's API limits, which depend on your plan:
+
+| Plan       | Requests per hour | Requests per second |
+| ---------- | ----------------- | ------------------- |
+| Free       | 100               | not listed          |
+| Hobby      | 1,000             | 10                  |
+| Pro        | 10,000            | 50                  |
+| Enterprise | Custom            | Custom              |
+
+At 100 requests an hour, a Free-plan backend polling one domain every 30 seconds uses more than its whole budget. Every response carries `X-RateLimit-Remaining` and `X-RateLimit-Reset`, so read them and slow down before you hit a 429. On a 429, wait for `Retry-After`, then back off exponentially.
+
+Plans also cap the domains themselves: Trial allows 1 custom domain, Hobby 2 per service, and Pro 20 per service by default, raised on request. `customer.com` and `www.customer.com` count as two.
+
+## List and remove domains
+
+The `domains` query returns a service's Railway-provided domains (`serviceDomains`) and custom domains (`customDomains`) for one environment:
+
+```ts title="remove-domain.ts"
+import { railwayGraphql } from "./railway";
+
+export async function removeCustomDomain(hostname: string): Promise<void> {
+  const { domains } = await railwayGraphql<{
+    domains: { customDomains: { id: string; domain: string }[] };
+  }>(
+    `query ($projectId: String!, $environmentId: String!, $serviceId: String!) {
+      domains(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId) {
+        customDomains { id domain }
+      }
+    }`,
+    {
+      projectId: process.env.RAILWAY_PROJECT_ID!,
+      environmentId: process.env.RAILWAY_ENVIRONMENT_ID!,
+      serviceId: process.env.RAILWAY_SERVICE_ID!,
+    },
+  );
+  const wanted = hostname.trim().toLowerCase().replace(/\.$/, "");
+  const match = domains.customDomains.find((item) => item.domain.toLowerCase() === wanted);
+  if (!match) return;
+  await railwayGraphql<{ customDomainDelete: boolean }>(
+    `mutation ($id: String!) { customDomainDelete(id: $id) }`,
+    { id: match.id },
+  );
+}
+```
+
+`customDomainUpdate(id, environmentId, targetPort)` changes the port a domain routes to without removing it. When a customer leaves, delete the domain on Railway and in your own database, and ask them to remove the CNAME and TXT records.
+
+## The same flow with Domain SDK
+
+[Domain SDK](/docs) wraps these calls behind one API for Railway, Vercel, Cloudflare for SaaS, Render, Netlify and bunny.net. Its Railway adapter runs the availability check before creating, finds an existing domain instead of adding it twice, detects GraphQL errors in 200 responses, and maps Railway's statuses onto one `status` field. The required records come back in `domain.records`, routing and ownership together.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { railway } from "@opencoredev/domain-sdk/railway";
+
+const domains = createDomainClient({
+  provider: railway({
+    token: process.env.RAILWAY_TOKEN!,
+    projectId: process.env.RAILWAY_PROJECT_ID!,
+    environmentId: process.env.RAILWAY_ENVIRONMENT_ID!,
+    serviceId: process.env.RAILWAY_SERVICE_ID!,
+  }),
+});
+
+const domain = await domains.add("app.customer.com");
+for (const record of domain.records) {
+  // CNAME app.customer.com -> abc123.up.railway.app (routing)
+  // TXT _railway-verify.app.customer.com -> <token> (ownership)
+  console.log(record.type, record.name, "->", record.value, `(${record.purpose})`);
+}
+
+// Later, from a status endpoint or a job:
+const current = await domains.refresh("app.customer.com");
+console.log(current.status, current.certificate.status);
+// pending_dns, misconfigured, pending_verification, failed or active
+```
+
+A few things to know about the adapter in version 0.3:
+
+- It authenticates with `Authorization: Bearer`, so pass a workspace or account token. Project tokens, which need the `Project-Access-Token` header, aren't supported yet.
+- The domain only becomes `active` when every routing record is valid and the certificate is `ISSUED`. Railway keeps returning the verification token after setup, so the issued certificate is what proves verification finished.
+- Railway has no explicit verify mutation in the public API, so `capabilities.explicitVerification` is `false`. Call `refresh()`, or `waitUntilActive()` with an interval that fits your rate limit.
+- Wildcard domains are disabled in the adapter for now, though Railway itself supports them (with two CNAMEs and a TXT record).
+
+If you also manage the customer's DNS zone, for example on Porkbun, Namecheap or Spaceship, the [DNS adapters](/docs/providers) can write `domain.records` into the zone for you.
+
+## Common questions
+
+### Does Railway have an API?
+
+Yes. Railway's public API is GraphQL at `https://backboard.railway.com/graphql/v2`, and it's the same API the dashboard uses. You authenticate with an account, workspace or project token, or an OAuth access token, and you can browse the schema in Railway's GraphiQL playground or by introspection.
+
+### How do I add a custom domain with the Railway API?
+
+Call `customDomainAvailable` with the hostname, then `customDomainCreate` with the project, environment and service IDs and the domain. The response's `status.dnsRecords` holds the CNAME target and `status.verificationToken` holds the TXT verification value. The customer creates both records, and you poll `customDomain` until the records are `VALID` and `certificateStatus` is `ISSUED`.
+
+### How are custom domains and SSL certificates handled by Railway?
+
+Railway routes a custom domain once its CNAME (or flattened root record) and its TXT ownership record are in place. It then issues a Let's Encrypt certificate automatically, usually within an hour, and renews it when 30 days of its 90-day validity remain. Railway doesn't accept certificates you upload yourself.
+
+### What are the Railway API rate limits?
+
+As of 2026-11-10, 100 requests per hour on the Free plan, 1,000 per hour and 10 per second on Hobby, and 10,000 per hour and 50 per second on Pro, with custom limits on Enterprise. Responses include `X-RateLimit-Remaining` and `X-RateLimit-Reset` headers, and a 429 includes `Retry-After`.
+
+### Why does my Railway custom domain return a 404?
+
+A missing TXT verification record is a common cause. Railway won't route traffic to a custom domain until both the CNAME and the TXT record are in place and verified, so a domain whose CNAME resolves can still return a 404. Check the TXT record's name and value against the dashboard or `status.verificationToken`.
+
+## Next steps
+
+- [Railway custom domains](/docs/providers/railway): the adapter's options, dashboard steps and plan limits.
+- [Custom domains for SaaS](/blog/custom-domains-for-saas): the whole flow, from DNS records to `Host` routing.
+- [Domain verification with TXT records](/blog/domain-verification): your own tenant-level ownership check on top of Railway's.
+- [Troubleshoot custom domain SSL certificates](/docs/guides/troubleshoot-certificates): what to check when a certificate stays pending.
