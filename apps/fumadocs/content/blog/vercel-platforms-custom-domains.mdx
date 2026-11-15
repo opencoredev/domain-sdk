@@ -1,0 +1,380 @@
+---
+title: "Vercel Platforms Starter Kit: add customer custom domains"
+description: "The Vercel Platforms Starter Kit only does subdomains. Add customer custom domains with the Vercel API: attach the hostname, show its DNS records, and route it in proxy.ts."
+date: 2026-11-15
+---
+
+The [Vercel Platforms Starter Kit](https://github.com/vercel/platforms) gives every tenant a subdomain of your domain, like `acme.yourapp.com`. It doesn't let a customer bring their own domain, like `app.acme.com`. To add that, you need four things the kit leaves out:
+
+1. A call to the Vercel API that attaches the customer's hostname to your project.
+2. A Redis entry that maps the hostname to a tenant.
+3. A screen that shows the DNS records the customer has to create, and checks them.
+4. A branch in `proxy.ts` that routes the hostname to the tenant once it's live.
+
+This post adds all four to the kit in five small files, using the Vercel adapter of [Domain SDK](/docs). The code was type-checked against the kit's `main` branch (last commit 2026-07-08) and run against a mocked Vercel API. Vercel facts come from its [Vercel for Platforms](https://vercel.com/docs/platforms/multi-tenant-platforms/concepts) and [limits](https://vercel.com/docs/platforms/multi-tenant-platforms/limits) docs, checked 2026-11-15.
+
+## What the starter kit does today
+
+The current kit is a Next.js 16 app with React 19, Tailwind 4 and Upstash Redis:
+
+| Part         | What the kit does                                                                          | What it leaves to you                                          |
+| ------------ | ------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
+| Tenant store | One Redis key per tenant, `subdomain:<name>`, holding an emoji and a timestamp             | Any mapping from a customer's own hostname to a tenant         |
+| Routing      | `proxy.ts` reads the subdomain from the `Host` header and rewrites `/` to `/s/<subdomain>` | Hostnames that aren't under your root domain                   |
+| Domains      | One wildcard, `*.yourapp.com`, set up by hand in the Vercel dashboard                      | Adding, checking and removing customer domains through the API |
+| Admin        | `/admin` lists and deletes tenants                                                         | Authentication: the dashboard code has a `TODO` for it         |
+| Previews     | Detects `tenant---branch.vercel.app` preview URLs                                          | Vercel only offers multi-tenant preview URLs on Enterprise     |
+
+The wildcard and a customer domain are different problems. Vercel issues one wildcard certificate for `*.yourapp.com` with a DNS challenge, which is why your root domain has to use Vercel's nameservers or [delegate certificate validation](https://vercel.com/docs/domains/working-with-domains/add-a-domain#use-wildcard-domains-with-an-external-dns-provider). A customer domain gets its own certificate through an HTTP challenge once the customer's DNS points at Vercel. You don't control that DNS, so your app has to tell the customer what to add and wait for it. [Wildcard subdomains for multi-tenant apps](/blog/wildcard-subdomains) covers the wildcard side in depth.
+
+## Vercel's limits for customer domains
+
+|                            | Hobby                            | Pro                           | Enterprise                              |
+| -------------------------- | -------------------------------- | ----------------------------- | --------------------------------------- |
+| Custom domains per project | 50                               | Unlimited, soft limit 100,000 | Unlimited, soft limit 1,000,000         |
+| Certificates               | Issued and renewed automatically | Same                          | Same, plus uploaded custom certificates |
+| Multi-tenant preview URLs  | No                               | No                            | Yes                                     |
+
+Vercel raises the soft limits on request. A domain that's already used by another Vercel account or project also needs a `TXT` record at `_vercel.<apex domain>` before Vercel will verify it. Every other domain only needs the routing record.
+
+## Add custom domains to the kit
+
+Install the SDK in your clone of the kit:
+
+```bash
+pnpm add @opencoredev/domain-sdk
+```
+
+Create a Vercel access token with access to the project, and add three environment variables next to the kit's Redis ones: `VERCEL_TOKEN`, `VERCEL_PROJECT_ID`, and `VERCEL_TEAM_ID` if the project belongs to a team.
+
+### 1. Create the domain client
+
+The token can add and remove domains on your project, so this file is only ever imported from server code:
+
+```ts title="lib/domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+// Server-only: the token can add and remove domains on your Vercel project.
+export const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+    teamId: process.env.VERCEL_TEAM_ID,
+  }),
+});
+```
+
+### 2. Map hostnames to tenants in Redis
+
+The kit keeps tenants under `subdomain:<name>`. Add two keys next to it: `customdomain:<hostname>` holds the tenant and the last status Vercel reported, and `tenantdomains:<name>` is a set of the tenant's hostnames, so you can clean up when a tenant is deleted. The claim uses `SET ... NX`, so two tenants racing for the same hostname can't both get it:
+
+```ts title="lib/custom-domains.ts"
+import type { DomainStatus } from "@opencoredev/domain-sdk";
+import { redis } from "@/lib/redis";
+
+export type CustomDomainData = {
+  subdomain: string;
+  status: DomainStatus;
+  createdAt: number;
+};
+
+const domainKey = (hostname: string) => `customdomain:${hostname}`;
+const tenantKey = (subdomain: string) => `tenantdomains:${subdomain}`;
+
+export function getCustomDomain(hostname: string) {
+  return redis.get<CustomDomainData>(domainKey(hostname));
+}
+
+/** The tenant for a custom hostname, but only once Vercel reports it active. */
+export async function getSubdomainForHost(hostname: string) {
+  const data = await getCustomDomain(hostname);
+  return data?.status === "active" ? data.subdomain : null;
+}
+
+/**
+ * Claims a hostname for one tenant: "new" for a fresh claim, "mine" if this
+ * tenant already holds it, "taken" if another tenant does.
+ */
+export async function claimCustomDomain(hostname: string, subdomain: string) {
+  const claimed = await redis.set<CustomDomainData>(
+    domainKey(hostname),
+    { subdomain, status: "pending", createdAt: Date.now() },
+    { nx: true },
+  );
+  if (claimed === null) {
+    const existing = await getCustomDomain(hostname);
+    return existing?.subdomain === subdomain ? "mine" : "taken";
+  }
+  await redis.sadd(tenantKey(subdomain), hostname);
+  return "new";
+}
+
+export async function setCustomDomainStatus(hostname: string, status: DomainStatus) {
+  const data = await getCustomDomain(hostname);
+  if (data) await redis.set(domainKey(hostname), { ...data, status });
+}
+
+export async function releaseCustomDomain(hostname: string, subdomain: string) {
+  await redis.del(domainKey(hostname));
+  await redis.srem(tenantKey(subdomain), hostname);
+}
+
+export function getTenantDomains(subdomain: string) {
+  return redis.smembers(tenantKey(subdomain));
+}
+```
+
+`getSubdomainForHost` only returns a tenant once the stored status is `active`. Until then the proxy treats the hostname as unknown.
+
+### 3. Add and check domains from the admin page
+
+Two server actions do the work. `addCustomDomainAction` normalizes the hostname, refuses your own domains and hostnames another tenant holds, attaches the hostname to the Vercel project, and returns the records the customer must create. `checkCustomDomainAction` asks Vercel for the current state and, when Vercel wants a `TXT` challenge, triggers verification:
+
+```ts title="app/domain-actions.ts"
+"use server";
+
+import { DomainSdkError, normalizeHostname } from "@opencoredev/domain-sdk";
+import { revalidatePath } from "next/cache";
+import {
+  claimCustomDomain,
+  getCustomDomain,
+  releaseCustomDomain,
+  setCustomDomainStatus,
+} from "@/lib/custom-domains";
+import { domains } from "@/lib/domains";
+import { getSubdomainData } from "@/lib/subdomains";
+import { rootDomain } from "@/lib/utils";
+
+type DnsRow = { type: string; name: string; value: string };
+
+type DomainState =
+  | { success: false; error?: string }
+  | { success: true; hostname: string; status: string; records: DnsRow[]; issues?: string[] };
+
+export async function addCustomDomainAction(
+  _prevState: DomainState,
+  formData: FormData,
+): Promise<DomainState> {
+  // Server actions are public endpoints. Check the admin session here first;
+  // the kit leaves admin auth as a TODO.
+  const subdomain = String(formData.get("subdomain") ?? "");
+  if (!(await getSubdomainData(subdomain))) {
+    return { success: false, error: "That tenant doesn't exist." };
+  }
+
+  let hostname: string;
+  try {
+    // Lowercases and rejects protocols, paths, ports and empty labels.
+    hostname = normalizeHostname(String(formData.get("hostname") ?? ""));
+  } catch {
+    return { success: false, error: "Enter a hostname like app.example.com." };
+  }
+
+  const root = rootDomain.split(":")[0];
+  if (hostname === root || hostname.endsWith(`.${root}`)) {
+    return { success: false, error: "Use a domain the customer owns, not one of yours." };
+  }
+
+  const claim = await claimCustomDomain(hostname, subdomain);
+  if (claim === "taken") {
+    return { success: false, error: "That domain belongs to another tenant." };
+  }
+
+  try {
+    const domain = await domains.add(hostname);
+    await setCustomDomainStatus(hostname, domain.status);
+    revalidatePath("/admin");
+    return {
+      success: true,
+      hostname,
+      status: domain.status,
+      // The records the customer must create at their DNS host.
+      records: domain.records
+        .filter((record) => record.required)
+        .map(({ type, name, value }) => ({ type, name, value })),
+    };
+  } catch (error) {
+    // Drop only a claim made by this request, never a domain that's already live.
+    if (claim === "new") await releaseCustomDomain(hostname, subdomain);
+    if (error instanceof DomainSdkError && error.code === "DOMAIN_CONFLICT") {
+      return { success: false, error: "That domain is on another Vercel project or account." };
+    }
+    throw error;
+  }
+}
+
+export async function checkCustomDomainAction(
+  _prevState: DomainState,
+  formData: FormData,
+): Promise<DomainState> {
+  // Same admin check as above.
+  const hostname = String(formData.get("hostname") ?? "");
+  if (!(await getCustomDomain(hostname))) {
+    return { success: false, error: "Unknown domain." };
+  }
+
+  let domain = await domains.refresh(hostname);
+  if (domain.status === "pending_verification") {
+    // Only domains already used elsewhere on Vercel need the TXT challenge.
+    try {
+      domain = await domains.verify(hostname);
+    } catch (error) {
+      if (!(error instanceof DomainSdkError)) throw error;
+    }
+  }
+
+  await setCustomDomainStatus(hostname, domain.status);
+  revalidatePath("/admin");
+  return {
+    success: true,
+    hostname,
+    status: domain.status,
+    records: domain.records
+      .filter((record) => record.required && record.status !== "valid")
+      .map(({ type, name, value }) => ({ type, name, value })),
+    issues: domain.issues.map((issue) => issue.message),
+  };
+}
+```
+
+Keep these in their own `"use server"` file. Every function exported from such a file becomes an endpoint anyone can call, which is also why each action needs the admin check the kit doesn't have yet. Wire them to a form on `/admin` with `useActionState`, the same way the kit's dashboard calls `deleteSubdomainAction`, and render `records` as a table the customer can copy from.
+
+### 4. Route custom hostnames in proxy.ts
+
+The kit's proxy only knows subdomains of your root domain. Add a lookup for every other hostname, and return a 404 for hostnames that aren't active, so a domain that points at your project before it's verified, or one that was never added, doesn't show your landing page:
+
+```ts title="proxy.ts"
+import { getSubdomainForHost } from "@/lib/custom-domains";
+
+// extractSubdomain() stays as it is.
+
+// Hosts that belong to the app itself and never map to a custom domain.
+function isAppHost(hostname: string) {
+  const root = rootDomain.split(":")[0];
+  return (
+    hostname === root ||
+    hostname.endsWith(`.${root}`) ||
+    hostname === "localhost" ||
+    hostname.endsWith(".localhost") ||
+    hostname === "127.0.0.1" ||
+    hostname.endsWith(".vercel.app")
+  );
+}
+
+export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  const hostname = (request.headers.get("host") || "").split(":")[0].toLowerCase();
+
+  let subdomain = extractSubdomain(request);
+  if (!subdomain && !isAppHost(hostname)) {
+    // A customer's own domain: serve it only once it's active in Redis.
+    subdomain = await getSubdomainForHost(hostname);
+    if (!subdomain) return new NextResponse(null, { status: 404 });
+  }
+
+  if (subdomain) {
+    // Block access to admin page from subdomains and custom domains
+    if (pathname.startsWith("/admin")) {
+      return NextResponse.redirect(new URL("/", request.url));
+    }
+
+    // For the root path, rewrite to the tenant page
+    if (pathname === "/") {
+      return NextResponse.rewrite(new URL(`/s/${subdomain}`, request.url));
+    }
+  }
+
+  // On the root domain, allow normal access
+  return NextResponse.next();
+}
+```
+
+The `config.matcher` stays as it is. Like the kit, this rewrites only the root path to the tenant page; if your tenants have more pages, rewrite `pathname` under `/s/<subdomain>` the same way for both subdomains and custom domains.
+
+Each request on a custom domain costs one Redis read. Upstash's REST client works in the proxy, and for most apps that read is fine. If it isn't, cache active hostnames in memory for a short time, and keep the cache short so removed domains stop resolving quickly.
+
+### 5. Remove a tenant's domains with the tenant
+
+When the kit deletes a tenant it only deletes the Redis key, so any custom domains would stay attached to your Vercel project and keep reaching your app. Detach them first:
+
+```ts title="lib/remove-tenant-domains.ts"
+import { getTenantDomains, releaseCustomDomain } from "@/lib/custom-domains";
+import { domains } from "@/lib/domains";
+
+/** Detaches every custom domain of a tenant. Call it before deleting the tenant. */
+export async function removeTenantDomains(subdomain: string) {
+  for (const hostname of await getTenantDomains(subdomain)) {
+    await domains.remove(hostname);
+    await releaseCustomDomain(hostname, subdomain);
+  }
+}
+```
+
+Then call it at the top of the kit's `deleteSubdomainAction` in `app/actions.ts`:
+
+```ts title="app/actions.ts"
+import { removeTenantDomains } from "@/lib/remove-tenant-domains";
+
+export async function deleteSubdomainAction(prevState: any, formData: FormData) {
+  const subdomain = String(formData.get("subdomain"));
+  await removeTenantDomains(subdomain);
+  await redis.del(`subdomain:${subdomain}`);
+  revalidatePath("/admin");
+  return { success: "Domain deleted successfully" };
+}
+```
+
+Also tell the customer to delete their DNS record. A record left pointing at a hosting platform after you detach the hostname is how subdomain takeovers start.
+
+## What the customer sees
+
+Right after `add`, a hostname that isn't used anywhere else on Vercel comes back with status `misconfigured`: Vercel has it, but DNS doesn't point at Vercel yet. The records come from Vercel's domain configuration for your project, so read them from the response instead of hardcoding them:
+
+| Customer's hostname              | Record to create                 | Value                                                                   |
+| -------------------------------- | -------------------------------- | ----------------------------------------------------------------------- |
+| Subdomain, like `app.acme.com`   | `CNAME`                          | The per-project target Vercel returns, like `<hash>.vercel-dns-017.com` |
+| Root domain, like `acme.com`     | `A`                              | The IP address Vercel returns for the project                           |
+| Already used elsewhere on Vercel | `TXT` at `_vercel.<apex domain>` | The verification value Vercel returns (status `pending_verification`)   |
+
+Vercel returns both a `CNAME` and an `A` option for most hostnames; show the `CNAME` for subdomains and the `A` record for root domains. [Apex domains](/blog/apex-domain) explains why a root domain can't take a `CNAME`, and [Display DNS records correctly](/docs/guides/display-dns-records) covers the table itself.
+
+When the customer has added the record, a "Check now" button calls `checkCustomDomainAction`. Once Vercel stops reporting the domain as misconfigured, the status turns `active`, the proxy starts serving the tenant, and Vercel issues the certificate. Vercel's API doesn't report certificate details, so the SDK leaves `certificate.status` as `unknown` for an active Vercel domain. [Troubleshoot custom domain SSL certificates](/docs/guides/troubleshoot-certificates) has the checks for a domain that doesn't load over HTTPS.
+
+## Before you ship it
+
+- **Protect `/admin` and the actions.** The kit ships without auth. Server actions are public endpoints, so check the session inside each one, not only on the page.
+- **Prove which tenant owns the domain.** Vercel's own check only runs for domains already used on Vercel, and it proves the domain belongs on your account, not which of your tenants asked. If tenants add their own domains, check a per-tenant `TXT` token before calling `add`, as in [Domain verification with TXT records](/blog/domain-verification).
+- **Root and www.** `acme.com` and `www.acme.com` are two hostnames. Add both if the customer wants both, and redirect one to the other.
+- **Check from a job too.** DNS changes can take minutes to hours. Run `checkCustomDomainAction`'s logic from a cron job for pending domains instead of relying on the customer clicking the button.
+
+The same five steps work outside the kit. [Custom domains for SaaS](/blog/custom-domains-for-saas) builds them for any Next.js app with a database, compares the platform API with Cloudflare for SaaS and hosted proxies, and shows how to switch platforms by swapping the adapter.
+
+## Common questions
+
+### Does the Vercel Platforms Starter Kit support custom domains?
+
+No. The current kit on GitHub supports tenant subdomains under one wildcard domain. It has no code for customer-owned domains, so you add the Vercel domain API calls, a hostname-to-tenant mapping and a proxy branch yourself, as shown above.
+
+### How many custom domains can a Vercel project have?
+
+Hobby projects can have up to 50 custom domains. Pro and Enterprise projects have no hard limit, with soft limits of 100,000 and 1,000,000 domains per project that Vercel raises on request.
+
+### Do customers need to use Vercel's nameservers?
+
+No. A customer domain only needs a `CNAME` (subdomain) or `A` record (root domain) pointing at Vercel, plus a `TXT` record if the domain is already used elsewhere on Vercel. Vercel's nameservers, or delegated certificate validation, are only needed for your own wildcard domain.
+
+### Can I use the Vercel SDK instead of Domain SDK?
+
+Yes. `@vercel/sdk` calls the same project domain endpoints. Domain SDK adds normalized records and statuses, a `waitUntilActive` helper, and the same API on Render, Railway, Netlify, bunny.net and Cloudflare for SaaS, which matters if you might move hosts.
+
+### Why does a new domain show as misconfigured?
+
+Vercel accepted the hostname, but its DNS doesn't point at your project yet. Show the customer the records from the response and check again after they add them.
+
+## Next steps
+
+- [Vercel custom domains](/docs/providers/vercel): the adapter's options, records and limits.
+- [Custom domains for SaaS](/blog/custom-domains-for-saas): the whole flow with a database, and the four ways to build it.
+- [Wildcard subdomains for multi-tenant apps](/blog/wildcard-subdomains): DNS, certificates and routing for the subdomain side.
+- [Domain verification with TXT records](/blog/domain-verification): a tenant-level ownership check before you attach a domain.
