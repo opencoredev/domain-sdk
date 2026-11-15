@@ -110,10 +110,11 @@ export async function claimCustomDomain(hostname: string, subdomain: string, ten
   );
   if (created === null) {
     const existing = await getCustomDomain(hostname);
-    return existing?.subdomain === subdomain && existing.tenant === tenant ? "mine" : "taken";
+    if (existing?.subdomain !== subdomain || existing.tenant !== tenant) return "taken";
   }
+  // Also on "mine", in case an earlier request stopped before this line.
   await redis.sadd(tenantKey(subdomain), hostname);
-  return "new";
+  return created === null ? "mine" : "new";
 }
 
 export async function setCustomDomainStatus(hostname: string, status: DomainStatus) {
