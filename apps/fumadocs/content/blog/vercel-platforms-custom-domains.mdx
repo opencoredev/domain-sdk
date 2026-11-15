@@ -11,7 +11,7 @@ The [Vercel Platforms Starter Kit](https://github.com/vercel/platforms) gives ev
 3. A screen that shows the DNS records the customer has to create, and checks them.
 4. A branch in `proxy.ts` that routes the hostname to the tenant once it's live.
 
-This post adds all four to the kit in five small changes, using the Vercel adapter of [Domain SDK](/docs). The code was type-checked against the kit's `main` branch (last commit 2026-07-08) and run against a mocked Vercel API. Vercel facts come from its [Vercel for Platforms](https://vercel.com/docs/platforms/multi-tenant-platforms/concepts) and [limits](https://vercel.com/docs/platforms/multi-tenant-platforms/limits) docs, checked 2026-11-15.
+This post adds all four to the kit in a few small files, using the Vercel adapter of [Domain SDK](/docs). The code was type-checked against the kit's `main` branch (last commit 2026-07-08) and run against a mocked Vercel API. Vercel facts come from its [Vercel for Platforms](https://vercel.com/docs/platforms/multi-tenant-platforms/concepts) and [limits](https://vercel.com/docs/platforms/multi-tenant-platforms/limits) docs, checked 2026-11-15.
 
 ## What the starter kit does today
 
@@ -67,29 +67,31 @@ export const domains = createDomainClient({
 
 ### 2. Map hostnames to tenants in Redis
 
-The kit keeps tenants under `subdomain:<name>`. Add two keys next to it: `customdomain:<hostname>` holds the tenant and the last status Vercel reported, and `tenantdomains:<name>` is a set of the tenant's hostnames, so you can clean up when a tenant is deleted. The claim uses `SET ... NX`, so two tenants racing for the same hostname can't both get it, and `withHostnameLock` keeps two requests for one hostname from interleaving, so a failed request can't undo one that succeeded:
+The kit keeps tenants under `subdomain:<name>`. Add three keys next to it: `customdomain:<hostname>` holds the tenant that owns the hostname, `customdomain-status:<hostname>` holds the last status Vercel reported, and `tenantdomains:<name>` is a set of the tenant's hostnames, so you can clean up when a tenant is deleted. The claim uses `SET ... NX`, so two tenants racing for the same hostname can't both get it. The owner key is written once and the status lives apart from it, so a status update that lands after a removal can't bring the mapping back:
 
 ```ts title="lib/custom-domains.ts"
 import type { DomainStatus } from "@opencoredev/domain-sdk";
 import { redis } from "@/lib/redis";
 
-export type CustomDomainData = {
-  subdomain: string;
-  status: DomainStatus;
-  createdAt: number;
-};
+type CustomDomainOwner = { subdomain: string; createdAt: number };
 
-const domainKey = (hostname: string) => `customdomain:${hostname}`;
+// The owner key never changes after the claim. The status lives in its own key,
+// so a late status write can't bring back a mapping that was deleted.
+const ownerKey = (hostname: string) => `customdomain:${hostname}`;
+const statusKey = (hostname: string) => `customdomain-status:${hostname}`;
 const tenantKey = (subdomain: string) => `tenantdomains:${subdomain}`;
 
-export function getCustomDomain(hostname: string) {
-  return redis.get<CustomDomainData>(domainKey(hostname));
+export function getCustomDomainOwner(hostname: string) {
+  return redis.get<CustomDomainOwner>(ownerKey(hostname));
 }
 
 /** The tenant for a custom hostname, but only once Vercel reports it active. */
 export async function getSubdomainForHost(hostname: string) {
-  const data = await getCustomDomain(hostname);
-  return data?.status === "active" ? data.subdomain : null;
+  const [owner, status] = await redis.mget<[CustomDomainOwner | null, DomainStatus | null]>(
+    ownerKey(hostname),
+    statusKey(hostname),
+  );
+  return owner && status === "active" ? owner.subdomain : null;
 }
 
 /**
@@ -97,41 +99,26 @@ export async function getSubdomainForHost(hostname: string) {
  * tenant already holds it, "taken" if another tenant does.
  */
 export async function claimCustomDomain(hostname: string, subdomain: string) {
-  const claimed = await redis.set<CustomDomainData>(
-    domainKey(hostname),
-    { subdomain, status: "pending", createdAt: Date.now() },
+  const claimed = await redis.set<CustomDomainOwner>(
+    ownerKey(hostname),
+    { subdomain, createdAt: Date.now() },
     { nx: true },
   );
   if (claimed === null) {
-    const existing = await getCustomDomain(hostname);
-    return existing?.subdomain === subdomain ? "mine" : "taken";
+    const owner = await getCustomDomainOwner(hostname);
+    return owner?.subdomain === subdomain ? "mine" : "taken";
   }
+  await redis.del(statusKey(hostname)); // never inherit a stale status
   await redis.sadd(tenantKey(subdomain), hostname);
   return "new";
 }
 
-/**
- * Runs fn while holding a short per-hostname lock, so two requests for the same
- * hostname can't interleave. Returns null if another request holds the lock.
- */
-export async function withHostnameLock<T>(hostname: string, fn: () => Promise<T>) {
-  const lockKey = `lock:customdomain:${hostname}`;
-  const locked = await redis.set(lockKey, Date.now(), { nx: true, ex: 30 });
-  if (locked === null) return null;
-  try {
-    return await fn();
-  } finally {
-    await redis.del(lockKey);
-  }
-}
-
 export async function setCustomDomainStatus(hostname: string, status: DomainStatus) {
-  const data = await getCustomDomain(hostname);
-  if (data) await redis.set(domainKey(hostname), { ...data, status });
+  await redis.set(statusKey(hostname), status);
 }
 
 export async function releaseCustomDomain(hostname: string, subdomain: string) {
-  await redis.del(domainKey(hostname));
+  await redis.del(ownerKey(hostname), statusKey(hostname));
   await redis.srem(tenantKey(subdomain), hostname);
 }
 
@@ -144,7 +131,16 @@ export function getTenantDomains(subdomain: string) {
 
 ### 3. Add and check domains from the admin page
 
-Two server actions do the work. `addCustomDomainAction` accepts only the tenant's canonical name (the kit's `getSubdomainData` would quietly lowercase `ACME` to `acme`, and the Redis keys would no longer match), normalizes the hostname, refuses your own domains and hostnames another tenant holds, attaches the hostname to the Vercel project, and returns the records the customer must create. `checkCustomDomainAction` asks Vercel for the current state and, when Vercel wants a `TXT` challenge, triggers verification:
+The kit's admin has no authentication yet, and server actions are public endpoints, so start with a check that fails closed until you plug in your auth provider:
+
+```ts title="lib/auth.ts"
+/** Replace with your auth provider's session check. Fails closed until you do. */
+export async function requireAdmin(): Promise<void> {
+  throw new Error("Add admin authentication before enabling custom domains.");
+}
+```
+
+Two server actions do the work. `addCustomDomainAction` accepts only the tenant's canonical name (the kit's `getSubdomainData` would quietly lowercase `ACME` to `acme`, and the Redis keys would no longer match), normalizes the hostname, refuses your own domains and hostnames another tenant holds, attaches the hostname to the Vercel project, and returns the records the customer must create. If Vercel reports a conflict, nothing was attached and the claim is dropped. Any other error keeps the claim, because the domain may have been attached anyway, and a retry picks it up. If the tenant was deleted while Vercel was answering, the action detaches the domain again. `checkCustomDomainAction` asks Vercel for the current state and, when Vercel wants a `TXT` challenge, triggers verification:
 
 ```ts title="app/domain-actions.ts"
 "use server";
@@ -152,12 +148,12 @@ Two server actions do the work. `addCustomDomainAction` accepts only the tenant'
 import { DomainSdkError, normalizeHostname, type Domain } from "@opencoredev/domain-sdk";
 import { getDomain } from "tldts";
 import { revalidatePath } from "next/cache";
+import { requireAdmin } from "@/lib/auth";
 import {
   claimCustomDomain,
-  getCustomDomain,
+  getCustomDomainOwner,
   releaseCustomDomain,
   setCustomDomainStatus,
-  withHostnameLock,
 } from "@/lib/custom-domains";
 import { domains } from "@/lib/domains";
 import { getSubdomainData } from "@/lib/subdomains";
@@ -185,8 +181,8 @@ export async function addCustomDomainAction(
   _prevState: DomainState,
   formData: FormData,
 ): Promise<DomainState> {
-  // Server actions are public endpoints. Check the admin session here first;
-  // the kit leaves admin auth as a TODO.
+  // Server actions are public endpoints, and the kit's admin has no auth yet.
+  await requireAdmin();
   const subdomain = String(formData.get("subdomain") ?? "");
   // getSubdomainData() sanitizes its input, so accept only the canonical name
   // to keep every Redis key for this tenant identical.
@@ -207,39 +203,44 @@ export async function addCustomDomainAction(
     return { success: false, error: "Use a domain the customer owns, not one of yours." };
   }
 
-  const result = await withHostnameLock(hostname, async (): Promise<DomainState> => {
-    const claim = await claimCustomDomain(hostname, subdomain);
-    if (claim === "taken") {
-      return { success: false, error: "That domain belongs to another tenant." };
-    }
+  const claim = await claimCustomDomain(hostname, subdomain);
+  if (claim === "taken") {
+    return { success: false, error: "That domain belongs to another tenant." };
+  }
 
-    try {
-      const domain = await domains.add(hostname);
-      await setCustomDomainStatus(hostname, domain.status);
-      return { success: true, hostname, status: domain.status, records: recordsToShow(domain) };
-    } catch (error) {
-      // Drop only a claim made by this request, never a domain that's already live.
+  let domain: Domain;
+  try {
+    domain = await domains.add(hostname);
+  } catch (error) {
+    if (error instanceof DomainSdkError && error.code === "DOMAIN_CONFLICT") {
+      // Vercel attached nothing to this project, so a fresh claim can go.
       if (claim === "new") await releaseCustomDomain(hostname, subdomain);
-      if (error instanceof DomainSdkError && error.code === "DOMAIN_CONFLICT") {
-        return { success: false, error: "That domain is on another Vercel project or account." };
-      }
-      throw error;
+      return { success: false, error: "That domain is on another Vercel project or account." };
     }
-  });
+    // Any other failure may have attached the domain anyway. Keep the claim,
+    // so a retry or the check action can finish the job.
+    throw error;
+  }
 
+  // The tenant may have been deleted while Vercel was answering.
+  if (!(await getSubdomainData(subdomain))) {
+    await domains.remove(hostname);
+    await releaseCustomDomain(hostname, subdomain);
+    return { success: false, error: "That tenant doesn't exist." };
+  }
+
+  await setCustomDomainStatus(hostname, domain.status);
   revalidatePath("/admin");
-  return (
-    result ?? { success: false, error: "This domain is being updated. Try again in a moment." }
-  );
+  return { success: true, hostname, status: domain.status, records: recordsToShow(domain) };
 }
 
 export async function checkCustomDomainAction(
   _prevState: DomainState,
   formData: FormData,
 ): Promise<DomainState> {
-  // Same admin check as above.
+  await requireAdmin();
   const hostname = String(formData.get("hostname") ?? "");
-  if (!(await getCustomDomain(hostname))) {
+  if (!(await getCustomDomainOwner(hostname))) {
     return { success: false, error: "Unknown domain." };
   }
 
@@ -265,7 +266,7 @@ export async function checkCustomDomainAction(
 }
 ```
 
-Keep these in their own `"use server"` file. Every function exported from such a file becomes an endpoint anyone can call, which is also why each action needs the admin check the kit doesn't have yet. Wire them to a form on `/admin` with `useActionState`, the same way the kit's dashboard calls `deleteSubdomainAction`, and render `records` as a table the customer can copy from.
+Keep these in their own `"use server"` file. Every function exported from such a file becomes an endpoint anyone can call, which is why both actions call `requireAdmin()` first. Wire them to a form on `/admin` with `useActionState`, the same way the kit's dashboard calls `deleteSubdomainAction`, and render `records` as a table the customer can copy from.
 
 ### 4. Route custom hostnames in proxy.ts
 
@@ -338,15 +339,16 @@ export async function removeTenantDomains(subdomain: string) {
 }
 ```
 
-Then call it at the top of the kit's `deleteSubdomainAction` in `app/actions.ts`:
+Then call it from the kit's `deleteSubdomainAction` in `app/actions.ts`, after deleting the tenant key, so no new domain can be added for the tenant while its domains are being removed:
 
 ```ts title="app/actions.ts"
 import { removeTenantDomains } from "@/lib/remove-tenant-domains";
 
 export async function deleteSubdomainAction(prevState: any, formData: FormData) {
   const subdomain = String(formData.get("subdomain"));
-  await removeTenantDomains(subdomain);
+  // Delete the tenant first, so no new domain can be added for it.
   await redis.del(`subdomain:${subdomain}`);
+  await removeTenantDomains(subdomain);
   revalidatePath("/admin");
   return { success: "Domain deleted successfully" };
 }
@@ -370,7 +372,7 @@ When the customer has added the record, a "Check now" button calls `checkCustomD
 
 ## Before you ship it
 
-- **Protect `/admin` and the actions.** The kit ships without auth. Server actions are public endpoints, so check the session inside each one, not only on the page.
+- **Protect `/admin` and the actions.** The kit ships without auth. Replace `requireAdmin()` with a real session check, and protect the kit's own `deleteSubdomainAction` too, since server actions are public endpoints.
 - **Prove which tenant owns the domain.** Vercel's own check only runs for domains already used on another Vercel account, and it proves the domain belongs on your account, not which of your tenants asked. If tenants add their own domains, check a per-tenant `TXT` token before calling `add`, as in [Domain verification with TXT records](/blog/domain-verification).
 - **Root and www.** `acme.com` and `www.acme.com` are two hostnames. Add both if the customer wants both, and redirect one to the other.
 - **Check from a job too.** DNS changes can take minutes to hours. Run `checkCustomDomainAction`'s logic from a cron job for pending domains instead of relying on the customer clicking the button.
