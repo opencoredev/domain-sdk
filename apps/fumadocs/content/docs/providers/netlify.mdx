@@ -48,6 +48,8 @@ Netlify updates aliases as one array. Each add or remove reads the current site,
 
 Netlify recommends no more than 50 aliases per site. The adapter does not impose a lower limit than the API, but you should use multiple sites if your product regularly exceeds that recommendation.
 
+Official references: [Netlify API](https://open-api.netlify.com/), [domain aliases](https://docs.netlify.com/manage/domains/configure-domains/add-a-domain-alias/), and [external DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/).
+
 ## Common questions
 
 ### What is Netlify's load balancer IP address?
@@ -69,7 +71,5 @@ In the Netlify UI, yes: adding `customer.com` or `www.customer.com` adds both, s
 ### How many custom domains can a Netlify site have?
 
 Netlify recommends no more than 50 domain aliases per site. Its certificate provider can also rate-limit a site with more than 5 aliases that are subdomains of the same domain; for that case Netlify suggests a wildcard certificate through Netlify DNS or a support request before you add the aliases. The adapter doesn't support wildcard hostnames.
-
-Official references: [Netlify API](https://open-api.netlify.com/), [domain aliases](https://docs.netlify.com/manage/domains/configure-domains/add-a-domain-alias/), and [external DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/).
 
 Read next: [Store domain state](../guides/store-domain-state.mdx).
