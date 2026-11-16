@@ -47,7 +47,7 @@
     "fflate": "0.4.9",
     "js-yaml": "5.5.0",
     "nanoid": "3.3.18",
-    "postcss": "8.5.32",
+    "postcss": "8.5.33",
     "sharp": "0.35.5",
     "source-map-js": "1.2.2",
     "tinypool": "2.2.0"
