@@ -45,6 +45,8 @@ Call `verify()` after the customer configures DNS. Render also verifies new doma
 
 Adding a root or `www` hostname can cause Render to create its companion hostname automatically. The adapter returns the hostname you requested, while `list()` includes every domain Render created. Domain limits and charges depend on the Render workspace plan.
 
+Official references: [Custom Domain API](https://api-docs.render.com/reference/create-custom-domain), [custom domains](https://render.com/docs/custom-domains), and [external DNS](https://render.com/docs/configure-other-dns).
+
 ## Common questions
 
 ### How do I connect a domain to Render?
@@ -62,7 +64,5 @@ Render can take a few minutes to update routing after it verifies a domain. Wait
 ### Can I turn off the onrender.com subdomain?
 
 Yes, once the service has at least one custom domain. Toggle **Render Subdomain** off in the service settings, set `renderSubdomainPolicy: disabled` in `render.yaml`, or set `serviceDetails.renderSubdomainPolicy` to `disabled` with the Update service API. Requests to the `onrender.com` address then get a 404.
-
-Official references: [Custom Domain API](https://api-docs.render.com/reference/create-custom-domain), [custom domains](https://render.com/docs/custom-domains), and [external DNS](https://render.com/docs/configure-other-dns).
 
 Read next: [Poll until active](../guides/poll-until-active.mdx).
