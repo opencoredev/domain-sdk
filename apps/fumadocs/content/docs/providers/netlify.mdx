@@ -1,10 +1,22 @@
 ---
-title: "Netlify custom domain: DNS records and the API"
-description: "How to add a custom domain to a Netlify site from code, and the DNS records it needs: a CNAME to your .netlify.app hostname for subdomains, and an ALIAS to apex-loadbalancer.netlify.com or an A record to 75.2.60.5 for apex domains."
+title: "Netlify custom domain: DNS records, 75.2.60.5, and the API"
+description: "Point a custom domain at Netlify: a CNAME to your .netlify.app subdomain, or for an apex domain an ALIAS to apex-loadbalancer.netlify.com or an A record to 75.2.60.5. SSL, site ID, and the API."
 icon: netlify
 ---
 
-Each Netlify custom domain needs a routing record at the customer's DNS provider. A subdomain like `app.customer.com` gets a **CNAME** to the site's `.netlify.app` hostname. An apex domain like `customer.com` can't use a CNAME, so it gets an **ALIAS**, **ANAME**, or flattened CNAME to `apex-loadbalancer.netlify.com`, or, if the DNS provider supports none of those, an **A** record to Netlify's load balancer IP `75.2.60.5`. Sites on Netlify's High-Performance Edge use a different load balancer, shown in the site's DNS verification details; this adapter always returns the standard one, so check those details for High-Performance Edge sites. The adapter returns the record for the hostname you add, so to serve both `customer.com` and `www.customer.com`, add each one and give the customer both records. Netlify then provisions the TLS certificate. These values come from Netlify's [external DNS docs](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/), checked 2026-10-29. To add many customer domains from code, this adapter adds each one as a domain alias on your site through the Netlify API and returns the record to show your customer.
+To add a custom domain to a Netlify site by hand, open **Domain management > Production domains**, add the domain (a second one becomes a domain alias), then create the DNS record Netlify shows under **Pending DNS verification** at your DNS provider. Netlify provisions a Let's Encrypt certificate once DNS points to it. To do the same from code, this adapter adds each customer hostname as a domain alias through the Netlify API and returns the record to show your customer.
+
+These are the records Netlify asks for at an external DNS provider ([external DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/), checked 2026-11-16):
+
+| Hostname                                        | Record                                | Value                                                                                        |
+| ----------------------------------------------- | ------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `www` or any subdomain, like `app.customer.com` | `CNAME`                               | Your site's Netlify subdomain, like `brave-curie-12345.netlify.app`                          |
+| Apex domain, like `customer.com`                | `ALIAS`, `ANAME` or flattened `CNAME` | `apex-loadbalancer.netlify.com`                                                              |
+| Apex domain, if your DNS host has none of those | `A`                                   | `75.2.60.5` (Netlify's load balancer IP)                                                     |
+| Subdomain on a High-Performance Edge site       | `CNAME`                               | The dedicated subdomain in your High-Performance Edge onboarding PDF                         |
+| Apex domain on a High-Performance Edge site     | `ALIAS`-style or `A`                  | The High-Performance Edge load balancer in the domain's **Pending DNS verification** details |
+
+Netlify recommends the ALIAS-style record over the `A` record because it's more resilient, and a subdomain over the apex as the primary domain on external DNS, since an apex resolves to the load balancer rather than through Netlify's CDN routing. DNS changes can take up to a day to propagate. The adapter always returns the standard values, so for High-Performance Edge sites give customers the dedicated values instead.
 
 ## Scope and credentials
 
@@ -35,6 +47,28 @@ Netlify does not expose independent DNS-verification state for each alias. The a
 Netlify updates aliases as one array. Each add or remove reads the current site, preserves unrelated aliases and the primary domain, then writes the updated alias list. Serialize domain mutations for the same site to avoid lost updates from concurrent read-modify-write requests.
 
 Netlify recommends no more than 50 aliases per site. The adapter does not impose a lower limit than the API, but you should use multiple sites if your product regularly exceeds that recommendation.
+
+## Common questions
+
+### What is Netlify's load balancer IP address?
+
+`75.2.60.5`. Point an apex domain's `A` record there only when your DNS provider can't create `ALIAS`, `ANAME` or flattened `CNAME` records; otherwise point one of those at `apex-loadbalancer.netlify.com`. Sites on Netlify's High-Performance Edge use a different load balancer, shown in the domain's **Pending DNS verification** details.
+
+### Where do I find NETLIFY_SITE_ID?
+
+In the Netlify UI, open **Project configuration > General > Project details > Project information** and copy **Project ID** (labeled Site ID before Netlify renamed sites to projects). It's the same value as the API's `site_id` and the CLI's `NETLIFY_SITE_ID`. Create `NETLIFY_ACCESS_TOKEN` as a personal access token under **Applications > Personal access tokens** in your Netlify user settings.
+
+### Why isn't Netlify provisioning an SSL certificate for my custom domain?
+
+Netlify can only issue the certificate after the domain's DNS records point to Netlify and the old records' TTLs have expired. If the domain runs through a proxy such as Cloudflare's orange-cloud mode, switch the record to DNS only: Netlify has to terminate TLS itself. If the certificate covers one name but not another, select **Renew certificate** under **Domain management > HTTPS**. A `CAA` record, if you have one, must allow `letsencrypt.org`. See [Netlify's troubleshooting guide](https://docs.netlify.com/manage/domains/troubleshooting-tips/) and [Troubleshoot custom domain SSL certificates](/docs/guides/troubleshoot-certificates).
+
+### Does Netlify add www automatically for an apex domain?
+
+In the Netlify UI, yes: adding `customer.com` or `www.customer.com` adds both, so both need records pointing to Netlify. The adapter adds only the hostname you pass to `add()`, so call it for each name your customer wants to serve.
+
+### How many custom domains can a Netlify site have?
+
+Netlify recommends no more than 50 domain aliases per site. Its certificate provider can also rate-limit a site with more than 5 aliases that are subdomains of the same domain; for that case Netlify suggests a wildcard certificate through Netlify DNS or a support request before you add the aliases. The adapter doesn't support wildcard hostnames.
 
 Official references: [Netlify API](https://open-api.netlify.com/), [domain aliases](https://docs.netlify.com/manage/domains/configure-domains/add-a-domain-alias/), and [external DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/).
 
