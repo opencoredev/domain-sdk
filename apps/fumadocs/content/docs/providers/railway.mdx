@@ -53,11 +53,11 @@ Official references: [Public API](https://docs.railway.com/integrations/api), [m
 
 ### How are custom domains and SSL certificates handled by Railway?
 
-You attach the domain to one service, add the `CNAME` and `TXT` records Railway shows, and Railway verifies ownership and issues a Let's Encrypt certificate (ECDSA, valid 90 days) within about an hour of DNS being in place. It renews the certificate automatically when 30 days remain. Railway doesn't accept certificates you upload yourself. In the adapter, the domain becomes `active` once Railway reports the certificate as `ISSUED`.
+You attach the domain to one service, add the `CNAME` and `TXT` records Railway shows, and Railway verifies ownership and issues a Let's Encrypt certificate (ECDSA, valid 90 days) within about an hour of DNS being in place. It renews the certificate automatically when 30 days remain. Railway doesn't accept certificates you upload yourself. In the adapter, the domain becomes `active` once every routing record is valid and Railway reports the certificate as `ISSUED`.
 
 ### Why does my Railway custom domain return a 404?
 
-Usually the `TXT` verification record is missing. Railway checks it before it routes traffic, so the domain returns a 404 even when the `CNAME` already resolves. Add the `TXT` record exactly as the dashboard shows it, or as `domain.records` lists it with `purpose: "ownership"`, and wait for the green check mark.
+Check the `TXT` verification record first. Railway checks it before it routes traffic, so without it the domain returns a 404 even when the `CNAME` already resolves. Add the `TXT` record exactly as the dashboard shows it, or as `domain.records` lists it with `purpose: "ownership"`, and wait for the green check mark.
 
 ### Can I use a root domain on Railway?
 
