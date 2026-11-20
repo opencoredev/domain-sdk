@@ -1,0 +1,359 @@
+---
+title: "Domain Connect: one-click DNS setup for SaaS custom domains"
+description: "How Domain Connect works for a SaaS app: discovery, templates, signed apply URLs, Cloudflare onboarding, and TypeScript code that sends customers to approve DNS records."
+date: 2026-11-20
+---
+
+**Domain Connect** is an open protocol that lets a service ask a domain's DNS provider to add a fixed set of records for the customer, after the customer signs in and approves them. Instead of copying a CNAME and a TXT value into their DNS dashboard, the customer clicks a button in your app, lands on their DNS provider's consent screen, and clicks Confirm. GoDaddy created it, the specification is public on GitHub, and an IETF working group (DCONN) is standardizing it.
+
+Most pages about Domain Connect are written for one side: the spec, the DNS providers' onboarding docs, or a registrar's help article. This post is for the developer of a multi-tenant SaaS app who wants a "set up DNS automatically" button next to the manual records. It covers:
+
+1. How the synchronous flow works, end to end.
+2. Why you need your own template even if your app runs on Vercel or Railway, which already use Domain Connect.
+3. The template, the signing key, and Cloudflare onboarding.
+4. TypeScript code for discovery, the template check and the signed apply URL, tested against Cloudflare's live endpoints on 2026-11-20.
+
+## How the synchronous flow works
+
+Domain Connect has two flows. The synchronous flow is a browser redirect: one consent, one set of changes. The asynchronous flow uses OAuth so the service can apply templates later through an API, and it needs a separate agreement with each DNS provider. Cloudflare supports only the synchronous flow, so that's the one this post builds.
+
+1. **Discovery.** Your server looks up the TXT record `_domainconnect.<zone>`, for example `_domainconnect.customer.com`. The DNS provider answers it with an API prefix (call 1 below). Cloudflare answers with its own prefix for every zone it hosts.
+2. **Settings.** Your server fetches the settings for the zone (call 2). The JSON names the provider (`providerId`) and gives the URL prefixes for the consent screen (`urlSyncUX`) and the API (`urlAPI`). A 404 means the provider doesn't host that zone.
+3. **Template check.** Your server asks whether the provider has onboarded your template (call 3). A 2xx means yes; a 404 means no.
+4. **Apply.** Your app sends the customer to the apply URL (call 4), with the template's variables and a signature in the query string.
+5. **Consent.** The provider signs the customer in, checks that they control the zone, shows the exact records, and applies them when the customer confirms. Then it closes the window or redirects to your `redirect_uri`.
+6. **Verify.** Your app checks DNS (or asks its hosting platform) to confirm the records exist. The spec says not to treat the redirect as proof, because a user can edit the return URL.
+
+```text title="The four calls"
+1. TXT  _domainconnect.customer.com
+        -> "api.cloudflare.com/client/v4/dns/domainconnect"
+2. GET  https://<prefix>/v2/customer.com/settings
+3. GET  <urlAPI>/v2/domainTemplates/providers/<yourProviderId>/services/<serviceId>
+4. GET  <urlSyncUX>/v2/domainTemplates/providers/<yourProviderId>/services/<serviceId>/apply
+          ?domain=customer.com&host=app&groupId=...&<variables>&redirect_uri=...&key=...&sig=...
+```
+
+The DNS provider only ever applies records from a template it has reviewed. Your app supplies the variable parts, such as the CNAME target and a verification token, and nothing else.
+
+## Who supports it
+
+Support has two sides: the DNS provider has to implement Domain Connect, and it has to have onboarded your template. What the live endpoints returned on 2026-11-20:
+
+| Check                                                  | Result                                                                                      |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `_domainconnect` on a Cloudflare-hosted zone           | `api.cloudflare.com/client/v4/dns/domainconnect`                                            |
+| Cloudflare settings                                    | `urlSyncUX` `https://dash.cloudflare.com/domainconnect`, no `urlAsyncUX` (synchronous only) |
+| Cloudflare template check, `vercel.com` / `website`    | 200, supported                                                                              |
+| Cloudflare template check, `railway.com` / `custom`    | 200, supported                                                                              |
+| Cloudflare template check, the spec's example template | 404, not onboarded                                                                          |
+| `_domainconnect` on a zone using Vercel DNS            | `domainconnect.vercel.com`, which returns settings for the zone                             |
+| `_domainconnect` on ionos.com                          | `api.domainconnect.ionos.com`                                                               |
+
+domainconnect.org says the protocol is used by more than 1,200 service providers and 300 DNS providers. For a SaaS app the useful number is smaller: the DNS providers that have onboarded _your_ template. In practice that starts with Cloudflare, which documents a public onboarding process. Railway said the same when it [added one-click domains](https://blog.railway.com/p/one-click-domains): Domain Connect "is only supported by a handful of providers, but it is notably supported by Cloudflare".
+
+## You need your own template, even on Vercel or Railway
+
+[Vercel](https://vercel.com/changelog/automated-dns-configuration-with-domain-connect) (February 2025) and Railway both offer Domain Connect for Cloudflare-managed domains in their own dashboards. Their templates are public: `vercel.com.website.json` adds the `_vercel` TXT, a subdomain CNAME, or an apex A or CNAME record, and `railway.com.custom.json` adds a CNAME and a `railway-verify=` TXT.
+
+Both templates set `syncPubKeyDomain` (`domainconnect.vercel.com` and `domainconnect.railway.com`), which means every apply URL must be signed with Vercel's or Railway's private key. Your app can't produce that signature, so when your customers add domains through your app, which calls the Vercel or Railway API behind the scenes, you can't send them through those templates. You publish a template under your own `providerId`, sign with your own key, and get it onboarded with each DNS provider you care about. The records it adds still point at your hosting platform; only the template and key are yours.
+
+## 1. Write the template
+
+A template is a JSON file named `<providerId>.<serviceId>.json` in lowercase. This one adds the routing CNAME and the TXT record your app uses for its own ownership check (see [domain verification with TXT records](/blog/domain-verification)):
+
+```json title="yourapp.com.customdomain.json"
+{
+  "providerId": "yourapp.com",
+  "providerName": "YourApp",
+  "serviceId": "customdomain",
+  "serviceName": "YourApp custom domain",
+  "version": 1,
+  "logoUrl": "https://yourapp.com/logo.svg",
+  "description": "Points a customer subdomain at YourApp and adds the YourApp ownership record.",
+  "variableDescription": "%target%: the CNAME target from the hosting platform; %token%: the per-tenant verification token",
+  "syncPubKeyDomain": "domainconnect.yourapp.com",
+  "syncRedirectDomain": "yourapp.com",
+  "hostRequired": true,
+  "records": [
+    {
+      "type": "CNAME",
+      "groupId": "routing",
+      "host": "@",
+      "pointsTo": "%target%",
+      "ttl": 3600
+    },
+    {
+      "type": "TXT",
+      "groupId": "ownership",
+      "host": "_yourapp-challenge",
+      "data": "yourapp-verify=%token%",
+      "ttl": 3600
+    }
+  ]
+}
+```
+
+How the names resolve: the apply URL passes `domain=customer.com` and `host=app`. In a record's `host`, `@` means the full name `app.customer.com`, and a relative name such as `_yourapp-challenge` becomes `_yourapp-challenge.app.customer.com`. `%target%` and `%token%` are filled from query parameters of the same name.
+
+Rules worth knowing before you submit it:
+
+- **Keep variables narrow.** The spec recommends putting as much fixed text in the template as you can. A fixed `yourapp-verify=` prefix means the URL can't be used to write an arbitrary TXT value.
+- **Sign it.** With `syncPubKeyDomain` set, providers reject unsigned apply URLs. Cloudflare requires a signature on every template, and checks the signed `redirect_uri` instead of `syncRedirectDomain`.
+- **Mind Cloudflare's differences.** Cloudflare ignores `state`, `serviceName` on the URL, `multiInstance`, `warnPhishing`, `hostRequired` and the TXT conflict-matching fields. It rejects templates with `APEXCNAME` records; a plain CNAME at the apex works because Cloudflare flattens it. The [Domain Connect template linter](https://github.com/Domain-Connect/dc-template-linter) has a `-cloudflare` option for these rules.
+
+## 2. Publish the public key
+
+Generate an RSA key pair, keep the private key in your secret store, and publish the public key as TXT records under `syncPubKeyDomain`:
+
+```bash title="Terminal"
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out dc-private.pem
+openssl pkey -in dc-private.pem -pubout -outform DER | base64 -w0 \
+  | fold -w 200 | awk '{ printf "p=%d,a=RS256,d=%s\n", NR, $0 }'
+```
+
+Each output line is one TXT record at `_dcpubkeyv1.domainconnect.yourapp.com`. The `p=` index lets the provider put the key back together, because a single TXT string can't exceed 255 bytes. `_dcpubkeyv1` is the `key` value you send on every apply URL, so a key rotation is a new name (`_dcpubkeyv2`) plus a new `key` value. You can see Railway's key with `dig TXT _dcpubkeyv1.domainconnect.railway.com`.
+
+## 3. Get the template onboarded
+
+For Cloudflare, per its [Domain Connect docs](https://developers.cloudflare.com/dns/reference/domain-connect/) (checked 2026-11-20):
+
+1. Fork [Domain-Connect/Templates](https://github.com/Domain-Connect/Templates), add your file, and open a pull request.
+2. After it merges, email `domain-connect@cloudflare.com` with the template links, the `syncPubKeyDomain` names to query, an SVG logo, and the default proxy status for the template's A, AAAA and CNAME records. You can include a Cloudflare account ID so the template is exposed only to that account while you test.
+3. Later edits to the template are picked up automatically: Cloudflare compares the version number with the raw JSON several times a day and expects updates to land within eight hours.
+
+Other DNS providers set their own terms. The spec allows a provider to support only some templates, require a contract, or charge for onboarding.
+
+## 4. Discover, check and sign in TypeScript
+
+This module runs on your server. It walks up from the customer's hostname to find the zone, trusts only DNS providers you've onboarded with, checks the template, and builds the signed URL:
+
+```ts title="lib/domain-connect.ts"
+import { createSign } from "node:crypto";
+import { Resolver } from "node:dns/promises";
+
+const resolver = new Resolver();
+resolver.setServers(["1.1.1.1", "8.8.8.8"]);
+
+// Only DNS providers that have onboarded your template. Keys are the
+// values they publish at _domainconnect.<zone>.
+const TRUSTED_PROVIDERS = new Map<string, string>([
+  ["api.cloudflare.com/client/v4/dns/domainconnect", "cloudflare.com"],
+]);
+
+export interface DomainConnectSettings {
+  providerId: string;
+  providerName: string;
+  providerDisplayName?: string;
+  urlSyncUX?: string;
+  urlAPI: string;
+}
+
+export interface DomainConnectTarget {
+  zone: string; // customer.com
+  host: string; // app ("" for the zone apex)
+  settings: DomainConnectSettings;
+}
+
+async function lookupDiscoveryRecord(zone: string): Promise<string | null> {
+  try {
+    const records = await resolver.resolveTxt(`_domainconnect.${zone}`);
+    return records.map((chunks) => chunks.join("").trim()).find(Boolean) ?? null;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOTFOUND" || code === "ENODATA") return null;
+    throw error;
+  }
+}
+
+// Walks up from app.customer.com to customer.com and returns the first zone
+// whose DNS provider is trusted and confirms it hosts that zone.
+export async function discoverDomainConnect(hostname: string): Promise<DomainConnectTarget | null> {
+  const labels = hostname.toLowerCase().replace(/\.$/, "").split(".");
+  for (let i = 0; i <= labels.length - 2; i++) {
+    const zone = labels.slice(i).join(".");
+    const prefix = await lookupDiscoveryRecord(zone);
+    if (!prefix) continue;
+    const providerId = TRUSTED_PROVIDERS.get(prefix);
+    if (!providerId) return null; // a provider you haven't onboarded with
+
+    const response = await fetch(`https://${prefix}/v2/${zone}/settings`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (response.status === 404) continue; // the provider doesn't host this zone
+    if (!response.ok) throw new Error(`Domain Connect settings returned ${response.status}`);
+
+    const settings = (await response.json()) as DomainConnectSettings;
+    if (settings.providerId !== providerId || !settings.urlSyncUX) return null;
+    return { zone, host: labels.slice(0, i).join("."), settings };
+  }
+  return null;
+}
+
+export async function supportsTemplate(
+  settings: DomainConnectSettings,
+  providerId: string,
+  serviceId: string,
+): Promise<boolean> {
+  const response = await fetch(
+    `${settings.urlAPI}/v2/domainTemplates/providers/${providerId}/services/${serviceId}`,
+    { signal: AbortSignal.timeout(5_000) },
+  );
+  if (response.status === 404) return false;
+  if (!response.ok) throw new Error(`Template check returned ${response.status}`);
+  return true;
+}
+
+export interface ApplyUrlInput {
+  target: DomainConnectTarget;
+  providerId: string; // your template's providerId, e.g. yourapp.com
+  serviceId: string;
+  groupId: string; // the template group to apply in this step
+  variables: Record<string, string>;
+  redirectUri: string;
+  privateKeyPem: string;
+  keyHost: string; // e.g. _dcpubkeyv1, the TXT name under syncPubKeyDomain
+}
+
+export function signedApplyUrl(input: ApplyUrlInput): string {
+  const { target } = input;
+  const params = new URLSearchParams({ domain: target.zone });
+  if (target.host) params.set("host", target.host);
+  params.set("groupId", input.groupId);
+  for (const [name, value] of Object.entries(input.variables)) params.set(name, value);
+  params.set("redirect_uri", input.redirectUri);
+
+  // Sign everything after "?" except key and sig, then put sig last.
+  const query = params.toString();
+  const sig = createSign("RSA-SHA256").update(query).sign(input.privateKeyPem, "base64");
+  const base = `${target.settings.urlSyncUX}/v2/domainTemplates/providers/${input.providerId}/services/${input.serviceId}/apply`;
+  return `${base}?${query}&key=${encodeURIComponent(input.keyHost)}&sig=${encodeURIComponent(sig)}`;
+}
+```
+
+Why it's written this way:
+
+- **The allowlist is a security control.** The `_domainconnect` record lives in the customer's zone, so the customer controls it. Without the allowlist, a customer could point it at an internal host and make your server fetch it. Use a `Map`, not a plain object: a value such as `constructor` would pass an object lookup. You only need discovery for providers that have onboarded your template anyway.
+- **Walking up the labels finds the zone.** Discovery works on the zone (the registered domain or a delegated zone), not on `app.customer.com`. Trying each parent and letting the settings call confirm it avoids hard-coding a public suffix list.
+- **The signature covers the query string as sent.** The spec signs everything after `?` except `key` and `sig`, with each value URL-encoded first, using RSA with SHA-256. Cloudflare also requires `sig` to be the last parameter.
+
+On 2026-11-20 this code found Cloudflare for a Cloudflare-hosted zone, got `true` for the Vercel and Railway templates, and built a URL whose signature verified against the matching public key.
+
+## 5. Two steps: ownership first, then routing
+
+The [custom domains guide](/blog/custom-domains-for-saas) attaches a hostname to the hosting platform only after your own TXT check passes, so a tenant can't tie up a domain they don't control. That means the routing target doesn't exist yet when the tenant first claims the hostname. The template's two groups fit that order: send the customer through it once with `groupId=ownership`, and again with `groupId=routing` after `domains.add()`. Each step is a separate consent at the DNS provider.
+
+```ts title="lib/domain-connect-steps.ts"
+import { domains } from "@/lib/domains"; // your createDomainClient instance
+import {
+  discoverDomainConnect,
+  signedApplyUrl,
+  supportsTemplate,
+  type DomainConnectTarget,
+} from "@/lib/domain-connect";
+
+const PROVIDER_ID = "yourapp.com";
+const SERVICE_ID = "customdomain";
+const TOKEN_PREFIX = "yourapp-verify="; // the template adds it
+
+async function findTarget(hostname: string): Promise<DomainConnectTarget | null> {
+  const target = await discoverDomainConnect(hostname);
+  if (!target?.host) return null; // no trusted provider, or the zone apex
+  return (await supportsTemplate(target.settings, PROVIDER_ID, SERVICE_ID)) ? target : null;
+}
+
+function applyUrl(
+  target: DomainConnectTarget,
+  hostname: string,
+  groupId: string,
+  variables: Record<string, string>,
+) {
+  return signedApplyUrl({
+    target,
+    providerId: PROVIDER_ID,
+    serviceId: SERVICE_ID,
+    groupId,
+    variables,
+    redirectUri: `https://yourapp.com/settings/domains/return?hostname=${encodeURIComponent(hostname)}&step=${groupId}`,
+    privateKeyPem: process.env.DOMAIN_CONNECT_PRIVATE_KEY!,
+    keyHost: "_dcpubkeyv1",
+  });
+}
+
+// Step 1, right after the tenant claims the hostname: publish your challenge TXT.
+export async function ownershipStepUrl(
+  hostname: string,
+  challengeToken: string,
+): Promise<string | null> {
+  const target = await findTarget(hostname);
+  if (!target) return null;
+  // challengeToken is the full value, e.g. from createVerificationToken().
+  return applyUrl(target, hostname, "ownership", {
+    token: challengeToken.slice(TOKEN_PREFIX.length),
+  });
+}
+
+// Step 2, after your TXT check passed and domains.add() ran: point the hostname at the platform.
+export async function routingStepUrl(hostname: string): Promise<string | null> {
+  const domain = await domains.refresh(hostname);
+  const cname = domain.records.find(
+    (record) => record.purpose === "routing" && record.type === "CNAME" && record.required,
+  );
+  if (!cname) return null; // the platform wants A or ALIAS records: show manual setup
+
+  // The template only writes the CNAME. Any other required record that isn't
+  // valid yet (a platform ownership TXT, a certificate record) means manual setup.
+  const unresolved = domain.records.some(
+    (record) => record !== cname && record.required && record.status !== "valid",
+  );
+  if (unresolved) return null;
+
+  const target = await findTarget(hostname);
+  return target ? applyUrl(target, hostname, "routing", { target: cname.value }) : null;
+}
+```
+
+Call both from authenticated endpoints: the ownership step only for a hostname with a pending challenge owned by the signed-in tenant, the routing step only for a hostname that tenant has already verified. A `null` means "show the manual records". The template adds the `yourapp-verify=` prefix itself, so step 1 passes only the random part of the token; the record the customer ends up with is the same full value your TXT check compares. The `unresolved` check covers records this template doesn't write, such as Railway's `_railway-verify` TXT, Vercel's `_vercel` TXT (when the domain is already used by another Vercel account) or a Cloudflare for SaaS certificate record. To keep the button for those domains, add a group for them to your template and pass their values as variables.
+
+In the browser, the [One-click DNS setup component](/docs/components/one-click-dns-setup) renders the button and a "Use manual records" link, and the [DNS records table](/docs/components/dns-records-table) renders the fallback. The component never builds or signs the URL; its `onConnect` callback asks your server for one.
+
+## 6. Handle the return
+
+When the customer finishes at Cloudflare, the browser comes back to your signed `redirect_uri`. Because Cloudflare ignores `state`, put what you need in the `redirect_uri` itself, as the samples do with `hostname` and `step`, and check on return that the signed-in tenant owns that hostname: a pending challenge after the ownership step, a verified hostname after the routing step. After the ownership step, run your own TXT check, then `domains.add(hostname)`, and offer the routing step. After the routing step, call `domains.refresh(hostname)` and show the result. If the URL carries `error=access_denied`, the customer cancelled or couldn't authorize; show the manual records again.
+
+Don't mark anything verified because the redirect arrived. Records can take a few minutes to show up in public DNS, and the platform still has to verify the domain and issue a certificate. [Poll until the domain is active](/docs/guides/poll-until-active) the same way you would after a manual setup.
+
+## When Domain Connect isn't worth it
+
+- **Most of your customers use other DNS providers.** Each provider is a separate onboarding. If your customers' DNS is spread across registrars, the manual records page stays the main path and the button helps a subset.
+- **The hostname is a zone apex.** Platforms usually want A or ALIAS records at the apex, and `hostRequired` templates don't cover it. See [apex domains](/blog/apex-domain) for those records.
+- **You need to change records later without the customer.** That's the asynchronous OAuth flow, which Cloudflare doesn't offer.
+- **You use Cloudflare for SaaS.** Customers still add a CNAME to your app's target hostname, plus any validation records, so the same template approach applies, but nothing about Cloudflare for SaaS onboards it for you. See the [Cloudflare for SaaS guide](/blog/cloudflare-for-saas).
+
+## Common questions
+
+### What is Domain Connect?
+
+An open protocol for applying a service's DNS records at a customer's DNS provider. The service describes its records once in a template, the DNS provider onboards that template, and customers approve the changes on the provider's own consent screen instead of editing records by hand.
+
+### Which DNS providers support Domain Connect?
+
+Cloudflare supports the synchronous flow and documents public onboarding. GoDaddy created the protocol, and on 2026-11-20 discovery lookups also answered for ionos.com and for a zone on Vercel DNS. Support for your app also depends on whether each provider has onboarded your template, which you check with the template endpoint.
+
+### Can my app use Vercel's or Railway's Domain Connect template?
+
+No. Their templates require signatures made with Vercel's or Railway's private keys, so only their own dashboards can use them. An app that adds customer domains through their APIs needs its own template and key.
+
+### Is Domain Connect free?
+
+The protocol is free and the spec is public domain (CC0). DNS providers decide their own onboarding terms: the spec lets them require a contract or charge a fee. Cloudflare's docs describe onboarding by pull request and email without mentioning a fee.
+
+### Does Domain SDK support Domain Connect?
+
+Domain SDK doesn't run discovery or sign apply URLs. It gives you the platform's records in one shape (`domain.records`) for any supported platform, which is what you pass into the template, and its registry includes the One-click DNS setup and DNS records table components for the settings page. The discovery and signing code above is yours to keep on the server.
+
+## Next steps
+
+- [Custom domains for SaaS](/blog/custom-domains-for-saas): the whole custom-domain flow and the four ways to build it.
+- [Domain verification with TXT records](/blog/domain-verification): the tenant-level ownership check the template's TXT record feeds.
+- [One-click DNS setup component](/docs/components/one-click-dns-setup): the settings-page button and its manual fallback.
+- [Domain Connect specification](https://github.com/Domain-Connect/spec/blob/master/Domain%20Connect%20Spec%20Draft.adoc): version 2.3, revision 67, for every field and flow.
