@@ -30,7 +30,7 @@ Domain Connect has two flows. The synchronous flow is a browser redirect: one co
 2. GET  https://<prefix>/v2/customer.com/settings
 3. GET  <urlAPI>/v2/domainTemplates/providers/<yourProviderId>/services/<serviceId>
 4. GET  <urlSyncUX>/v2/domainTemplates/providers/<yourProviderId>/services/<serviceId>/apply
-          ?domain=customer.com&host=app&<variables>&redirect_uri=...&key=...&sig=...
+          ?domain=customer.com&host=app&groupId=...&<variables>&redirect_uri=...&key=...&sig=...
 ```
 
 The DNS provider only ever applies records from a template it has reviewed. Your app supplies the variable parts, such as the CNAME target and a verification token, and nothing else.
@@ -207,6 +207,7 @@ export interface ApplyUrlInput {
   target: DomainConnectTarget;
   providerId: string; // your template's providerId, e.g. yourapp.com
   serviceId: string;
+  groupId: string; // the template group to apply in this step
   variables: Record<string, string>;
   redirectUri: string;
   privateKeyPem: string;
@@ -217,6 +218,7 @@ export function signedApplyUrl(input: ApplyUrlInput): string {
   const { target } = input;
   const params = new URLSearchParams({ domain: target.zone });
   if (target.host) params.set("host", target.host);
+  params.set("groupId", input.groupId);
   for (const [name, value] of Object.entries(input.variables)) params.set(name, value);
   params.set("redirect_uri", input.redirectUri);
 
@@ -236,54 +238,87 @@ Why it's written this way:
 
 On 2026-11-20 this code found Cloudflare for a Cloudflare-hosted zone, got `true` for the Vercel and Railway templates, and built a URL whose signature verified against the matching public key.
 
-## 5. Fill the template from Domain SDK
+## 5. Two steps: ownership first, then routing
 
-The variables come from the hosting platform. [Domain SDK](/docs) returns them as `domain.records`, the same list a manual setup page shows, so the button and the fallback can't drift apart:
+The [custom domains guide](/blog/custom-domains-for-saas) attaches a hostname to the hosting platform only after your own TXT check passes, so a tenant can't tie up a domain they don't control. That means the routing target doesn't exist yet when the tenant first claims the hostname. The template's two groups fit that order: send the customer through it once with `groupId=ownership`, and again with `groupId=routing` after `domains.add()`. Each step is a separate consent at the DNS provider.
 
-```ts title="lib/domain-connect-url.ts"
+```ts title="lib/domain-connect-steps.ts"
 import { domains } from "@/lib/domains"; // your createDomainClient instance
-import { discoverDomainConnect, signedApplyUrl, supportsTemplate } from "@/lib/domain-connect";
+import {
+  discoverDomainConnect,
+  signedApplyUrl,
+  supportsTemplate,
+  type DomainConnectTarget,
+} from "@/lib/domain-connect";
 
 const PROVIDER_ID = "yourapp.com";
 const SERVICE_ID = "customdomain";
+const TOKEN_PREFIX = "yourapp-verify="; // the template adds it
 
-export async function domainConnectUrl(
+async function findTarget(hostname: string): Promise<DomainConnectTarget | null> {
+  const target = await discoverDomainConnect(hostname);
+  if (!target?.host) return null; // no trusted provider, or the zone apex
+  return (await supportsTemplate(target.settings, PROVIDER_ID, SERVICE_ID)) ? target : null;
+}
+
+function applyUrl(
+  target: DomainConnectTarget,
+  hostname: string,
+  groupId: string,
+  variables: Record<string, string>,
+) {
+  return signedApplyUrl({
+    target,
+    providerId: PROVIDER_ID,
+    serviceId: SERVICE_ID,
+    groupId,
+    variables,
+    redirectUri: `https://yourapp.com/settings/domains/return?hostname=${encodeURIComponent(hostname)}&step=${groupId}`,
+    privateKeyPem: process.env.DOMAIN_CONNECT_PRIVATE_KEY!,
+    keyHost: "_dcpubkeyv1",
+  });
+}
+
+// Step 1, right after the tenant claims the hostname: publish your challenge TXT.
+export async function ownershipStepUrl(
   hostname: string,
   challengeToken: string,
 ): Promise<string | null> {
+  const target = await findTarget(hostname);
+  if (!target) return null;
+  // challengeToken is the full value, e.g. from createVerificationToken().
+  return applyUrl(target, hostname, "ownership", {
+    token: challengeToken.slice(TOKEN_PREFIX.length),
+  });
+}
+
+// Step 2, after your TXT check passed and domains.add() ran: point the hostname at the platform.
+export async function routingStepUrl(hostname: string): Promise<string | null> {
   const domain = await domains.refresh(hostname);
   const cname = domain.records.find(
     (record) => record.purpose === "routing" && record.type === "CNAME" && record.required,
   );
   if (!cname) return null; // the platform wants A or ALIAS records: show manual setup
-  const platformOwnership = domain.verification.records.some(
-    (record) => record.required && record.status !== "valid",
+
+  // The template only writes the CNAME. Any other required record that isn't
+  // valid yet (a platform ownership TXT, a certificate record) means manual setup.
+  const unresolved = domain.records.some(
+    (record) => record !== cname && record.required && record.status !== "valid",
   );
-  if (platformOwnership) return null; // the template doesn't add the platform's TXT: show manual setup
+  if (unresolved) return null;
 
-  const target = await discoverDomainConnect(hostname);
-  if (!target?.host) return null; // no trusted provider, or the zone apex
-  if (!(await supportsTemplate(target.settings, PROVIDER_ID, SERVICE_ID))) return null;
-
-  return signedApplyUrl({
-    target,
-    providerId: PROVIDER_ID,
-    serviceId: SERVICE_ID,
-    variables: { target: cname.value, token: challengeToken },
-    redirectUri: `https://yourapp.com/settings/domains/return?hostname=${encodeURIComponent(hostname)}`,
-    privateKeyPem: process.env.DOMAIN_CONNECT_PRIVATE_KEY!,
-    keyHost: "_dcpubkeyv1",
-  });
+  const target = await findTarget(hostname);
+  return target ? applyUrl(target, hostname, "routing", { target: cname.value }) : null;
 }
 ```
 
-Call it from an authenticated endpoint after the tenant has claimed the hostname and you've issued its challenge token. A `null` means "show the manual records". The ownership check covers the platform's own records under `domain.verification.records`, such as Railway's `_railway-verify` TXT or Vercel's `_vercel` TXT (which appears when the domain is already used by another Vercel account): this template doesn't add them, so the function falls back to manual setup. To keep the button for those domains, add a TXT group for them to your template and pass the values as variables.
+Call both from authenticated endpoints: the ownership step only for a hostname with a pending challenge owned by the signed-in tenant, the routing step only for a hostname that tenant has already verified. A `null` means "show the manual records". The template adds the `yourapp-verify=` prefix itself, so step 1 passes only the random part of the token; the record the customer ends up with is the same full value your TXT check compares. The `unresolved` check covers records this template doesn't write, such as Railway's `_railway-verify` TXT, Vercel's `_vercel` TXT (when the domain is already used by another Vercel account) or a Cloudflare for SaaS certificate record. To keep the button for those domains, add a group for them to your template and pass their values as variables.
 
 In the browser, the [One-click DNS setup component](/docs/components/one-click-dns-setup) renders the button and a "Use manual records" link, and the [DNS records table](/docs/components/dns-records-table) renders the fallback. The component never builds or signs the URL; its `onConnect` callback asks your server for one.
 
 ## 6. Handle the return
 
-When the customer finishes at Cloudflare, the browser comes back to your signed `redirect_uri`. Because Cloudflare ignores `state`, put what you need in the `redirect_uri` itself, as the sample does with `hostname`, and check on return that the signed-in tenant owns a pending claim for it. Then call `domains.refresh(hostname)` and your own TXT check, and show the result. If the URL carries `error=access_denied`, the customer cancelled or couldn't authorize; show the manual records again.
+When the customer finishes at Cloudflare, the browser comes back to your signed `redirect_uri`. Because Cloudflare ignores `state`, put what you need in the `redirect_uri` itself, as the samples do with `hostname` and `step`, and check on return that the signed-in tenant owns that hostname: a pending challenge after the ownership step, a verified hostname after the routing step. After the ownership step, run your own TXT check, then `domains.add(hostname)`, and offer the routing step. After the routing step, call `domains.refresh(hostname)` and show the result. If the URL carries `error=access_denied`, the customer cancelled or couldn't authorize; show the manual records again.
 
 Don't mark anything verified because the redirect arrived. Records can take a few minutes to show up in public DNS, and the platform still has to verify the domain and issue a certificate. [Poll until the domain is active](/docs/guides/poll-until-active) the same way you would after a manual setup.
 
