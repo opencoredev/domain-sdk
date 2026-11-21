@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { ENTRY_PATCH_MARKER } from "./patch-vercel-routes";
@@ -81,6 +81,36 @@ for (const page of pagesIndex.pages ?? []) {
     throw new Error(
       `pages.json lastModified mismatch for ${page.route}: expected ${expected ?? "omitted"}, got ${actual ?? "omitted"}.`,
     );
+  }
+  const perPageJsonPath = join(
+    staticDir,
+    "api/docs/pages",
+    `${page.route.replace(/^\/+/, "")}.json`,
+  );
+  if (existsSync(perPageJsonPath)) {
+    const detail = JSON.parse(readFileSync(perPageJsonPath, "utf8")) as { lastModified?: string };
+    const detailDate = detail.lastModified?.slice(0, 10);
+    if (expected !== detailDate) {
+      throw new Error(
+        `Per-page JSON lastModified mismatch for ${page.route}: expected ${expected ?? "omitted"}, got ${detailDate ?? "omitted"}.`,
+      );
+    }
+  }
+  const htmlCandidates = [
+    join(staticDir, page.route.replace(/^\/+/, ""), "index.html"),
+    join(staticDir, `${page.route.replace(/^\/+/, "")}.html`),
+  ];
+  const htmlPath = htmlCandidates.find(
+    (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
+  );
+  if (htmlPath) {
+    const html = readFileSync(htmlPath, "utf8");
+    const htmlDate = html.match(/"dateModified":"(\d{4}-\d{2}-\d{2})/)?.[1];
+    if (expected !== htmlDate) {
+      throw new Error(
+        `HTML dateModified mismatch for ${page.route}: expected ${expected ?? "omitted"}, got ${htmlDate ?? "omitted"}.`,
+      );
+    }
   }
 }
 

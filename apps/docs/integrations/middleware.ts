@@ -271,6 +271,8 @@ export const onRequest = (async (
   let html = await response.text();
   if (pathname === "/blog" || pathname === "/blog/") {
     html = html.replace(/"@type":"TechArticle"/g, '"@type":"Blog"');
+  } else if (pathname === "/sitemap" || pathname === "/sitemap/") {
+    html = html.replace(/"@type":"TechArticle"/g, '"@type":"CollectionPage"');
   }
   const nextHtml = applyBreadcrumbsToHtml({ html, items: breadcrumbItems, extraTags: tags });
   return new Response(nextHtml, {

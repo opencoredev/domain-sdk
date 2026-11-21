@@ -43,9 +43,27 @@
       if (copy) {
         const block =
           copy.closest("[data-language]") ?? copy.parentElement?.querySelector("[data-language]");
+        const codeClass = block?.querySelector("code")?.className ?? "";
+        const classLang = codeClass.match(/\blanguage-([\w-]+)/)?.[1]?.toLowerCase() ?? null;
+        const rawLang = block?.getAttribute("data-language") ?? null;
+        const langMap = {
+          typescript: "ts",
+          javascript: "js",
+          bash: "bash",
+          shell: "sh",
+          json: "json",
+          tsx: "tsx",
+          jsx: "jsx",
+          html: "html",
+          css: "css",
+          yaml: "yaml",
+          markdown: "md",
+        };
+        const normalizedLang =
+          classLang ?? (rawLang ? (langMap[rawLang.toLowerCase()] ?? rawLang.toLowerCase()) : null);
         capture("docs_code_copied", {
           path: window.location.pathname,
-          language: block?.getAttribute("data-language") ?? null,
+          language: normalizedLang,
         });
         return;
       }
@@ -55,8 +73,24 @@
         return;
       }
 
-      if (event.target.closest("[data-blume-view-options], [data-blume-page-actions]")) {
-        capture("docs_view_options_opened", { path: window.location.pathname });
+      const dropdownSummary = event.target.closest(
+        "[data-blume-page-actions] details[data-blume-dropdown] > summary",
+      );
+      if (dropdownSummary) {
+        const details = dropdownSummary.parentElement;
+        if (!details || !details.hasAttribute("open")) {
+          capture("docs_view_options_opened", { path: window.location.pathname });
+        }
+        return;
+      }
+
+      const dropdownButton = event.target.closest(
+        "[data-blume-page-actions] [data-blume-dropdown] > button",
+      );
+      if (dropdownButton) {
+        if (dropdownButton.getAttribute("aria-expanded") !== "true") {
+          capture("docs_view_options_opened", { path: window.location.pathname });
+        }
         return;
       }
 

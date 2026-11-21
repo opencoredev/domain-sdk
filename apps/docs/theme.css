@@ -147,7 +147,14 @@ article.prose :not(pre) > code {
   color-scheme: dark;
 }
 
-.dns-records-preview h2,
+.dns-records-preview h2 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.25rem;
+  letter-spacing: normal;
+}
+
 .dns-records-preview p,
 .dns-records-preview dl,
 .dns-records-preview dd {
@@ -218,7 +225,7 @@ article.prose {
   line-height: 1.75;
 }
 
-article.prose :where(p:not([class]), li, td) {
+article.prose :where(p:not([class]), li, td):not(.not-prose *) {
   color: #e4e2db;
 }
 
