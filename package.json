@@ -14,17 +14,16 @@
     "lint": "turbo run lint",
     "test": "turbo run test",
     "test:registry": "bun test --preload ./registry/test-support/dom.ts registry/domain/*.test.ts registry/domain/*.test.tsx",
-    "registry:validate": "bunx --bun shadcn@latest registry validate ./registry.json",
-    "registry:build": "rm -rf apps/fumadocs/public/r && bunx --bun shadcn@latest build registry.json --output apps/fumadocs/public/r",
+    "registry:validate": "bunx --bun shadcn@4.23.0 registry validate ./registry.json",
+    "registry:build": "rm -rf apps/fumadocs/public/r && bunx --bun shadcn@4.23.0 build registry.json --output apps/fumadocs/public/r && oxfmt --write apps/fumadocs/public/r",
     "format": "oxfmt --write .",
     "check": "bun run lint && bun run typecheck && oxfmt --check .",
     "tegami": "node scripts/tegami.mts",
-    "release:check": "bun run --filter @opencoredev/domain-sdk lint && bun run --filter @opencoredev/domain-sdk check-types && bun run --filter @opencoredev/domain-sdk test",
+    "release:check": "turbo run lint check-types test --filter=@opencoredev/domain-sdk",
     "release:build": "bun run --filter @opencoredev/domain-sdk build",
     "release": "bun run release:check && bun run tegami version && bun run release:build && bun run tegami publish && bun run tegami cleanup"
   },
   "dependencies": {
-    "dotenv": "^17.4.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {

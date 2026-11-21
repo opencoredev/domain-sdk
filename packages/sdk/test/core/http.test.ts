@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { DomainSdkError } from "../../src";
-import { isTransientError, readJson, withRetry } from "../../src/core/http";
+import {
+  DEFAULT_MAX_RESPONSE_BYTES,
+  isTransientError,
+  readJson,
+  withRetry,
+} from "../../src/core/http";
+import { porkbun } from "../../src/providers/porkbun";
+import { createDnsClient } from "../../src";
 
 describe("readJson", () => {
   test("parses bodies larger than 16 KB", async () => {
@@ -46,6 +53,66 @@ describe("readJson", () => {
 
   test("returns undefined for an empty body", async () => {
     expect(await readJson(new Response(""))).toBeUndefined();
+  });
+
+  test("stops reading a streamed body past the byte cap", async () => {
+    const chunk = new Uint8Array(1024 * 1024).fill(0x20);
+    let pulled = 0;
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const error = await readJson(new Response(body)).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DomainSdkError);
+    expect(error).toMatchObject({
+      code: "REQUEST_FAILED",
+      retryable: false,
+      details: { maxBytes: DEFAULT_MAX_RESPONSE_BYTES },
+    });
+    expect(isTransientError(error)).toBe(false);
+    expect(cancelled).toBe(true);
+    // Eight 1 MiB chunks fit; the ninth crosses the cap. An unbounded stream would never end.
+    expect(pulled).toBeLessThanOrEqual(10);
+  });
+
+  test("rejects a declared Content-Length past the cap before reading", async () => {
+    const response = new Response("{}", { headers: { "content-length": "999999999" } });
+    await expect(readJson(response, 1_000)).rejects.toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { maxBytes: 1_000 },
+    });
+  });
+
+  test("accepts a body exactly at the cap", async () => {
+    const text = JSON.stringify("x".repeat(98));
+    expect(text).toHaveLength(100);
+    expect(await readJson(new Response(text), 100)).toBe("x".repeat(98));
+  });
+
+  test("Porkbun reports an oversized zone instead of buffering it", async () => {
+    const huge = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        controller.enqueue(new Uint8Array(1024 * 1024).fill(0x20));
+      },
+    });
+    const dns = createDnsClient({
+      provider: porkbun({
+        apiKey: "key",
+        secretApiKey: "secret",
+        fetch: async () => new Response(huge),
+      }),
+      retry: { maxAttempts: 1 },
+    });
+    await expect(dns.listRecords("example.com")).rejects.toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { maxBytes: 16 * 1024 * 1024 },
+    });
   });
 });
 

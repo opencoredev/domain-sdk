@@ -1,5 +1,5 @@
 import { DomainSdkError } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import { httpError, isAbortError, readJson, requireString, type Fetch } from "../../core/http";
 import type {
   DomainProvider,
   ProviderContext,
@@ -92,7 +92,7 @@ export function cloudflareSaaS(options: CloudflareSaaSOptions): CloudflareSaaSPr
         },
       });
     } catch (error) {
-      if (context.signal?.aborted)
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The Cloudflare request was cancelled.", {
           provider: "cloudflare",
           cause: error,
@@ -103,7 +103,7 @@ export function cloudflareSaaS(options: CloudflareSaaSOptions): CloudflareSaaSPr
         cause: error,
       });
     }
-    const body = await readJson(response);
+    const body = await readJson(response, undefined, "cloudflare", context.signal);
     if (!response.ok) {
       if (notFoundOkay && response.status === 404) return undefined;
       const envelope = body as CfEnvelope<unknown>;
@@ -315,8 +315,12 @@ export function cloudflareSaaS(options: CloudflareSaaSOptions): CloudflareSaaSPr
     },
     get,
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
-      const page = input.cursor ? Number.parseInt(input.cursor, 10) : 1;
-      if (!Number.isInteger(page) || page < 1)
+      const cursor = input.cursor;
+      const page = cursor === undefined ? 1 : Number(cursor);
+      if (
+        cursor !== undefined &&
+        (!/^\d+$/.test(cursor) || !Number.isSafeInteger(page) || page < 1)
+      )
         throw new DomainSdkError("REQUEST_FAILED", "Invalid Cloudflare page cursor.", {
           provider: "cloudflare",
         });
@@ -331,6 +335,11 @@ export function cloudflareSaaS(options: CloudflareSaaSOptions): CloudflareSaaSPr
     async remove({ hostname }, context) {
       const existing = await find(hostname, context);
       if (!existing?.id) return;
+      if (existing.id === "." || existing.id === "..") {
+        throw new DomainSdkError("REQUEST_FAILED", "Invalid Cloudflare custom hostname id.", {
+          provider: "cloudflare",
+        });
+      }
       await request(`/${encodeURIComponent(existing.id)}`, context, { method: "DELETE" }, true);
     },
   };

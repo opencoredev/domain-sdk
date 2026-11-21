@@ -8,7 +8,14 @@ import {
   type ZoneRecord,
 } from "../../core/dns";
 import { DomainSdkError, type DomainSdkErrorCode } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import {
+  httpError,
+  isAbortError,
+  isResponseTooLarge,
+  readJson,
+  requireString,
+  type Fetch,
+} from "../../core/http";
 
 export interface PorkbunOptions {
   apiKey: string;
@@ -35,6 +42,8 @@ interface PorkbunRecord {
   prio?: string | number | null;
 }
 
+/** Porkbun returns a whole zone in one response, so allow more than the 8 MiB default. */
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const normalizeNameserver = (name: string) => name.toLowerCase().replace(/\.$/, "");
 const isPorkbunNameserver = (name: string) => normalizeNameserver(name).endsWith(".porkbun.com");
 
@@ -78,8 +87,8 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
         },
         body: JSON.stringify({ ...fields, apikey: apiKey, secretapikey: secretApiKey }),
       });
-    } catch {
-      if (context.signal?.aborted)
+    } catch (error) {
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {
           provider: "porkbun",
         });
@@ -89,15 +98,22 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
       });
     }
 
-    // Porkbun returns a whole zone in one response, so never truncate it before parsing.
     let body: PorkbunResponse | undefined;
     try {
-      body = (await readJson(response, Number.POSITIVE_INFINITY)) as PorkbunResponse | undefined;
-    } catch {
-      if (context.signal?.aborted)
+      body = (await readJson(response, MAX_RESPONSE_BYTES, "porkbun", context.signal)) as
+        | PorkbunResponse
+        | undefined;
+    } catch (error) {
+      if (isResponseTooLarge(error)) throw error;
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {
           provider: "porkbun",
         });
+      if (
+        error instanceof DomainSdkError &&
+        (error.code === "PROVIDER_UNAVAILABLE" || error.code === "ABORTED")
+      )
+        throw error;
       if (!response.ok)
         throw httpError("porkbun", response, undefined, "porkbun rejected the request.");
       throw malformedResponse();
@@ -194,7 +210,14 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
       }
     },
     async deleteRecords({ zone, records }, context) {
-      for (const record of records) requireString(record.id, "a record id for deletion", "porkbun");
+      for (const record of records) {
+        const id = requireString(record.id, "a record id for deletion", "porkbun");
+        if (id === "." || id === "..") {
+          throw new DomainSdkError("REQUEST_FAILED", "Invalid Porkbun record id.", {
+            provider: "porkbun",
+          });
+        }
+      }
       for (const record of records)
         await request(
           `/dns/delete/${encodeURIComponent(zone)}/${encodeURIComponent(record.id!)}`,

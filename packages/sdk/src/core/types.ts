@@ -1,3 +1,5 @@
+import type { DomainSdkError } from "./errors";
+
 export type DomainStatus =
   | "pending"
   | "pending_dns"
@@ -74,11 +76,8 @@ export interface DomainLogger {
 export interface RequestOptions {
   signal?: AbortSignal;
 }
-export interface AddDomainOptions extends RequestOptions {}
-export interface GetDomainOptions extends RequestOptions {}
-export interface VerifyDomainOptions extends RequestOptions {}
-export interface RemoveDomainOptions extends RequestOptions {}
-export interface AddDomainObject extends AddDomainOptions {
+/** The object form of `DomainClient.add()`. */
+export interface AddDomainObject extends RequestOptions {
   hostname: string;
 }
 export interface ListDomainsOptions extends RequestOptions {
@@ -106,4 +105,36 @@ export interface WaitUntilActiveOptions extends RequestOptions {
   /** Randomize each delay between half and all of its value. Defaults to false. */
   jitter?: boolean;
   onStatus?(domain: Domain): void;
+  /**
+   * Return `true` to stop polling a domain that will not become active on its own. Polling then
+   * rejects with `VERIFICATION_FAILED`, whose `details` carry the status and issues. Defaults to
+   * stopping on `failed`. Pass `(domain) => ["failed", "misconfigured"].includes(domain.status)`
+   * to also stop on `misconfigured`, or `() => false` to keep polling until the timeout.
+   */
+  shouldStop?(domain: Domain): boolean;
 }
+
+/** Domain client operations reported to `onOperation`. `refresh()` and polls report `get`. */
+export type DomainOperation = "add" | "get" | "list" | "verify" | "remove";
+/** DNS client operations reported to `onOperation`. `applyDomainRecords()` reports `ensureRecords`. */
+export type DnsOperation = "getZone" | "listRecords" | "ensureRecords" | "removeRecords";
+
+interface OperationEventBase {
+  provider: string;
+  /** Wall time including retries and their waits. */
+  durationMs: number;
+  /** Provider attempts made, including the first. */
+  attempts: number;
+}
+
+export type OperationOutcome =
+  | { outcome: "success" }
+  | { outcome: "failure"; error: DomainSdkError };
+
+/** One finished `DomainClient` call, for metrics and tracing. */
+export type DomainOperationEvent = OperationEventBase &
+  OperationOutcome & { operation: DomainOperation; hostname?: string };
+
+/** One finished `DnsClient` call, for metrics and tracing. */
+export type DnsOperationEvent = OperationEventBase &
+  OperationOutcome & { operation: DnsOperation; zone: string };

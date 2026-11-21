@@ -1,3 +1,4 @@
+// Local constants instead of `export { x } from`: see the note in ../index.ts.
 import { createMockDnsRecord as mockDnsRecord, createMockDomain as mockDomain } from "./factories";
 import { memoryDnsProvider as memoryDns } from "./memory-dns-provider";
 import {
@@ -5,13 +6,11 @@ import {
   memoryProvider as memory,
 } from "./memory-provider";
 
-export const createFailingProvider: typeof failingProvider = (...arguments_) =>
-  failingProvider(...arguments_);
-export const createMockDnsRecord: typeof mockDnsRecord = (...arguments_) =>
-  mockDnsRecord(...arguments_);
-export const createMockDomain: typeof mockDomain = (...arguments_) => mockDomain(...arguments_);
-export const memoryDnsProvider: typeof memoryDns = (...arguments_) => memoryDns(...arguments_);
-export const memoryProvider: typeof memory = (...arguments_) => memory(...arguments_);
+export const createFailingProvider: typeof failingProvider = failingProvider;
+export const createMockDnsRecord: typeof mockDnsRecord = mockDnsRecord;
+export const createMockDomain: typeof mockDomain = mockDomain;
+export const memoryDnsProvider: typeof memoryDns = memoryDns;
+export const memoryProvider: typeof memory = memory;
 export type {
   MemoryOperation,
   MemoryProvider,

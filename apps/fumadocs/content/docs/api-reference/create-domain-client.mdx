@@ -4,9 +4,32 @@ description: Create a stateless client from a provider and optional silent-by-de
 ---
 
 ```ts title="Signature"
-createDomainClient(options: { provider: DomainProvider; logger?: DomainLogger }): DomainClient
+createDomainClient(options: {
+  provider: DomainProvider;
+  logger?: DomainLogger;
+  retry?: RetryOptions;
+  onOperation?(event: DomainOperationEvent): void;
+}): DomainClient
 ```
 
 The returned client exposes stable provider ID and capability metadata. Logger methods receive operational messages and sanitized context; hostnames may appear because they are operational identifiers. The SDK never logs credentials.
+
+`onOperation` runs once when each call finishes, for metrics or tracing. `createDnsClient()` takes the same hook and reports `zone` instead of `hostname`.
+
+```ts title="metrics.ts"
+const domains = createDomainClient({
+  provider,
+  onOperation(event) {
+    // event: { operation, provider, hostname?, durationMs, attempts, outcome, error? }
+    metrics.histogram("domain_sdk.duration_ms", event.durationMs, {
+      operation: event.operation,
+      outcome: event.outcome,
+      code: event.outcome === "failure" ? event.error.code : undefined,
+    });
+  },
+});
+```
+
+`attempts` counts provider calls including retries, and `durationMs` includes retry waits. `refresh()` and each `waitUntilActive()` poll report `get`. A hook that throws is logged with `logger.warn` and does not change the result.
 
 Read next: [`DomainClient`](./domain-client.mdx).

@@ -238,4 +238,28 @@ describe("Render adapter", () => {
       retryAfter: 2000,
     });
   });
+
+  test("uses a configured apex address and validates it", async () => {
+    const mock = mockFetch((url) => {
+      if (url.pathname === "/v1/services/srv_123")
+        return json({ serviceDetails: { url: "https://domain-sdk.onrender.com" } });
+      return json({ ...pendingDomain, id: "apex", name: "customer.com", domainType: "apex" });
+    });
+    const client = createDomainClient({
+      provider: render({
+        apiKey: "key",
+        serviceId: "srv_123",
+        apexAddress: "216.24.57.7",
+        fetch: mock.fetch,
+      }),
+    });
+    expect((await client.get("customer.com")).records[0]).toMatchObject({
+      type: "A",
+      value: "216.24.57.7",
+    });
+    for (const apexAddress of ["", "216.24.57", "256.1.1.1", "render.com"])
+      expect(() => render({ apiKey: "key", serviceId: "srv_123", apexAddress })).toThrow(
+        expect.objectContaining({ code: "INVALID_CONFIGURATION" }),
+      );
+  });
 });

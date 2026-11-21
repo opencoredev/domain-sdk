@@ -1,7 +1,7 @@
 import { getDomain } from "tldts";
 
 import { DomainSdkError } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import { httpError, isAbortError, readJson, requireString, type Fetch } from "../../core/http";
 import type {
   DomainProvider,
   ProviderContext,
@@ -70,7 +70,7 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
         },
       });
     } catch (error) {
-      if (context.signal?.aborted)
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The Netlify request was cancelled.", {
           provider: "netlify",
           cause: error,
@@ -82,7 +82,7 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
       });
     }
 
-    const body = await readJson(response);
+    const body = await readJson(response, undefined, "netlify", context.signal);
     if (!response.ok) {
       if (notFoundOkay && response.status === 404) return undefined;
       throw httpError("netlify", response, body, "Netlify rejected the request.");
@@ -226,6 +226,19 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
     return updated;
   };
 
+  // Netlify stores aliases as one array that add and remove read, change, and PATCH back whole.
+  // Run those read-modify-writes one at a time so concurrent calls on this instance do not
+  // overwrite each other's aliases.
+  let queue: Promise<unknown> = Promise.resolve();
+  const serialize = <T>(task: () => Promise<T>): Promise<T> => {
+    const pending = queue.catch(() => {}).then(task);
+    queue = pending.then(
+      () => {},
+      () => {},
+    );
+    return pending;
+  };
+
   return {
     id: "netlify",
     capabilities: {
@@ -235,17 +248,22 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
       apexDomains: true,
       wildcardDomains: false,
     },
-    async add({ hostname }, context) {
-      let state = await getState(context);
-      if (hasAlias(state.site, hostname)) return normalize(hostname, state);
-      const aliases = [...(state.site.domain_aliases ?? []), hostname];
-      state = { ...state, site: await updateAliases(aliases, context) };
-      return normalize(hostname, state);
+    add({ hostname }, context) {
+      return serialize(async () => {
+        const state = await getState(context);
+        if (hasAlias(state.site, hostname)) return normalize(hostname, state);
+        const aliases = [...(state.site.domain_aliases ?? []), hostname];
+        return normalize(hostname, { ...state, site: await updateAliases(aliases, context) });
+      });
     },
     get,
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
-      const offset = input.cursor ? Number.parseInt(input.cursor, 10) : 0;
-      if (!Number.isInteger(offset) || offset < 0)
+      if (input.cursor !== undefined && !/^\d+$/.test(input.cursor))
+        throw new DomainSdkError("REQUEST_FAILED", "Invalid Netlify list cursor.", {
+          provider: "netlify",
+        });
+      const offset = input.cursor !== undefined ? Number(input.cursor) : 0;
+      if (!Number.isSafeInteger(offset) || offset < 0)
         throw new DomainSdkError("REQUEST_FAILED", "Invalid Netlify list cursor.", {
           provider: "netlify",
         });
@@ -258,13 +276,15 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
         nextCursor: next < aliases.length ? String(next) : undefined,
       };
     },
-    async remove({ hostname }, context) {
-      const state = await getState(context);
-      if (!hasAlias(state.site, hostname)) return;
-      await updateAliases(
-        (state.site.domain_aliases ?? []).filter((alias) => alias.toLowerCase() !== hostname),
-        context,
-      );
+    remove({ hostname }, context) {
+      return serialize(async () => {
+        const state = await getState(context);
+        if (!hasAlias(state.site, hostname)) return;
+        await updateAliases(
+          (state.site.domain_aliases ?? []).filter((alias) => alias.toLowerCase() !== hostname),
+          context,
+        );
+      });
     },
   };
 }

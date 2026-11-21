@@ -1,16 +1,89 @@
-import { abortedError, DomainSdkError, parseRetryAfter, redact } from "./errors";
+import { abortedError, DomainSdkError, parseRetryAfter, redact, safeInstanceOf } from "./errors";
 import type { RetryOptions } from "./types";
 
 export type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
-/** Parse a JSON response body. `maxLength` only bounds the preview kept in error details. */
-export async function readJson(response: Response, maxLength = 16_000): Promise<unknown> {
+/** Largest response body `readJson()` buffers by default: 8 MiB. */
+export const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+const oversizedResponses = new WeakSet<DomainSdkError>();
+
+function responseTooLarge(response: Response, maxBytes: number, provider?: string): DomainSdkError {
+  const error = new DomainSdkError(
+    "REQUEST_FAILED",
+    `The provider response is larger than ${maxBytes} bytes.`,
+    { provider, statusCode: response.status, details: { maxBytes } },
+  );
+  oversizedResponses.add(error);
+  return error;
+}
+
+/** Whether `readJson()` rejected a body for exceeding its byte cap. */
+export function isResponseTooLarge(error: unknown): error is DomainSdkError {
+  return safeInstanceOf(error, DomainSdkError) && oversizedResponses.has(error);
+}
+
+/** Read a response body as text, refusing to buffer more than `maxBytes`. */
+async function readText(response: Response, maxBytes: number, provider?: string): Promise<string> {
+  const declared = Number(response.headers.get("content-length"));
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    void response.body?.cancel().catch(() => {});
+    throw responseTooLarge(response, maxBytes, provider);
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks: string[] = [];
+  let length = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > maxBytes) {
+        void reader.cancel().catch(() => {});
+        throw responseTooLarge(response, maxBytes, provider);
+      }
+      chunks.push(decoder.decode(value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    return chunks.join("");
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+export function isAbortError(error: unknown): boolean {
+  try {
+    return (
+      (error instanceof Error ||
+        (typeof DOMException === "function" && error instanceof DOMException)) &&
+      error.name === "AbortError"
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Parse a JSON response body. Bodies over `maxBytes` (8 MiB by default) are cancelled and
+ * rejected with `REQUEST_FAILED` instead of being buffered into memory.
+ */
+export async function readJson(
+  response: Response,
+  maxBytes = DEFAULT_MAX_RESPONSE_BYTES,
+  provider?: string,
+  signal?: AbortSignal,
+): Promise<unknown> {
   let rawText: string;
   try {
-    rawText = await response.text();
+    rawText = await readText(response, maxBytes, provider);
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") throw error;
+    if (safeInstanceOf(error, DomainSdkError)) throw error;
+    if (signal?.aborted) throw abortedError(provider, signal.reason ?? error);
+    if (isAbortError(error)) throw abortedError(provider, error);
     throw new DomainSdkError("PROVIDER_UNAVAILABLE", "The provider response was interrupted.", {
+      provider,
       retryable: true,
       cause: error,
     });
@@ -20,9 +93,10 @@ export async function readJson(response: Response, maxLength = 16_000): Promise<
     return JSON.parse(rawText) as unknown;
   } catch {
     throw new DomainSdkError("REQUEST_FAILED", "The provider returned malformed JSON.", {
+      provider,
       statusCode: response.status,
       retryable: response.status >= 500,
-      details: { response: rawText.slice(0, Math.min(maxLength, 1_000)) },
+      details: { response: redact(rawText) },
     });
   }
 }
@@ -70,26 +144,35 @@ export function requireString(value: string | undefined, name: string, provider:
 
 export type Sleep = (ms: number, signal?: AbortSignal) => Promise<void>;
 
-/** Wait `ms`, rejecting with `ABORTED` as soon as `signal` aborts. */
-export const sleep: Sleep = (ms, signal) =>
-  new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) return reject(abortedError(undefined, signal.reason));
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(abortedError(undefined, signal?.reason));
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** Wait `ms`, rejecting with `ABORTED` as soon as `signal` aborts. Splits waits above the 32-bit timer cap. */
+export const sleep: Sleep = async (ms, signal) => {
+  if (signal?.aborted) throw abortedError(undefined, signal.reason);
+  let remaining = Math.max(0, ms);
+  while (remaining > 0) {
+    const step = Math.min(remaining, MAX_TIMER_MS);
+    await new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) return reject(abortedError(undefined, signal.reason));
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(abortedError(undefined, signal?.reason));
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, step);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+    remaining -= step;
+  }
+};
 
 const RETRYABLE_STATUS = new Set([502, 503, 504]);
 
 /** Whether an error is a transient rate limit or outage worth retrying. */
 export function isTransientError(error: unknown): error is DomainSdkError {
-  if (!(error instanceof DomainSdkError) || !error.retryable) return false;
+  if (!safeInstanceOf(error, DomainSdkError) || !error.retryable) return false;
   if (error.code === "RATE_LIMITED") return true;
   if (error.code === "PROVIDER_UNAVAILABLE")
     return error.statusCode === undefined || RETRYABLE_STATUS.has(error.statusCode);
@@ -147,7 +230,9 @@ export async function withRetry<T>(
       const delayMs =
         error.retryAfter !== undefined
           ? Math.min(error.retryAfter, maxDelayMs)
-          : Math.random() * Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+          : baseDelayMs === 0
+            ? 0
+            : Math.random() * Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
       options.onRetry?.(error, attempt, delayMs);
       await wait(delayMs, options.signal);
     }
