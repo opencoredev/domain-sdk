@@ -2124,7 +2124,42 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     expect(preReplaceZone).toEqual([]);
     expect(preReplaceErr).toMatchObject({
       code: "PROVIDER_UNAVAILABLE",
-      details: { restored: true, externalChange: true },
+      details: { restored: false, externalChange: true },
+    });
+
+    // R27: Digest non-backtracking exempt check, Basic ,/\ passwords, space-separated and extended secret keys
+    expect(
+      scrub('Digest tokens=public, username="alice", response="0123456789abcdef0123456789abcdef"'),
+    ).toBe("Digest [REDACTED]");
+    expect(scrub('Digest authx=public, response="SECRET123"')).toBe("Digest [REDACTED]");
+    expect(scrub("Basic admin:pa,SECRET123")).toBe("Basic [REDACTED]");
+    expect(scrub("Basic admin:pa\\SECRET123")).toBe("Basic [REDACTED]");
+    expect(scrub("passwd SECRET123 access_token SECRET456 api-key SECRET789")).toBe(
+      "passwd [REDACTED] access_token [REDACTED] api-key [REDACTED]",
+    );
+    expect(scrub("password is SECRET123 token%3DSECRET456 X-Amz-Signature=SIG123")).toBe(
+      "password is [REDACTED] token%3D[REDACTED] X-Amz-Signature=[REDACTED]",
+    );
+    expect(
+      new DomainSdkError("REQUEST_FAILED", "x", {
+        details: {
+          auth: "a",
+          credentials: "c",
+          bearer: "b",
+          jwt: "j",
+          signature: "s",
+          pass: "p",
+          basicAuth: "ba",
+        },
+      }).details,
+    ).toEqual({
+      auth: "[REDACTED]",
+      credentials: "[REDACTED]",
+      bearer: "[REDACTED]",
+      jwt: "[REDACTED]",
+      signature: "[REDACTED]",
+      pass: "[REDACTED]",
+      basicAuth: "[REDACTED]",
     });
 
     let commitWantedZone: ZoneRecord[] = [

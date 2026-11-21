@@ -24,10 +24,10 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|secret|password|passwd|pwd|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie))$/i;
+  /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|basic[_-]?auth|auth|credentials|bearer|jwt|x-amz-signature|signature|secret|password|passwd|pwd|pass|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Bearer|Jwt))$/i;
 const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)(\s+|[:=][ \t]*)/gi;
 const EXEMPT_AUTH_WORDS =
-  /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your)$/i;
+  /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your|ok|passed|true|false)$/i;
 const URL_USERINFO_BARE =
   /(?<![a-z0-9+."'-])([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:\/|(?![/\\]))|[^/?#\s\\<>])+)@/gi;
 const URL_USERINFO_DOUBLE_QUOTED =
@@ -35,7 +35,7 @@ const URL_USERINFO_DOUBLE_QUOTED =
 const URL_USERINFO_SINGLE_QUOTED =
   /(?<=')([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/']|(?![/\\']))|[^/?#\s\\'<>]|'(?=[^}\]:\s])(?!,\s*'))+)@/gi;
 const INLINE_SECRET_PREFIX =
-  /(?<![A-Za-z0-9])(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|passwd|pwd|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie))\\*["']?\s*(?:=|:)\s*/gi;
+  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?:=|:|%3D)\s*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|passwd|pwd|private[_-]?key)[ \t]+|password[ \t]+is[ \t]+))/gi;
 
 function isShortBasicCredential(token: string): boolean {
   if (token.length < 4 || token.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(token)) {
@@ -158,8 +158,16 @@ function scrubAuthSchemes(value: string): string {
     ) {
       valueEnd = scanSecretValueEnd(value, valueStart);
     } else if (lower === "digest") {
-      const digestLead = /^([A-Za-z_][A-Za-z0-9_-]*)(?![ \t]*=)/.exec(value.slice(valueStart));
-      if (digestLead && EXEMPT_AUTH_WORDS.test(digestLead[1]!)) continue;
+      const digestLead = /^([A-Za-z_][A-Za-z0-9_-]*)(?=$|[\s.!?:,;)}\]])/.exec(
+        value.slice(valueStart),
+      );
+      if (
+        digestLead &&
+        EXEMPT_AUTH_WORDS.test(digestLead[1]!) &&
+        !/^[ \t]*=/.test(value.slice(valueStart + digestLead[1]!.length))
+      ) {
+        continue;
+      }
       let inQuote: '"' | "'" | null = null;
       while (valueEnd < value.length) {
         const ch = value[valueEnd]!;
@@ -214,7 +222,7 @@ function scrubAuthSchemes(value: string): string {
         const ch = value[idx]!;
         if (
           lower === "basic" &&
-          (ch === ";" || ch === ")") &&
+          (ch === ";" || ch === ")" || ch === "," || ch === "\\") &&
           value.slice(from, idx).includes(":") &&
           idx + 1 < value.length &&
           !/[\s"'<]/.test(value[idx + 1]!)
@@ -315,8 +323,11 @@ function scrubInlineSecrets(value: string): string {
       quote !== '"' &&
       quote !== "'" &&
       quote !== "\\" &&
-      /^(?:token|authorization)\s*(?:=|:)\s*$/i.test(match[0]) &&
-      EXEMPT_AUTH_WORDS.test(rawVal.replace(/[.!?:]+$/, ""))
+      /^(?:token|authorization|pass|password|passwd|pwd|signature|credentials|jwt)\s*(?:=|:|is\s+|\s+)\s*$/i.test(
+        match[0],
+      ) &&
+      (EXEMPT_AUTH_WORDS.test(rawVal.replace(/[.!?:]+$/, "")) ||
+        /^(?:bearer|basic|digest|apikey|token)$/i.test(rawVal.replace(/[.!?:]+$/, "")))
     ) {
       continue;
     }
