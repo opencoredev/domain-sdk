@@ -3,6 +3,19 @@ title: Changelog
 description: User-visible Domain SDK releases and compatibility changes.
 ---
 
+## 0.3.0
+
+- Added the bunny.net adapter for custom hostnames on a bunny.net pull zone, with apex and wildcard support and `verify()` as a certificate request.
+- Added `createDnsClient()` for writing a domain's records into a DNS zone, with the Porkbun, Namecheap, and Spaceship adapters. It only creates missing records and refuses to overwrite conflicting ones unless you pass `onConflict: "replace"`.
+- Both clients retry rate limits and transient outages up to 3 attempts, honoring `Retry-After`. Configure it with `retry`.
+- `waitUntilActive()` backs off between polls (`backoffFactor`, `maxIntervalMs`, `jitter`).
+- `createDnsClient({ lock })` accepts a shared per-zone lock for several workers.
+- Responses over 16 KB parse correctly, and the SDK no longer imports any `node:*` module.
+
+## 0.2.0
+
+- Added `createSubdomainClient()` for tenant subdomains under a parent domain you own, with reserved labels, direct-child validation, and wildcard provisioning where the provider supports it.
+
 ## 0.1.0
 
 - Added the core client, normalized model, hostname validation, errors, polling, and logging contract.

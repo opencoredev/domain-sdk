@@ -3,8 +3,10 @@
 Custom domains, handled. Add, verify, monitor, and remove customer domains with one TypeScript API. This package is server-side infrastructure; never expose provider credentials to a browser.
 
 ```bash
-bun add @opencoredev/domain-sdk
+npm install @opencoredev/domain-sdk
 ```
+
+Requires Node 20+ or Bun. The package is ESM-only and imports no Node built-ins, so it also loads in Cloudflare Workers, Vercel Edge, and Deno.
 
 ```ts
 import { createDomainClient } from "@opencoredev/domain-sdk";
@@ -29,14 +31,16 @@ import { createSubdomainClient } from "@opencoredev/domain-sdk";
 const subdomains = createSubdomainClient({
   domainClient: domains,
   baseDomain: "mydomain.com",
-  reservedLabels: ["www", "api", "admin"],
 });
 
 const hostname = subdomains.toHostname("customer"); // customer.mydomain.com
+subdomains.toHostname("www"); // throws INVALID_HOSTNAME: www, api, admin, and mail are reserved
 
 // Provision once when the selected adapter supports wildcards.
 const wildcard = await subdomains.provisionWildcard();
 ```
+
+Pass `reservedLabels` to replace the default reserved labels, for example `[...DEFAULT_RESERVED_LABELS, "billing"]`, or `[]` to reserve none. `subdomains.list()` pages through the tenant subdomains the provider already has.
 
 Store the normalized label and hostname with the tenant in your own database. Configure the required DNS records returned by wildcard provisioning once; otherwise use `subdomains.add("customer")` to attach each hostname separately.
 
@@ -110,6 +114,17 @@ try {
   }
 }
 ```
+
+Run the same lifecycle from a terminal or script with the `domain-sdk` CLI. It reads credentials from the environment variables above:
+
+```bash
+export VERCEL_TOKEN=... VERCEL_PROJECT_ID=...
+npx @opencoredev/domain-sdk add app.customer.com --provider vercel   # prints the DNS records to configure
+npx @opencoredev/domain-sdk wait app.customer.com --provider vercel --timeout-ms 600000
+npx @opencoredev/domain-sdk list --provider vercel --json
+```
+
+Commands are `add`, `get`, `list`, `verify`, `remove`, and `wait`. `--json` prints machine-readable output. The exit code is 0 on success, 1 when the provider operation fails (the error code is printed), and 2 for an invalid command line or missing environment variables.
 
 Test without network access:
 
