@@ -226,6 +226,16 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
     return updated;
   };
 
+  // Netlify stores aliases as one array that add and remove read, change, and PATCH back whole.
+  // Run those read-modify-writes one at a time so concurrent calls on this instance do not
+  // overwrite each other's aliases.
+  let queue: Promise<unknown> = Promise.resolve();
+  const serialize = <T>(task: () => Promise<T>): Promise<T> => {
+    const pending = queue.catch(() => {}).then(task);
+    queue = pending;
+    return pending;
+  };
+
   return {
     id: "netlify",
     capabilities: {
@@ -235,12 +245,13 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
       apexDomains: true,
       wildcardDomains: false,
     },
-    async add({ hostname }, context) {
-      let state = await getState(context);
-      if (hasAlias(state.site, hostname)) return normalize(hostname, state);
-      const aliases = [...(state.site.domain_aliases ?? []), hostname];
-      state = { ...state, site: await updateAliases(aliases, context) };
-      return normalize(hostname, state);
+    add({ hostname }, context) {
+      return serialize(async () => {
+        const state = await getState(context);
+        if (hasAlias(state.site, hostname)) return normalize(hostname, state);
+        const aliases = [...(state.site.domain_aliases ?? []), hostname];
+        return normalize(hostname, { ...state, site: await updateAliases(aliases, context) });
+      });
     },
     get,
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
@@ -258,13 +269,15 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
         nextCursor: next < aliases.length ? String(next) : undefined,
       };
     },
-    async remove({ hostname }, context) {
-      const state = await getState(context);
-      if (!hasAlias(state.site, hostname)) return;
-      await updateAliases(
-        (state.site.domain_aliases ?? []).filter((alias) => alias.toLowerCase() !== hostname),
-        context,
-      );
+    remove({ hostname }, context) {
+      return serialize(async () => {
+        const state = await getState(context);
+        if (!hasAlias(state.site, hostname)) return;
+        await updateAliases(
+          (state.site.domain_aliases ?? []).filter((alias) => alias.toLowerCase() !== hostname),
+          context,
+        );
+      });
     },
   };
 }
