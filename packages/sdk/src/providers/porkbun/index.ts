@@ -210,7 +210,14 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
       }
     },
     async deleteRecords({ zone, records }, context) {
-      for (const record of records) requireString(record.id, "a record id for deletion", "porkbun");
+      for (const record of records) {
+        const id = requireString(record.id, "a record id for deletion", "porkbun");
+        if (id === "." || id === "..") {
+          throw new DomainSdkError("REQUEST_FAILED", "Invalid Porkbun record id.", {
+            provider: "porkbun",
+          });
+        }
+      }
       for (const record of records)
         await request(
           `/dns/delete/${encodeURIComponent(zone)}/${encodeURIComponent(record.id!)}`,

@@ -144,7 +144,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       finish({ outcome: "success" });
       return result;
     } catch (error) {
-      const normalized = Object.freeze(normalizeUnknownError(error, provider.id));
+      const normalized = normalizeUnknownError(error, provider.id);
       safeLog("error", "Domain operation failed.", {
         provider: provider.id,
         operation: name,
@@ -157,7 +157,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
     }
   };
   function failEarly(name: DomainOperation, hostname: string | undefined, error: unknown): never {
-    const normalized = Object.freeze(normalizeUnknownError(error, provider.id));
+    const normalized = normalizeUnknownError(error, provider.id);
     report({
       operation: name,
       provider: provider.id,

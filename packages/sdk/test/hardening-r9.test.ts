@@ -2864,4 +2864,180 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     expect(cfErr).toBeInstanceOf(DomainSdkError);
     expect(cfDeleteCalled).toBe(false);
   });
+
+  test("R34: cloned hook errors keep thrown errors mutable while isolating code/details, details.remaining preserves TXT values, trailing credentials redact across all prefixes, per-record replace detects external deletion, and Porkbun rejects dot IDs", async () => {
+    // 1. Thrown error stays mutable (e.g. framework err.digest), while hook mutations to code/retryable/details cannot leak (including DNS failEarly).
+    const domErr = await createDomainClient({
+      provider: memoryProvider(),
+      onOperation(ev) {
+        if (ev.outcome === "failure") {
+          (ev.error as { code: string }).code = "MUTATED";
+          (ev.error as { retryable: boolean }).retryable = true;
+          if (ev.error.details) ev.error.details.tampered = true;
+        }
+      },
+    })
+      .add("bad..host")
+      .catch((e) => e);
+    expect(domErr).toBeInstanceOf(DomainSdkError);
+    expect(domErr.code).toBe("INVALID_HOSTNAME");
+    expect(domErr.retryable).toBe(false);
+    expect(Object.isFrozen(domErr)).toBe(false);
+    (domErr as { digest?: string }).digest = "next-digest";
+    expect((domErr as { digest?: string }).digest).toBe("next-digest");
+
+    const dnsEarlyErr = await createDnsClient({
+      provider: {
+        id: "no-zone-info",
+        capabilities: {
+          recordTypes: ["A"],
+          ttl: { min: 60, max: 3600 },
+          wholeZoneWrites: false,
+          zoneInfo: false,
+        },
+        listRecords: async () => [],
+        createRecords: async () => {},
+        deleteRecords: async () => {},
+      },
+      onOperation(ev) {
+        if (ev.outcome === "failure") {
+          (ev.error as { code: string }).code = "MUTATED";
+          (ev.error as { retryable: boolean }).retryable = true;
+        }
+      },
+    })
+      .getZone("example.com")
+      .catch((e) => e);
+    expect(dnsEarlyErr).toBeInstanceOf(DomainSdkError);
+    expect(dnsEarlyErr.code).toBe("UNSUPPORTED_OPERATION");
+    expect(dnsEarlyErr.retryable).toBe(false);
+
+    const conflictZone = memoryDnsProvider();
+    await conflictZone.createRecords(
+      { zone: "example.com", records: [{ type: "A", name: "app.example.com", value: "9.9.9.9" }] },
+      { logger: {} },
+    );
+    const detailsIsoErr = await createDnsClient({
+      provider: conflictZone,
+      onOperation(ev) {
+        if (ev.outcome === "failure" && ev.error.details) {
+          ev.error.details.conflicts = [];
+          ev.error.details.hacked = true;
+        }
+      },
+    })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(detailsIsoErr.code).toBe("DOMAIN_CONFLICT");
+    expect(detailsIsoErr.details?.hacked).toBeUndefined();
+    const isoConflicts = detailsIsoErr.details?.conflicts;
+    expect(Array.isArray(isoConflicts) ? isoConflicts.length : 0).toBe(1);
+
+    // 2. details.remaining preserves TXT record values.
+    const remErr = new DomainSdkError("REQUEST_FAILED", "verify failed", {
+      details: { remaining: [{ type: "TXT", name: "app.example.com", value: "token=abc123" }] },
+    });
+    expect(remErr.details).toMatchObject({
+      remaining: [{ type: "TXT", name: "app.example.com", value: "token=abc123" }],
+    });
+
+    // 3. Trailing credentials after exempt words redact across all prefixes + Bearer+ form encoding.
+    for (const [raw, leak] of [
+      ['ApiKey : invalid "supersecret"', "supersecret"],
+      ['api_key: expired "sk_live_999"', "sk_live_999"],
+      ['passphrase: missing "pp_secret_42"', "pp_secret_42"],
+      ['Basic: invalid "admin:s3cr3t"', "s3cr3t"],
+      ["Bearer+S3CR3T_FORM_TOKEN", "S3CR3T_FORM_TOKEN"],
+    ] as const) {
+      const scrubbed = String(redact(raw));
+      expect(scrubbed).not.toContain(leak);
+      expect(scrubbed).toContain("[REDACTED]");
+    }
+
+    // 4. Per-record replace rollback detects concurrent external deletion of a pre-existing wanted record.
+    const prReplaceZone: ZoneRecord[] = [
+      { id: "w1", type: "TXT", name: "_v.example.com", value: "keep-me", ttl: 300, editable: true },
+      { id: "c1", type: "A", name: "app.example.com", value: "9.9.9.9", ttl: 300, editable: true },
+    ];
+    let prCreateAttempt = 0;
+    const prReplaceErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "pr-ext-del",
+        capabilities: {
+          wholeZoneWrites: false,
+          recordTypes: ["A", "TXT"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return prReplaceZone.map((r) => ({ ...r }));
+        },
+        async deleteRecords({ records }) {
+          for (const rec of records) {
+            const idx = prReplaceZone.findIndex((r) => r.id === rec.id);
+            if (idx >= 0) prReplaceZone.splice(idx, 1);
+          }
+        },
+        async createRecords({ records }) {
+          prCreateAttempt += 1;
+          if (prCreateAttempt === 1) {
+            // Concurrent writer deletes pre-existing wanted TXT record during failed replace.
+            const wIdx = prReplaceZone.findIndex((r) => r.id === "w1");
+            if (wIdx >= 0) prReplaceZone.splice(wIdx, 1);
+            throw new DomainSdkError("REQUEST_FAILED", "create failed", { provider: "pr-ext-del" });
+          }
+          for (const rec of records) {
+            prReplaceZone.push({
+              id: `r-${prReplaceZone.length}`,
+              type: rec.type,
+              name: rec.name,
+              value: rec.value,
+              ttl: rec.ttl ?? 300,
+              editable: true,
+            });
+          }
+        },
+      },
+    })
+      .ensureRecords(
+        [
+          { type: "TXT", name: "_v.example.com", value: "keep-me" },
+          { type: "A", name: "app.example.com", value: "1.2.3.4" },
+        ],
+        { zone: "example.com", onConflict: "replace" },
+      )
+      .catch((e) => e);
+    expect(prReplaceErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { restored: true, externalChange: true },
+    });
+    expect(prReplaceErr.message).toContain("changed concurrently");
+
+    // 5. Porkbun deleteRecords rejects dot-segment IDs without issuing a network request.
+    let pbDeleteCalled = false;
+    const pb = porkbun({
+      apiKey: "pk1_key",
+      secretApiKey: "sk1_secret",
+      fetch: async () => {
+        pbDeleteCalled = true;
+        return new Response(JSON.stringify({ status: "SUCCESS" }), { status: 200 });
+      },
+    });
+    const pbErr = await pb
+      .deleteRecords(
+        {
+          zone: "example.com",
+          records: [
+            { id: "..", type: "A", name: "app.example.com", value: "1.2.3.4", editable: true },
+          ],
+        },
+        { logger: {} },
+      )
+      .catch((e: unknown) => e);
+    expect(pbErr).toBeInstanceOf(DomainSdkError);
+    expect(pbDeleteCalled).toBe(false);
+  });
 });

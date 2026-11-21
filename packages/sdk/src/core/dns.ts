@@ -413,7 +413,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       finish({ outcome: "success" });
       return result;
     } catch (error) {
-      const normalized = Object.freeze(normalizeUnknownError(error, provider.id));
+      const normalized = normalizeUnknownError(error, provider.id);
       safeLog("error", "DNS operation failed.", {
         provider: provider.id,
         operation: name,
@@ -829,7 +829,9 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     let foreignSameKey: ZoneRecord[] = [];
     try {
       const current = await provider.listRecords({ zone }, ctx);
-      externalChange = !afterAcceptedWrite && subtract(preExistingWanted, current).length > 0;
+      externalChange =
+        (!afterAcceptedWrite || !provider.capabilities.wholeZoneWrites) &&
+        subtract(preExistingWanted, current).length > 0;
       const unexpected = subtract(deletableUnexpectedCandidates(current), beforeForUnexpected);
       const isRequested = (record: ZoneRecord) =>
         requested.some((wanted) => sameRecord(record, wanted));
@@ -885,7 +887,8 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             ? subtract(replaced, verified).length > 0
             : false;
         externalChange ||=
-          (!afterAcceptedWrite && (preWantedLost || lockedLost)) ||
+          ((!afterAcceptedWrite || !provider.capabilities.wholeZoneWrites) && preWantedLost) ||
+          (!afterAcceptedWrite && lockedLost) ||
           foreignAdded.length > 0 ||
           unrelatedRemoved.length > 0;
         // A kept unrequested same-key record means rollback is incomplete when the write was
@@ -922,7 +925,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         const afterFailure = await provider.listRecords({ zone }, ctx);
         const lockedLost = subtract(beforeLocked, afterFailure).length > 0;
         const preWantedLost = subtract(preExistingWanted, afterFailure).length > 0;
-        if (!afterAcceptedWrite && (preWantedLost || lockedLost)) {
+        if (
+          ((!afterAcceptedWrite || !provider.capabilities.wholeZoneWrites) && preWantedLost) ||
+          (!afterAcceptedWrite && lockedLost)
+        ) {
           externalChange = true;
         }
         const isRequested = (record: ZoneRecord) =>

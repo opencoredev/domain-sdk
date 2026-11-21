@@ -26,7 +26,7 @@ export interface DomainSdkErrorOptions {
 const SECRET_KEYS =
   /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|basic[_-]?auth|auth|credentials|bearer|jwt|x-amz-signature|signature|secret|password|passwd|pwd|pass|passphrase|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Bearer|Jwt))$/i;
 const AUTH_SCHEME_PREFIX =
-  /\b(Bearer|ApiKey|Basic|Digest|Token)(\s+|%20|%09|[:=](?:[ \t]|%20|%09)*|%3A(?:[ \t]|%20|%09)*|%3D(?:[ \t]|%20|%09)*)/gi;
+  /\b(Bearer|ApiKey|Basic|Digest|Token)(\s+|\+|%20|%09|[:=](?:[ \t]|%20|%09)*|%3A(?:[ \t]|%20|%09)*|%3D(?:[ \t]|%20|%09)*)/gi;
 const AUTH_PARAM_PREFIX =
   /\b(?:response|nonce|cnonce|opaque)(?:[ \t]|%20|%09)*(?:=|%3D)(?:[ \t]|%20|%09)*/gi;
 const EXEMPT_AUTH_WORDS =
@@ -523,6 +523,21 @@ function scrubInlineSecrets(value: string): string {
     const quote = value[valueStart];
     const cleanVal = rawVal.replace(/[.!?:]+$/, "");
     const isBareSecretOrPassword = /^(?:secret|password)[ \t]+$|^basic\s*:\s*$/i.test(match[0]);
+    if (quote !== '"' && quote !== "'" && quote !== "\\" && EXEMPT_AUTH_WORDS.test(cleanVal)) {
+      const trailing = scanTrailingCredential(
+        value,
+        valueEnd,
+        getLineEnd(valueEnd),
+        /^basic\b/i.test(match[0]) ? "basic" : "generic",
+        (from) => scanSecretValueEnd(value, from),
+      );
+      if (trailing) {
+        out += `${value.slice(cursor, trailing.start)}[REDACTED]`;
+        cursor = trailing.end;
+        INLINE_SECRET_PREFIX.lastIndex = trailing.end;
+        continue;
+      }
+    }
     if (
       quote !== '"' &&
       quote !== "'" &&
@@ -534,20 +549,6 @@ function scrubInlineSecrets(value: string): string {
         /^(?:bearer|basic|digest|apikey|token|key|keys|access)$/i.test(cleanVal) ||
         (isBareSecretOrPassword && /^[A-Za-z]?[a-z]+$/.test(cleanVal)))
     ) {
-      if (EXEMPT_AUTH_WORDS.test(cleanVal)) {
-        const trailing = scanTrailingCredential(
-          value,
-          valueEnd,
-          getLineEnd(valueEnd),
-          "generic",
-          (from) => scanSecretValueEnd(value, from),
-        );
-        if (trailing) {
-          out += `${value.slice(cursor, trailing.start)}[REDACTED]`;
-          cursor = trailing.end;
-          INLINE_SECRET_PREFIX.lastIndex = trailing.end;
-        }
-      }
       continue;
     }
     const quotedJsonValue =
@@ -628,6 +629,7 @@ function setDataProperty(target: Record<string, unknown>, key: string, value: un
 
 const DNS_RECORD_DETAIL_KEYS = new Set([
   "missing",
+  "remaining",
   "unexpected",
   "collateralMissing",
   "replaced",
@@ -743,6 +745,19 @@ function redactedCause(cause: Error, seen = new WeakSet<object>(), depth = 0): E
   return safe;
 }
 
+function deepFreeze(value: unknown, seen = new WeakSet<object>()): void {
+  if (value === null || typeof value !== "object" || seen.has(value)) return;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) deepFreeze(item, seen);
+  } else {
+    for (const key of Object.keys(value)) {
+      deepFreeze(Reflect.get(value, key), seen);
+    }
+  }
+  Object.freeze(value);
+}
+
 export class DomainSdkError extends Error {
   readonly code: DomainSdkErrorCode;
   readonly provider?: string;
@@ -773,10 +788,29 @@ export class DomainSdkError extends Error {
         !Array.isArray(redactedDetails)
           ? (redactedDetails as Record<string, unknown>)
           : { value: redactedDetails };
+      deepFreeze(this.details);
     } else {
       this.details = undefined;
     }
     this.cause = safeCause;
+    // Lock SDK error fields against hook mutation while keeping the instance extensible
+    // so callers and frameworks (e.g. Next.js `err.digest`) can still annotate thrown errors.
+    for (const key of [
+      "name",
+      "message",
+      "code",
+      "provider",
+      "statusCode",
+      "retryable",
+      "retryAfter",
+      "details",
+      "cause",
+    ] as const) {
+      const desc = Object.getOwnPropertyDescriptor(this, key);
+      if (desc) {
+        Object.defineProperty(this, key, { ...desc, writable: false, configurable: false });
+      }
+    }
   }
 }
 

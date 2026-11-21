@@ -124,7 +124,7 @@ npx @opencoredev/domain-sdk wait app.customer.com --provider vercel --timeout-ms
 npx @opencoredev/domain-sdk list --provider vercel --json
 ```
 
-Commands are `add`, `get`, `list`, `verify`, `remove`, and `wait`. `--json` prints machine-readable output. The exit code is 0 on success, 1 when the provider operation fails (the error code is printed), and 2 for an invalid command line or missing environment variables.
+Commands are `add`, `get`, `list`, `verify`, `remove`, and `wait`. `--json` prints machine-readable output. The exit code is 0 on success, 1 when the operation or provider configuration fails (the error code is printed), and 2 for an invalid command line or missing environment variables.
 
 Test without network access:
 
