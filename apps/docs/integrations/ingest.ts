@@ -38,7 +38,7 @@ export const upstreamUrl = (url: URL): URL => {
 
   const rawPath = url.pathname.replace(/^\/ingest/, "") || "/";
   let path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
-  if (hadTrailingSlash && !path.endsWith("/")) {
+  if (hadTrailingSlash && !path.endsWith("/") && !path.startsWith("/static/")) {
     path = `${path}/`;
   }
   const host = path.startsWith("/static/") ? ASSET_HOST : API_HOST;

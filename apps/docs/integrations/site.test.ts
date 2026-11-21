@@ -103,6 +103,9 @@ describe("upstreamUrl", () => {
     expect(upstreamUrl(new URL("https://www.domain-sdk.dev/ingest?__ts=1")).href).toBe(
       "https://us.i.posthog.com/",
     );
+    expect(
+      upstreamUrl(new URL("https://www.domain-sdk.dev/ingest/static/array.js?__ts=1")).href,
+    ).toBe("https://us-assets.i.posthog.com/static/array.js");
   });
 
   test("preserves the PostHog origin for double-slash paths", () => {
@@ -177,6 +180,46 @@ describe("ingest proxy handler", () => {
       expect(noIpResp.status).toBe(200);
       expect(capturedUrl?.href).toBe("https://us.i.posthog.com/flags/?v=2");
       expect(capturedHeaders?.get("x-forwarded-for")).toBeNull();
+
+      // Invalid IP values fall through to the next valid IP header, or omit x-forwarded-for.
+      const fallbackUrl = new URL("https://www.domain-sdk.dev/ingest/e?__ts=1");
+      await ALL({
+        request: new Request(fallbackUrl, {
+          method: "POST",
+          headers: {
+            "x-vercel-forwarded-for": "not-an-ip; evil=1",
+            "x-real-ip": "garbage",
+            "x-forwarded-for": "198.51.100.7, 10.0.0.1",
+          },
+          body: "{}",
+        }),
+        url: fallbackUrl,
+      } as Parameters<typeof ALL>[0]);
+      expect(capturedHeaders?.get("x-forwarded-for")).toBe("198.51.100.7");
+
+      await ALL({
+        request: new Request(fallbackUrl, {
+          method: "POST",
+          headers: {
+            "x-vercel-forwarded-for": "garbage",
+            "x-real-ip": "still-garbage",
+            "x-forwarded-for": "not-an-ip",
+          },
+          body: "{}",
+        }),
+        url: fallbackUrl,
+      } as Parameters<typeof ALL>[0]);
+      expect(capturedHeaders?.get("x-forwarded-for")).toBeNull();
+
+      // Upstream fetch failures return 502 instead of an unhandled 500.
+      globalThis.fetch = (async () => {
+        throw new Error("ECONNREFUSED");
+      }) as unknown as typeof fetch;
+      const badGateway = await ALL({
+        request: new Request(fallbackUrl, { method: "POST", body: "{}" }),
+        url: fallbackUrl,
+      } as Parameters<typeof ALL>[0]);
+      expect(badGateway.status).toBe(502);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -325,14 +368,81 @@ describe("head injection helpers and Vercel route patching", () => {
     }
   });
 
-  test("rewriteHtmlModifiedDates syncs JSON-LD, article:modified_time, and visible Last updated time", () => {
+  test("rewriteHtmlModifiedDates syncs JSON-LD, article:modified_time, and visible Last updated time, and strips cleanly when undefined", () => {
     const html =
-      '<html><head><meta property="article:modified_time" content="2026-11-21T07:28:14.000Z"><script type="application/ld+json">{"dateModified":"2026-11-21T07:28:14.000Z"}</script></head><body><p>Last updated on <time datetime="2026-11-21T07:28:14.000Z">November 21, 2026</time></p></body></html>';
+      '<html><head><meta property="article:modified_time" content="2026-11-21T07:28:14.000Z"><script type="application/ld+json">{"@type":"TechArticle","dateModified":"2026-11-21T07:28:14.000Z","headline":"Test"}</script></head><body><p>Last updated on <time datetime="2026-11-21T07:28:14.000Z">November 21, 2026</time></p></body></html>';
     const next = rewriteHtmlModifiedDates(html, "2026-11-09");
     expect(next).toContain('"dateModified":"2026-11-09T00:00:00.000Z"');
     expect(next).toContain('property="article:modified_time" content="2026-11-09T00:00:00.000Z"');
     expect(next).toContain(
       'Last updated on <time datetime="2026-11-09T00:00:00.000Z">November 9, 2026</time>',
     );
+
+    const stripped = rewriteHtmlModifiedDates(html, undefined);
+    expect(stripped).not.toContain("article:modified_time");
+    expect(stripped).not.toContain("dateModified");
+    expect(stripped).not.toContain("Last updated on");
+    const jsonLdMatch = stripped.match(/<script type="application\/ld\+json">([^<]+)<\/script>/);
+    expect(jsonLdMatch).not.toBeNull();
+    expect(JSON.parse(jsonLdMatch![1]!)).toEqual({ "@type": "TechArticle", headline: "Test" });
+
+    const sitemapXml =
+      '<?xml version="1.0"?><urlset><url><loc>https://www.domain-sdk.dev/docs/guide</loc><lastmod>2026-11-21</lastmod></url></urlset>';
+    expect(patchSitemapXml(sitemapXml, () => undefined)).toBe(
+      '<?xml version="1.0"?><urlset><url><loc>https://www.domain-sdk.dev/docs/guide</loc></url></urlset>',
+    );
+  });
+
+  test("createGitDateResolver returns undefined in a shallow clone", () => {
+    const origin = mkdtempSync(join(tmpdir(), "domain-sdk-git-origin-"));
+    const shallow = mkdtempSync(join(tmpdir(), "domain-sdk-git-shallow-"));
+    const gitEnv = (date: string) => ({
+      ...process.env,
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.com",
+      GIT_AUTHOR_DATE: date,
+      GIT_COMMITTER_DATE: date,
+    });
+    try {
+      execFileSync("git", ["init"], {
+        cwd: origin,
+        env: gitEnv("2026-11-09T12:00:00Z"),
+        stdio: "ignore",
+      });
+      mkdirSync(join(origin, "apps/docs/content/docs"), { recursive: true });
+      writeFileSync(join(origin, "apps/docs/blume.config.ts"), "export default {};\n");
+      writeFileSync(join(origin, "apps/docs/content/docs/guide.mdx"), "# Guide\n");
+      execFileSync("git", ["add", "."], {
+        cwd: origin,
+        env: gitEnv("2026-11-09T12:00:00Z"),
+        stdio: "ignore",
+      });
+      execFileSync("git", ["commit", "-m", "init"], {
+        cwd: origin,
+        env: gitEnv("2026-11-09T12:00:00Z"),
+        stdio: "ignore",
+      });
+      writeFileSync(join(origin, "apps/docs/content/docs/guide.mdx"), "# Guide 2\n");
+      execFileSync("git", ["add", "."], {
+        cwd: origin,
+        env: gitEnv("2026-11-10T12:00:00Z"),
+        stdio: "ignore",
+      });
+      execFileSync("git", ["commit", "-m", "second"], {
+        cwd: origin,
+        env: gitEnv("2026-11-10T12:00:00Z"),
+        stdio: "ignore",
+      });
+
+      execFileSync("git", ["clone", "--depth", "1", `file://${origin}`, shallow], {
+        stdio: "ignore",
+      });
+      expect(createGitDateResolver(join(shallow, "apps/docs"))("/docs/guide")).toBeUndefined();
+    } finally {
+      rmSync(origin, { recursive: true, force: true });
+      rmSync(shallow, { recursive: true, force: true });
+    }
   });
 });

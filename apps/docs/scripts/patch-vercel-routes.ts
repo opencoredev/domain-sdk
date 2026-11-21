@@ -61,7 +61,7 @@ export function patchVercelRoutes(config: VercelOutputConfig): VercelOutputConfi
   return { ...config, routes: nextRoutes };
 }
 
-const ENTRY_PATCH_MARKER = "/* __domain_sdk_ingest_ts_patch__ */";
+export const ENTRY_PATCH_MARKER = "/* __domain_sdk_ingest_ts_patch__ */";
 
 /**
  * Patches Astro's built Vercel server entry so direct requests to `/ingest/<path>/`
