@@ -200,9 +200,19 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
       for (const domain of domains) {
         let label: string;
         try {
+          if (!domain || typeof domain !== "object" || typeof domain.hostname !== "string") {
+            throw new DomainSdkError(
+              "REQUEST_FAILED",
+              "Provider returned an invalid domain page.",
+              {
+                provider: domainClient.provider,
+              },
+            );
+          }
           label = fromHostname(domain.hostname);
         } catch (error) {
           if (safeInstanceOf(error, DomainSdkError) && error.code === "INVALID_HOSTNAME") continue;
+          if (safeInstanceOf(error, DomainSdkError)) throw error;
           throw normalizeUnknownError(error, domainClient.provider);
         }
         subdomains.push({ label, domain });

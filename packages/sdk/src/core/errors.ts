@@ -25,7 +25,7 @@ export interface DomainSdkErrorOptions {
 
 const SECRET_KEYS =
   /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|secret|password|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))$/i;
-const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)[ \t]+/gi;
+const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)\s+/gi;
 const EXEMPT_AUTH_WORDS =
   /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your)$/i;
 const URL_USERINFO_BARE =
@@ -123,10 +123,11 @@ function scanSecretValueEnd(
       index += 1;
     }
   }
-  if (options.allowSecondToken && index < value.length && /[ \t]/.test(value[index]!)) {
-    while (index < value.length && /[ \t,;]/.test(value[index]!)) {
-      let next = index;
-      while (next < value.length && /[ \t,;]/.test(value[next]!)) next += 1;
+  if (options.allowSecondToken && index < value.length) {
+    while (index < value.length) {
+      const sep = /^(?:[ \t,;]+|\r?\n[ \t]+)/.exec(value.slice(index));
+      if (!sep) break;
+      const next = index + sep[0].length;
       const tokenEnd = scanSecretValueEnd(value, next);
       if (tokenEnd <= next) break;
       index = tokenEnd;
@@ -158,53 +159,64 @@ function scrubAuthSchemes(value: string): string {
     ) {
       valueEnd = scanSecretValueEnd(value, valueStart);
     } else if (lower === "digest") {
-      while (valueEnd < value.length && !/[\r\n;}\]]/.test(value[valueEnd]!)) valueEnd += 1;
-    } else {
-      const scanAuthParam = (from: number): number => {
-        let end = from;
-        while (end < value.length && !/[\s"',;)}\]\\&?#%<>|*~`^$@]/.test(value[end]!)) end += 1;
-        let eq = -1;
-        if (end > from && value[end - 1] === "=") {
-          eq = end;
-        } else if (end > from) {
-          let ws = end;
-          while (ws < value.length && (value[ws] === " " || value[ws] === "\t")) ws += 1;
-          if (value[ws] === "=") eq = ws + 1;
+      while (valueEnd < value.length && !/[;}\]]/.test(value[valueEnd]!)) {
+        if (value[valueEnd] === "\r" || value[valueEnd] === "\n") {
+          const cont = /^\r?\n[ \t]+/.exec(value.slice(valueEnd));
+          if (cont) {
+            valueEnd += cont[0].length;
+            continue;
+          }
+          const commaCont =
+            valueEnd > valueStart &&
+            value[valueEnd - 1] === "," &&
+            /^\r?\n\s*[A-Za-z_][A-Za-z0-9_-]*[ \t]*=/.test(value.slice(valueEnd));
+          if (commaCont) {
+            valueEnd += value[valueEnd] === "\r" && value[valueEnd + 1] === "\n" ? 2 : 1;
+            continue;
+          }
+          break;
         }
-        if (eq > from) {
-          let valStart = eq;
-          while (valStart < value.length && (value[valStart] === " " || value[valStart] === "\t")) {
-            valStart += 1;
-          }
-          if (
-            valStart < value.length &&
-            (value[valStart] === '"' ||
-              value[valStart] === "'" ||
-              (value[valStart] === "\\" && /^\\+"/.test(value.slice(valStart))))
-          ) {
-            return scanSecretValueEnd(value, valStart);
-          }
-          if (valStart > end) {
+        valueEnd += 1;
+      }
+    } else {
+      const allowParams = lower === "token" || lower === "apikey";
+      const scanAuthParam = (from: number): number => {
+        if (allowParams || lower === "basic") {
+          const paramPrefix = /^([A-Za-z_][A-Za-z0-9_-]*)[ \t]*=(?!=)[ \t]*/.exec(
+            value.slice(from),
+          );
+          if (paramPrefix && (allowParams || /^realm$/i.test(paramPrefix[1]!))) {
+            const valStart = from + paramPrefix[0].length;
+            if (
+              valStart < value.length &&
+              (value[valStart] === '"' ||
+                value[valStart] === "'" ||
+                (value[valStart] === "\\" && /^\\+"/.test(value.slice(valStart))))
+            ) {
+              return scanSecretValueEnd(value, valStart);
+            }
             let unqEnd = valStart;
-            while (unqEnd < value.length && !/[\s"',;)}\]\\&?#%<>|*~`^$@]/.test(value[unqEnd]!)) {
+            while (unqEnd < value.length && !/[\s"',;)}\]\\&?#<>|*`^$@]/.test(value[unqEnd]!)) {
               unqEnd += 1;
             }
             return unqEnd;
           }
         }
+        let end = from;
+        while (end < value.length && !/[\s"',;)}\]\\&?#<>|*`^$@]/.test(value[end]!)) end += 1;
         return end;
       };
       valueEnd = scanAuthParam(valueStart);
-      if (
-        (lower === "token" || lower === "apikey") &&
-        value.slice(valueStart, valueEnd).includes("=")
-      ) {
+      if (allowParams && value.slice(valueStart, valueEnd).includes("=")) {
         while (valueEnd < value.length) {
           const rest = value.slice(valueEnd);
-          const comma = /^[ \t]*[,;][ \t]*(?=[A-Za-z_][A-Za-z0-9_-]*[ \t]*=)/.exec(rest);
-          if (!comma) break;
-          const nextEnd = scanAuthParam(valueEnd + comma[0].length);
-          if (nextEnd <= valueEnd + comma[0].length) break;
+          const sep =
+            /^(?:[ \t]*[,;]\s*|\r?\n[ \t]+|[ \t]+)(?=[A-Za-z_][A-Za-z0-9_-]*[ \t]*=(?!=))/.exec(
+              rest,
+            );
+          if (!sep) break;
+          const nextEnd = scanAuthParam(valueEnd + sep[0].length);
+          if (nextEnd <= valueEnd + sep[0].length) break;
           valueEnd = nextEnd;
         }
       }
@@ -213,9 +225,9 @@ function scrubAuthSchemes(value: string): string {
       if (/^(?:bearer|basic|digest|apikey|token)$/i.test(word)) continue;
       if (
         (lower === "basic" &&
-          (/^realm=/i.test(token) ||
+          (/^realm[ \t]*=/i.test(token) ||
             (!isShortBasicCredential(word) &&
-              (!/^(?:[A-Za-z0-9+/=]{8,}|[^:\s=]+:[^\s]+)$/.test(word) ||
+              (!/^(?:(?:[A-Za-z0-9+/=_~-]|%[0-9A-Fa-f]{2}){8,}|[^:\s=]*:[^\s]+)$/.test(word) ||
                 /^[A-Za-z]?[a-z]+$/.test(word))))) ||
         ((lower === "bearer" || lower === "token") && EXEMPT_AUTH_WORDS.test(word))
       ) {

@@ -1772,4 +1772,62 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       },
     });
   });
+
+  test("R23: redacts padded Basic, ~/% tokens, multiline/space-separated auth params, empty-user Basic, and validates subdomain list entries", async () => {
+    const scrub = (msg: string) => new DomainSdkError("REQUEST_FAILED", msg).message;
+
+    // Padded Base64 Basic followed by prose
+    expect(scrub("Basic YWRtaW46cGFzcw== for request")).toBe("Basic [REDACTED] for request");
+    expect(scrub("Basic dXNlcjpwYXNz= for request")).toBe("Basic [REDACTED] for request");
+    expect(scrub('Basic realm="example"')).toBe('Basic realm="example"');
+
+    // RFC 7235 ~ and URL-encoded % tokens
+    expect(scrub("Bearer ~SECRET123")).toBe("Bearer [REDACTED]");
+    expect(scrub("Bearer ab~SECRET123")).toBe("Bearer [REDACTED]");
+    expect(scrub("Token ~SECRET123")).toBe("Token [REDACTED]");
+    expect(scrub("ApiKey ~SECRET123")).toBe("ApiKey [REDACTED]");
+    expect(scrub("Basic dXNlcjpwYXNz%3D")).toBe("Basic [REDACTED]");
+    expect(scrub("Token abc%2FSECRET")).toBe("Token [REDACTED]");
+
+    // Multiline / folded auth headers & space/newline-separated auth params
+    expect(scrub("Bearer\nSECRET123")).toBe("Bearer [REDACTED]");
+    expect(scrub("Authorization: Bearer\r\n SECRET123")).toBe("Authorization: [REDACTED]");
+    expect(scrub('Token id="pub" sig="SECRET123"')).toBe("Token [REDACTED]");
+    expect(scrub('Token id="pub",\nsig="SECRET123"')).toBe("Token [REDACTED]");
+    expect(scrub('Digest username="a",\r\nresponse="SECRET123"')).toBe("Digest [REDACTED]");
+
+    // Empty-username plaintext Basic
+    expect(scrub("Basic :mysecretpassword")).toBe("Basic [REDACTED]");
+
+    // SubdomainClient.list() validates malformed domain items as REQUEST_FAILED
+    const badDomainClient = createDomainClient({
+      provider: {
+        id: "bad-list",
+        capabilities: {
+          list: true,
+          explicitVerification: true,
+          managedCertificates: true,
+          apexDomains: true,
+          wildcardDomains: true,
+        },
+        async add() {
+          throw new Error("unused");
+        },
+        async get() {
+          throw new Error("unused");
+        },
+        async remove() {},
+        async list() {
+          return { domains: [null as unknown as never, { hostname: 123 } as unknown as never] };
+        },
+      },
+    });
+    const badSubClient = createSubdomainClient({
+      baseDomain: "app.example.com",
+      domainClient: badDomainClient,
+    });
+    const listErr = await badSubClient.list().catch((e) => e);
+    expect(listErr).toBeInstanceOf(DomainSdkError);
+    expect((listErr as DomainSdkError).code).toBe("REQUEST_FAILED");
+  });
 });
