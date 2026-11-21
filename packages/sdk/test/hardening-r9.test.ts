@@ -1273,4 +1273,127 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       netlifyHostile.get({ hostname: "app.example.com" }, { logger: {} }),
     ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
   });
+
+  test("R18: whole-zone thrown-create preserves concurrent ACME TXT, URL redaction has no backtracking & scrubs quote-delimited passwords, benign token messages preserved, Namecheap survives bad CAA", async () => {
+    const { namecheap } = await import("../src/providers/namecheap/index");
+
+    // 1. Concurrent ACME TXT when createRecords throws before writing our record is kept and blocks retry
+    const base = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          {
+            id: "spf",
+            type: "TXT",
+            name: "example.com",
+            value: "v=spf1 -all",
+            ttl: 300,
+            editable: true,
+          },
+        ],
+      },
+    });
+    const origCreate = base.createRecords.bind(base);
+    let attempts = 0;
+    const thrownCreateProvider: DnsProvider = {
+      ...base,
+      capabilities: { ...base.capabilities, wholeZoneWrites: true },
+      async createRecords(input, ctx) {
+        attempts += 1;
+        if (attempts === 1) {
+          // Another worker writes a TXT at the same name, then our write fails before committing
+          await origCreate(
+            {
+              zone: input.zone,
+              records: [
+                {
+                  type: "TXT",
+                  name: "_acme-challenge.example.com",
+                  value: "acme-worker-2",
+                  ttl: 300,
+                },
+              ],
+            },
+            ctx,
+          );
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "transient 503", {
+            provider: base.id,
+            statusCode: 503,
+            retryable: true,
+          });
+        }
+        await origCreate(input, ctx);
+      },
+    };
+    const thrownDns = createDnsClient({
+      provider: thrownCreateProvider,
+      retry: { maxAttempts: 3, baseDelayMs: 0 },
+    });
+    const thrownErr = await thrownDns
+      .ensureRecords([
+        { type: "TXT", name: "_acme-challenge.example.com", value: "acme-worker-1", ttl: 300 },
+      ])
+      .catch((e) => e);
+    expect(thrownErr).toBeInstanceOf(DomainSdkError);
+    expect(thrownErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true, externalChange: true },
+    });
+    expect(attempts).toBe(1);
+    const afterThrown = await base.listRecords({ zone: "example.com" }, { logger: {} });
+    expect(afterThrown.some((r) => r.value === "acme-worker-2")).toBe(true);
+    expect(afterThrown.some((r) => r.value === "acme-worker-1")).toBe(false);
+
+    // 2. No ReDoS on repeated backslashes after URL scheme, and quote+delimiter passwords redact in JSON and raw strings
+    const t0 = performance.now();
+    const redosErr = new DomainSdkError(
+      "REQUEST_FAILED",
+      "contact @team, https://u:" + "\\".repeat(45),
+    );
+    expect(performance.now() - t0).toBeLessThan(200);
+    expect(redosErr.code).toBe("REQUEST_FAILED");
+
+    const jsonQuoteComma = new DomainSdkError(
+      "REQUEST_FAILED",
+      '{"url":"postgres://u:LEAK\\",w@db.example.com","ok":true}',
+    );
+    expect(jsonQuoteComma.message).not.toContain("LEAK");
+    expect(() => JSON.parse(jsonQuoteComma.message)).not.toThrow();
+
+    const rawQuoteComma = new DomainSdkError(
+      "REQUEST_FAILED",
+      'connect failed: postgres://u:LEAK",1@db.example.com/db',
+    );
+    expect(rawQuoteComma.message).not.toContain("LEAK");
+
+    const nonJsonWithEmail = new DomainSdkError(
+      "REQUEST_FAILED",
+      'Error: {"url":"https://example.com","email":"user@example.com"}',
+    );
+    expect(nonJsonWithEmail.message).toBe(
+      'Error: {"url":"https://example.com","email":"user@example.com"}',
+    );
+
+    // 3. Benign provider error messages with "token" stay readable
+    expect(new DomainSdkError("AUTHENTICATION_FAILED", "Token expired.").message).toBe(
+      "Token expired.",
+    );
+    expect(new DomainSdkError("AUTHENTICATION_FAILED", "Invalid token format.").message).toBe(
+      "Invalid token format.",
+    );
+    expect(
+      new DomainSdkError("AUTHENTICATION_FAILED", "The token provided is invalid.").message,
+    ).toBe("The token provided is invalid.");
+
+    // 4. Namecheap listRecords does not crash on a pre-existing malformed CAA record
+    const ncBadCaaXml = `<?xml version="1.0"?><ApiResponse Status="OK"><CommandResponse><DomainDNSGetHostsResult IsUsingOurDNS="true"><host HostId="1" Name="@" Type="CAA" Address="garbage" TTL="300" /><host HostId="2" Name="app" Type="A" Address="1.2.3.4" TTL="300" /></DomainDNSGetHostsResult></CommandResponse></ApiResponse>`;
+    const ncBadCaa = namecheap({
+      apiUser: "u",
+      apiKey: "k",
+      clientIp: "1.2.3.4",
+      fetch: async () => new Response(ncBadCaaXml, { status: 200 }),
+    });
+    const ncRecords = await ncBadCaa.listRecords({ zone: "example.com" }, { logger: {} });
+    expect(ncRecords).toHaveLength(2);
+    expect(ncRecords[0]?.value).toBe("garbage");
+  });
 });

@@ -672,6 +672,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 verificationError,
                 snapshot,
                 existing.filter(isWanted),
+                true,
               );
             return after.filter(isWanted);
           }
@@ -683,7 +684,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             // A DNS host can accept a write and still drop, rewrite, or leave a conflict, so check the result.
             after = await provider.listRecords({ zone }, ctx);
           } catch (error) {
-            return restore(zone, [], missing, error, snapshot, existing.filter(isWanted));
+            return restore(zone, [], missing, error, snapshot, existing.filter(isWanted), false);
           }
           const verificationError = verifyAfterWrite(after);
           if (verificationError) {
@@ -698,6 +699,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 verificationError,
                 snapshot,
                 existing.filter(isWanted),
+                true,
               );
             throw verificationError;
           }
@@ -720,6 +722,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     error: unknown,
     before: ZoneRecord[],
     preExistingWanted: ZoneRecord[] = [],
+    afterAcceptedWrite = false,
   ): Promise<never> => {
     const cause = normalizeUnknownError(error, provider.id);
     // Roll back even when the caller's signal aborted the replacement.
@@ -800,16 +803,20 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         const isRequested = (record: ZoneRecord) =>
           requested.some((wanted) => sameRecord(record, wanted));
         const missingAtKey = (key: string) =>
-          requested.filter(
-            (wanted) =>
-              recordKey(wanted) === key && !current.some((item) => sameRecord(item, wanted)),
-          ).length;
+          !afterAcceptedWrite
+            ? 0
+            : requested.filter(
+                (wanted) =>
+                  recordKey(wanted) === key && !current.some((item) => sameRecord(item, wanted)),
+              ).length;
         const others = unexpected.filter((record) => !isRequested(record));
-        foreignSameKey = others.filter(
-          (record) =>
-            others.filter((other) => recordKey(other) === recordKey(record)).length >
-            missingAtKey(recordKey(record)),
-        );
+        foreignSameKey = afterAcceptedWrite
+          ? others.filter(
+              (record) =>
+                others.filter((other) => recordKey(other) === recordKey(record)).length >
+                missingAtKey(recordKey(record)),
+            )
+          : others;
         const foreign = new Set(foreignSameKey);
         unexpected = unexpected.filter((record) => !foreign.has(record));
         if (foreignSameKey.length) externalChange = true;

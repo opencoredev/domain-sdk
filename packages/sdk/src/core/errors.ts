@@ -27,9 +27,11 @@ const SECRET_KEYS =
   /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|secret|password|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))$/i;
 const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)[ \t]+/gi;
 const EXEMPT_AUTH_WORDS =
-  /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should)$/i;
-const URL_USERINFO =
-  /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+[/\\"']|[^/?#\s"'<>]|["'](?=[^,}\]:\s]))+)@/gi;
+  /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your)$/i;
+const URL_USERINFO_BARE =
+  /(?<![a-z0-9+."'-])([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:\/|(?![/\\]))|[^/?#\s\\<>])+)@/gi;
+const URL_USERINFO_QUOTED =
+  /(?<=["'])([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/"']|(?![/\\"']))|[^/?#\s\\"'<>]|["'](?=[^,}\]:\s]))+)@/gi;
 const INLINE_SECRET_PREFIX =
   /(?<![A-Za-z0-9])(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))\\*["']?\s*(?:=|:)\s*/gi;
 
@@ -136,13 +138,14 @@ function scrubAuthSchemes(value: string): string {
     } else {
       while (valueEnd < value.length && !/[\s"',;)}\]\\]/.test(value[valueEnd]!)) valueEnd += 1;
       const token = value.slice(valueStart, valueEnd);
-      if (/^(?:bearer|basic|digest|apikey|token)$/i.test(token)) continue;
+      const word = token.replace(/[.!?:]+$/, "");
+      if (/^(?:bearer|basic|digest|apikey|token)$/i.test(word)) continue;
       if (
         (lower === "basic" &&
           !isShortBasicCredential(token) &&
           (!/^(?:[A-Za-z0-9+/=]{8,}|[^:]*:[^:]+)$/.test(token) ||
             /^[A-Za-z]?[a-z]+$/.test(token))) ||
-        ((lower === "bearer" || lower === "token") && EXEMPT_AUTH_WORDS.test(token))
+        ((lower === "bearer" || lower === "token") && EXEMPT_AUTH_WORDS.test(word))
       ) {
         continue;
       }
@@ -194,13 +197,14 @@ function scrubString(value: string, depth = 0): string {
       // Non-JSON diagnostics still use the text scanner below.
     }
   }
+  const scrubUserinfo = (_match: string, scheme: string, userinfo: string) => {
+    if (userinfo === "[REDACTED]" || userinfo === "[REDACTED]:[REDACTED]") {
+      return `${scheme}${userinfo}@`;
+    }
+    return userinfo.includes(":") ? `${scheme}[REDACTED]:[REDACTED]@` : `${scheme}[REDACTED]@`;
+  };
   const withoutUserinfo = value.includes("@")
-    ? value.replace(URL_USERINFO, (_match, scheme: string, userinfo: string) => {
-        if (userinfo === "[REDACTED]" || userinfo === "[REDACTED]:[REDACTED]") {
-          return `${scheme}${userinfo}@`;
-        }
-        return userinfo.includes(":") ? `${scheme}[REDACTED]:[REDACTED]@` : `${scheme}[REDACTED]@`;
-      })
+    ? value.replace(URL_USERINFO_QUOTED, scrubUserinfo).replace(URL_USERINFO_BARE, scrubUserinfo)
     : value;
   return scrubInlineSecrets(scrubAuthSchemes(withoutUserinfo));
 }

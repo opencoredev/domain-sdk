@@ -87,12 +87,20 @@ function result(root: XmlElement, name: string): XmlElement {
   );
 }
 
+function safeCanonicalValue(type: string, value: string): string {
+  try {
+    return canonicalRecordValue(type, value);
+  } catch {
+    return value;
+  }
+}
+
 function zoneRecord(host: Host, zone: string): ZoneRecord {
   return {
     id: host.id,
     type: host.type,
     name: absoluteRecordName(host.name, zone),
-    value: host.type === "CAA" ? canonicalRecordValue("CAA", host.address) : host.address,
+    value: host.type === "CAA" ? safeCanonicalValue("CAA", host.address) : host.address,
     ttl: Number(host.ttl),
     priority: host.mxPref === undefined ? undefined : Number(host.mxPref),
     editable: true,
@@ -105,7 +113,7 @@ function hostKey(host: Host, zone: string): string {
     record.type,
     record.name,
     ["A", "AAAA", "ALIAS", "CAA", "CNAME", "MX", "NS"].includes(record.type)
-      ? canonicalRecordValue(record.type, record.value)
+      ? safeCanonicalValue(record.type, record.value)
       : record.value,
     record.ttl,
     host.type === "MX" || host.type === "MXE" ? (record.priority ?? 10) : undefined,
