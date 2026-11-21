@@ -33,6 +33,15 @@ describe("edge runtime compatibility of the built package", () => {
     }
   });
 
+  test("entries that re-export core functions keep their chunk imports", () => {
+    // Bun 1.3 with --splitting emits `export { x }` without the import for pure re-export
+    // entries, which crashes on load. src/index.ts and src/testing/index.ts avoid that pattern.
+    for (const entry of ["index.js", "testing/index.js"]) {
+      const source = readFileSync(join(dist, entry), "utf8");
+      expect({ entry, imports: /^import\s*\{/m.test(source) }).toEqual({ entry, imports: true });
+    }
+  });
+
   test("loads and runs with Node.js built-ins blocked", () => {
     const edge = join(import.meta.dir, "edge");
     const result = Bun.spawnSync(

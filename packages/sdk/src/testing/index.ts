@@ -1,6 +1,16 @@
-export { createMockDnsRecord, createMockDomain } from "./factories";
-export { memoryDnsProvider } from "./memory-dns-provider";
-export { createFailingProvider, memoryProvider } from "./memory-provider";
+// Local constants instead of `export { x } from`: see the note in ../index.ts.
+import { createMockDnsRecord as mockDnsRecord, createMockDomain as mockDomain } from "./factories";
+import { memoryDnsProvider as memoryDns } from "./memory-dns-provider";
+import {
+  createFailingProvider as failingProvider,
+  memoryProvider as memory,
+} from "./memory-provider";
+
+export const createFailingProvider: typeof failingProvider = failingProvider;
+export const createMockDnsRecord: typeof mockDnsRecord = mockDnsRecord;
+export const createMockDomain: typeof mockDomain = mockDomain;
+export const memoryDnsProvider: typeof memoryDns = memoryDns;
+export const memoryProvider: typeof memory = memory;
 export type {
   MemoryOperation,
   MemoryProvider,
