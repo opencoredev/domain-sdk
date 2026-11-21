@@ -199,6 +199,7 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
       const subdomains: TenantSubdomain[] = [];
       for (const domain of domains) {
         let label: string;
+        let snapshot: Domain;
         try {
           if (!domain || typeof domain !== "object") {
             throw new DomainSdkError(
@@ -220,12 +221,18 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
             );
           }
           label = fromHostname(hostname);
+          const { hostname: _hostnameDesc, ...restDescriptors } =
+            Object.getOwnPropertyDescriptors(domain);
+          snapshot = Object.create(Object.getPrototypeOf(domain), {
+            ...restDescriptors,
+            hostname: { value: hostname, enumerable: true, writable: true, configurable: true },
+          }) as Domain;
         } catch (error) {
           if (safeInstanceOf(error, DomainSdkError) && error.code === "INVALID_HOSTNAME") continue;
           if (safeInstanceOf(error, DomainSdkError)) throw error;
           throw normalizeUnknownError(error, domainClient.provider);
         }
-        subdomains.push({ label, domain });
+        subdomains.push({ label, domain: snapshot });
       }
       return { subdomains, nextCursor };
     },

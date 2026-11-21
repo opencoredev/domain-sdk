@@ -183,13 +183,8 @@ function scrubAuthSchemes(value: string): string {
             valueEnd += cont[0].length;
             continue;
           }
-          let prev = valueEnd - 1;
-          while (prev >= valueStart && (value[prev] === " " || value[prev] === "\t")) prev -= 1;
-          const commaCont =
-            prev >= valueStart &&
-            value[prev] === "," &&
-            /^\r?\n\s*[A-Za-z_][A-Za-z0-9_-]*[ \t]*=/.test(value.slice(valueEnd));
-          if (commaCont) {
+          const paramCont = /^\r?\n\s*[A-Za-z_][A-Za-z0-9_-]*[ \t]*=/.test(value.slice(valueEnd));
+          if (paramCont) {
             valueEnd += ch === "\r" && value[valueEnd + 1] === "\n" ? 2 : 1;
             continue;
           }
@@ -199,13 +194,13 @@ function scrubAuthSchemes(value: string): string {
       }
     } else {
       const allowParams = lower === "token" || lower === "apikey";
-      const isValueStop = (idx: number): boolean => {
+      const isValueStop = (idx: number, from: number): boolean => {
         const ch = value[idx]!;
         if (/[\s"',;)}\]\\]/.test(ch)) return true;
         if ((ch === "&" || ch === "?") && /^[&?][A-Za-z_][A-Za-z0-9_-]*=/.test(value.slice(idx))) {
           return true;
         }
-        if (ch === "<" && /^<\/?[A-Za-z]/.test(value.slice(idx))) {
+        if (ch === "<" && idx > from && /^<\/[A-Za-z]/.test(value.slice(idx))) {
           return true;
         }
         return false;
@@ -226,14 +221,14 @@ function scrubAuthSchemes(value: string): string {
               return scanSecretValueEnd(value, valStart);
             }
             let unqEnd = valStart;
-            while (unqEnd < value.length && !isValueStop(unqEnd)) {
+            while (unqEnd < value.length && !isValueStop(unqEnd, valStart)) {
               unqEnd += 1;
             }
             return unqEnd;
           }
         }
         let end = from;
-        while (end < value.length && !isValueStop(end)) end += 1;
+        while (end < value.length && !isValueStop(end, from)) end += 1;
         return end;
       };
       valueEnd = scanAuthParam(valueStart);

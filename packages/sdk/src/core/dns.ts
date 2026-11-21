@@ -853,7 +853,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         const unrelatedRemoved =
           provider.capabilities.wholeZoneWrites && !afterAcceptedWrite
             ? subtract(
-                before.filter((record) => record.editable && !isOwned(record)),
+                before.filter(
+                  (record) =>
+                    record.editable && !replacedSet.has(record) && !preWantedSet.has(record),
+                ),
                 verified,
               )
             : [];

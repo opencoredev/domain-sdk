@@ -1961,5 +1961,103 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
         collateralMissing: [{ type: "TXT", name: "_keep.example.com", value: "keep-me" }],
       },
     });
+
+    // R25: bare-newline Digest params, angle-bracket Bearer token, same-key editable bystander pre-commit deletion, and SubdomainClient.list() hostname pinning
+    expect(scrub('Digest username="a"\nresponse="SECRET123"')).toBe("Digest [REDACTED]");
+    expect(scrub("Bearer <SECRET123>")).toBe("Bearer [REDACTED]");
+    expect(scrub("Basic dXNlcjpwYXNz</Error>")).toBe("Basic [REDACTED]</Error>");
+
+    let spfZone: ZoneRecord[] = [
+      {
+        id: "spf",
+        type: "TXT",
+        name: "example.com",
+        value: "v=spf1 ~all",
+        ttl: 300,
+        editable: true,
+      },
+    ];
+    let spfCreates = 0;
+    const spfErr = await createDnsClient({
+      retry: { maxAttempts: 2, baseDelayMs: 1, maxDelayMs: 5 },
+      provider: {
+        id: "wz-bystander-del",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["TXT"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return [...spfZone];
+        },
+        async createRecords() {
+          spfCreates += 1;
+          spfZone = [];
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "503", {
+            provider: "wz-bystander-del",
+            statusCode: 503,
+            retryable: true,
+          });
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "TXT", name: "example.com", value: "verify=123" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(spfCreates).toBe(1);
+    expect(spfZone).toEqual([]);
+    expect(spfErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true, externalChange: true },
+    });
+
+    let flipReads = 0;
+    const flipDomainClient = createDomainClient({
+      provider: {
+        id: "flip-list",
+        capabilities: {
+          list: true,
+          explicitVerification: true,
+          managedCertificates: true,
+          apexDomains: true,
+          wildcardDomains: true,
+        },
+        async add() {
+          throw new Error("unused");
+        },
+        async get() {
+          throw new Error("unused");
+        },
+        async remove() {},
+        async list() {
+          return {
+            domains: [
+              {
+                id: "d1",
+                status: "active",
+                get hostname() {
+                  flipReads += 1;
+                  return flipReads === 1 ? "acme.app.example.com" : "evil.other.com";
+                },
+                provider: "flip-list",
+                records: [],
+                issues: [],
+              } as unknown as never,
+            ],
+          };
+        },
+      },
+    });
+    const flipPage = await createSubdomainClient({
+      baseDomain: "app.example.com",
+      domainClient: flipDomainClient,
+    }).list();
+    expect(flipPage.subdomains).toHaveLength(1);
+    expect(flipReads).toBe(1);
+    expect(flipPage.subdomains[0]?.label).toBe("acme");
+    expect(flipPage.subdomains[0]?.domain.hostname).toBe("acme.app.example.com");
   });
 });
