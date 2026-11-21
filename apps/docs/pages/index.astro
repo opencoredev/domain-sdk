@@ -1,0 +1,478 @@
+---
+// Landing page, ported from the Fumadocs site's app/(home)/page.tsx: the same
+// editorial layout, copy, artwork, and motion. It keeps its own navigation, so
+// home.css hides Blume's header here. Styles: ./_home/home.css. Interactions
+// (copy, GSAP motion, PostHog events): ./_home/home.ts.
+import {
+  AddCircleIcon,
+  ArrowRight02Icon,
+  ArrowUpRight01Icon,
+  CheckmarkBadge02Icon,
+  Copy01Icon,
+  Delete02Icon,
+  GitForkIcon,
+  SourceCodeIcon,
+  Tick02Icon,
+} from "@hugeicons/core-free-icons";
+import PageLayout from "blume/components/layout/PageLayout.astro";
+import data from "blume:data";
+
+import { otherOpenCoreSites } from "../lib/opencore-sites";
+import Icon from "./_home/Icon.astro";
+import { providers } from "./_home/providers";
+
+import "./_home/home.css";
+
+const { config } = data;
+const githubUrl = "https://github.com/opencoredev/domain-sdk";
+const installCommand = "bun add @opencoredev/domain-sdk";
+
+// Plain followed links on purpose: they share authority between our sites.
+const openCoreSites = otherOpenCoreSites("https://www.domain-sdk.dev");
+
+const providerLoop = Array.from({ length: 4 }, () => providers).flat();
+
+const manifestoWords = [
+  ..."Add the hostname. Return the exact DNS.".split(" "),
+  ..."Track it until the domain is ready.".split(" "),
+];
+
+// `check:snippets` type-checks this sample against the SDK source, so the
+// landing page can't drift from the real API.
+const heroExample = `import { createDomainClient } from "@opencoredev/domain-sdk"
+import { vercel } from "@opencoredev/domain-sdk/vercel"
+
+const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+  }),
+})
+
+const domain = await domains.add("app.customer.com")`;
+
+const escapeHtml = (text: string): string =>
+  text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+
+// A small highlighter for this one sample, in the landing page's palette.
+const highlight = (line: string): string =>
+  escapeHtml(line)
+    .replace(/"[^"]*"/g, (match) => `<span class="syntax-string">${match}</span>`)
+    .replace(
+      /\b(import|from|const|await)\b(?![^<]*<\/span>)/g,
+      '<span class="syntax-keyword">$1</span>',
+    )
+    .replace(
+      /\b(createDomainClient|vercel|add)\b(?![^<]*<\/span>)/g,
+      '<span class="syntax-function">$1</span>',
+    )
+    .replace(/\b([A-Z][A-Z_]+)\b(?![^<]*<\/span>)/g, '<span class="syntax-property">$1</span>');
+
+const heroLines = heroExample.split("\n").map((line) => highlight(line) || " ");
+---
+
+<PageLayout
+  site={{ title: config.title, description: config.description }}
+  logo={config.logo}
+  banner={config.banner}
+  analytics={config.analytics}
+  navigation={data.navigation}
+  favicon={config.favicon}
+  appleIcon={config.appleIcon}
+  fontCssVars={data.fontCssVars}
+  themeMode="dark"
+  searchEnabled={config.search.enabled}
+  siteUrl={config.site}
+  ogEnabled={config.og.enabled}
+  ogImage="/opengraph-image.png"
+  ogImageAlt="Domain SDK — Custom domains, handled. Add, verify, monitor, and remove domains with one TypeScript API."
+  ogImageSize={{ width: 1200, height: 630 }}
+  page={{
+    title: "Custom Domains SDK for TypeScript | Domain SDK",
+    description: config.description,
+  }}
+>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    rel="stylesheet"
+    href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;620&display=swap"
+  />
+
+  <main class="domain-home" data-domain-home>
+    <nav class="home-nav" aria-label="Main navigation">
+      <a class="home-brand" href="/">
+        <span class="brand-mark">
+          <img src="/images/domain-sdk-logo.png" alt="" width="36" height="36" draggable="false" />
+        </span>
+        <span>Domain SDK</span>
+      </a>
+      <div class="home-nav-links">
+        <a href="/docs">Docs</a>
+        <a href="/docs/providers">Providers</a>
+        <a href="/docs/installation">Installation</a>
+      </div>
+      <div class="nav-actions">
+        <a class="nav-source" href={githubUrl} data-cta="github" data-location="home_nav">GitHub</a>
+        <a class="nav-cta" href="/docs/installation" data-cta="get_started" data-location="home_nav">
+          Get started
+          <Icon icon={ArrowUpRight01Icon} size={15} strokeWidth={1.8} />
+        </a>
+      </div>
+    </nav>
+
+    <section class="editorial-hero" data-section="hero">
+      <h1 class="hero-reveal">
+        <span>Custom domains,</span>
+        <span>handled.</span>
+      </h1>
+      <p class="hero-reveal hero-subtitle">
+        Add, verify, monitor, and remove customer domains with one TypeScript API.
+      </p>
+      <div class="hero-reveal hero-actions">
+        <a
+          class="button-light"
+          href="/docs/installation"
+          data-cta="install_domain_sdk"
+          data-location="home_hero"
+        >
+          Install Domain SDK
+          <Icon icon={ArrowUpRight01Icon} size={16} strokeWidth={1.8} />
+        </a>
+        <button class="install-command" type="button" data-copy={installCommand}>
+          <span>$</span>
+          <code>{installCommand}</code>
+          <span class="copy-icon" data-copy-idle>
+            <Icon icon={Copy01Icon} size={15} strokeWidth={1.7} />
+          </span>
+          <span class="copy-icon" data-copy-done hidden>
+            <Icon icon={Tick02Icon} size={15} strokeWidth={1.7} />
+          </span>
+          <span class="sr-only" aria-live="polite" data-copy-status></span>
+        </button>
+      </div>
+      <div class="hero-art" aria-hidden="true">
+        <img
+          src="/images/domain-thread-hero-transparent.webp"
+          alt=""
+          width="1942"
+          height="809"
+          fetchpriority="high"
+        />
+      </div>
+      <div class="provider-marquee" aria-label="Supported providers">
+        <ul class="provider-track">
+          {
+            providerLoop.map((provider, index) => (
+              <li class={`provider-item provider-${provider.id}`} aria-hidden={index >= providers.length ? "true" : undefined}>
+                <a
+                  href={provider.href}
+                  tabindex={index >= providers.length ? -1 : undefined}
+                  data-provider={provider.id}
+                  data-location="home_marquee"
+                >
+                  <span class="provider-mark" style={`--logo: url(/providers/${provider.id}.svg)`} />
+                  <span>{provider.name}</span>
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </section>
+
+    <section class="manifesto-section" data-section="manifesto">
+      <p class="manifesto-copy">
+        {manifestoWords.map((word) => <span class="manifesto-word">{word} </span>)}
+      </p>
+    </section>
+
+    <section class="capability-section" data-section="capabilities">
+      <div class="section-heading">
+        <h2>Everything your custom-domain flow needs. One API.</h2>
+        <p>
+          Domain SDK keeps platform-specific APIs at the edge of your system and returns a model your
+          product can render directly.
+        </p>
+      </div>
+      <div class="capability-grid">
+        <article class="capability-card capability-code">
+          <div class="code-window-bar">
+            <span>domains.ts</span>
+          </div>
+          <pre aria-label="TypeScript Domain SDK example"><code>{heroLines.map((line) => <span class="code-line" set:html={line} />)}</code></pre>
+        </article>
+        <article class="capability-card status-card">
+          <div class="status-ledger" aria-hidden="true">
+            <div class="status-ledger-head">
+              <code>app.customer.com</code>
+              <span>ready</span>
+            </div>
+            <div class="status-check">
+              <span>Routing</span>
+              <b>Configured</b>
+            </div>
+            <div class="status-check">
+              <span>Ownership</span>
+              <b>Verified</b>
+            </div>
+            <div class="status-check">
+              <span>TLS certificate</span>
+              <b>Issued</b>
+            </div>
+          </div>
+          <h3>Honest readiness</h3>
+          <p>
+            Routing, ownership, and certificate state stay separate until the provider confirms the
+            domain is ready.
+          </p>
+        </article>
+        <article class="capability-card adapter-card">
+          <h3>
+            Change the adapter.
+            <br />
+            Keep the workflow.
+          </h3>
+          <div class="adapter-swap">
+            <code><span class="syntax-function">vercel</span><span class="syntax-punctuation">()</span></code>
+            <Icon icon={ArrowRight02Icon} size={19} strokeWidth={1.6} />
+            <code><span class="syntax-function">railway</span><span class="syntax-punctuation">()</span></code>
+          </div>
+        </article>
+        <article class="capability-card dns-card">
+          <div class="dns-card-head">
+            <h3>DNS instructions your UI can trust</h3>
+            <a
+              href="/docs/concepts/dns-records"
+              data-cta="explore_dns_model"
+              data-location="home_capabilities"
+            >
+              Explore the model
+              <Icon icon={ArrowUpRight01Icon} size={15} strokeWidth={1.8} />
+            </a>
+          </div>
+          <div class="dns-row">
+            <b>TXT</b>
+            <code>_vercel.app.customer.com</code>
+            <span>ownership</span>
+          </div>
+          <div class="dns-row">
+            <b>CNAME</b>
+            <code>app.customer.com</code>
+            <span>routing</span>
+          </div>
+          <div class="dns-row">
+            <b>TXT</b>
+            <code>_acme-challenge.app.customer.com</code>
+            <span>certificate</span>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="architecture-section" data-section="architecture">
+      <div class="architecture-copy">
+        <h2>Your complete domain workflow, already handled.</h2>
+        <p>
+          Your application owns tenant authorization and state. Domain SDK talks to the configured
+          platform. The provider remains the source of truth.
+        </p>
+        <a href="/docs/providers" data-cta="compare_providers" data-location="home_architecture">
+          Compare providers
+          <Icon icon={ArrowUpRight01Icon} size={16} strokeWidth={1.8} />
+        </a>
+      </div>
+      <div class="architecture-visual" aria-label="Domain SDK architecture diagram">
+        <div class="architecture-node architecture-app">
+          <Icon icon={SourceCodeIcon} size={23} strokeWidth={1.5} />
+          <div>
+            <span>Your application</span>
+            <small>tenant rules + database</small>
+          </div>
+        </div>
+        <div class="architecture-arrow" aria-hidden="true">
+          <i></i>
+          <Icon icon={ArrowRight02Icon} size={18} strokeWidth={1.4} />
+        </div>
+        <div class="architecture-node architecture-sdk">
+          <span class="brand-mark" aria-hidden="true">
+            <img src="/images/domain-sdk-logo.png" alt="" width="36" height="36" draggable="false" />
+          </span>
+          <div>
+            <span>Domain SDK</span>
+            <small>one typed contract</small>
+          </div>
+        </div>
+        <div class="architecture-arrow" aria-hidden="true">
+          <i></i>
+          <Icon icon={ArrowRight02Icon} size={18} strokeWidth={1.4} />
+        </div>
+        <div class="architecture-providers">
+          {
+            providers.map((provider) => (
+              <a href={provider.href} data-provider={provider.id} data-location="home_architecture">
+                <span class="provider-mark" style={`--logo: url(/providers/${provider.id}.svg)`} />
+                <span>{provider.name}</span>
+                <Icon icon={ArrowUpRight01Icon} size={14} strokeWidth={1.5} />
+              </a>
+            ))
+          }
+        </div>
+      </div>
+    </section>
+
+    <section class="lifecycle-section" data-section="lifecycle">
+      <div class="section-heading compact">
+        <h2>Everything needed for the lifecycle. Nothing pretending to be magic.</h2>
+      </div>
+      <div class="lifecycle-accordion">
+        <article>
+          <span>Add</span>
+          <div class="lifecycle-preview preview-add" aria-hidden="true">
+            <div class="preview-field">
+              <Icon icon={AddCircleIcon} size={18} strokeWidth={1.4} />
+              <code>app.customer.com</code>
+              <b>added</b>
+            </div>
+            <div class="preview-event">
+              <code>POST /domains</code>
+              <span>201</span>
+            </div>
+          </div>
+          <div>
+            <h3>Attach a hostname</h3>
+            <p>Validate once, add it to the configured resource, and safely handle repeat requests.</p>
+          </div>
+        </article>
+        <article>
+          <span>Configure</span>
+          <div class="lifecycle-preview preview-dns" aria-hidden="true">
+            <div>
+              <b>CNAME</b>
+              <code>cname.vercel-dns.com</code>
+            </div>
+            <div>
+              <b>TXT</b>
+              <code>vc-domain-verify=...</code>
+            </div>
+          </div>
+          <div>
+            <h3>Return exact DNS</h3>
+            <p>
+              Give customers routing, ownership, and certificate records with clear purposes and
+              status.
+            </p>
+          </div>
+        </article>
+        <article>
+          <span>Activate</span>
+          <div class="lifecycle-preview preview-activate" aria-hidden="true">
+            <div class="preview-progress">
+              <i></i>
+              <i></i>
+              <i></i>
+            </div>
+            <div class="preview-statuses">
+              <span>DNS</span>
+              <span>Verify</span>
+              <span>Active</span>
+            </div>
+            <div class="preview-ready">
+              <Icon icon={CheckmarkBadge02Icon} size={17} strokeWidth={1.4} />
+              Ready to serve
+            </div>
+          </div>
+          <div>
+            <h3>Wait for the provider</h3>
+            <p>
+              Poll sequentially with cancellation and backoff. Mark active only when the provider
+              does.
+            </p>
+          </div>
+        </article>
+        <article>
+          <span>Remove</span>
+          <div class="lifecycle-preview preview-remove" aria-hidden="true">
+            <div class="preview-field">
+              <Icon icon={Delete02Icon} size={18} strokeWidth={1.4} />
+              <code>app.customer.com</code>
+              <b>removed</b>
+            </div>
+            <div class="preview-event">
+              <code>DELETE /domains</code>
+              <span>204</span>
+            </div>
+          </div>
+          <div>
+            <h3>Disconnect safely</h3>
+            <p>
+              Remove only from the configured provider scope and treat an already-absent hostname as
+              success.
+            </p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="closing-section" data-section="closing">
+      <p>Add the hostname. Show the records. Wait for ready.</p>
+      <h2>Ship custom domains without rebuilding the workflow.</h2>
+      <div class="closing-actions">
+        <a
+          class="button-dark"
+          href="/docs/installation"
+          data-cta="start_building"
+          data-location="home_closing"
+        >
+          Start building
+          <Icon icon={ArrowUpRight01Icon} size={16} strokeWidth={1.8} />
+        </a>
+        <a
+          class="button-outline-dark"
+          href={githubUrl}
+          data-cta="view_source"
+          data-location="home_closing"
+        >
+          <Icon icon={GitForkIcon} size={15} strokeWidth={1.8} /> View source
+        </a>
+      </div>
+    </section>
+
+    <footer class="home-footer">
+      <a class="home-brand" href="/">
+        <span class="brand-mark">
+          <img src="/images/domain-sdk-logo.png" alt="" width="36" height="36" draggable="false" />
+        </span>
+        <span>Domain SDK</span>
+      </a>
+      <div>
+        <a href="/docs">Documentation</a>
+        <a href="/blog">Blog</a>
+        <a href="/sitemap">Sitemap</a>
+        <a href="/docs/project/contributing">Contributing</a>
+        <a href="https://github.com/sponsors/opencoredev">Sponsor</a>
+      </div>
+      <nav aria-labelledby="home-footer-family-label" class="home-footer-family">
+        <span id="home-footer-family-label">More from OpenCore</span>
+        <ul>
+          {
+            openCoreSites.map((site) => (
+              <li>
+                <a href={site.url}>
+                  <span>{site.name}</span> {site.description}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </nav>
+    </footer>
+  </main>
+</PageLayout>
+
+<script>
+  import { initHome } from "./_home/home";
+
+  initHome();
+  document.addEventListener("astro:page-load", initHome);
+</script>

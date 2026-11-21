@@ -1,0 +1,165 @@
+---
+title: Install Domain SDK for TypeScript
+description: Install the server-side TypeScript SDK and start managing SaaS customer domains with Vercel, Cloudflare, Railway, Render, Netlify, or bunny.net.
+---
+
+## 1. Install the package
+
+```bash title="Terminal"
+bun add @opencoredev/domain-sdk
+```
+
+Domain SDK is server-only. Keep it in API routes, server actions, workers, or another trusted backend.
+
+### Install the agent skill
+
+Give Codex, Claude Code, Cursor, and other compatible coding agents the Domain SDK workflow and safety rules:
+
+```bash title="Terminal"
+npx skills add opencoredev/domain-sdk --skill domain-sdk
+```
+
+The skills CLI asks which detected agents should receive the skill. Add `-g` to make it available across all of your projects.
+
+## 2. Choose your provider
+
+Use the platform that currently receives traffic for your application. Each adapter is a separate import and uses credentials scoped to one project, service, site, or zone.
+
+<CardGroup cols={2}>
+  <Card title="Vercel" href="/docs/providers/vercel">
+    Project domains and explicit verification
+  </Card>
+  <Card title="Cloudflare for SaaS" href="/docs/providers/cloudflare">
+    Custom Hostnames inside one SaaS zone
+  </Card>
+  <Card title="Railway" href="/docs/providers/railway">
+    One project, environment, and service
+  </Card>
+  <Card title="Render" href="/docs/providers/render">
+    One web service or static site
+  </Card>
+  <Card title="Netlify" href="/docs/providers/netlify">
+    Domain aliases on one existing site
+  </Card>
+  <Card title="bunny.net" href="/docs/providers/bunny">
+    Custom hostnames on one CDN pull zone
+  </Card>
+</CardGroup>
+
+## 3. Create the client
+
+Put the client in a server-only module. Pick the tab that matches your provider; its provider page lists the required credentials and platform-specific behavior.
+
+<Tabs>
+  <Tab title="Vercel">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+    export const domains = createDomainClient({
+      provider: vercel({
+        token: process.env.VERCEL_TOKEN!,
+        projectId: process.env.VERCEL_PROJECT_ID!,
+      }),
+    });
+    ```
+
+  </Tab>
+  <Tab title="Cloudflare">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { cloudflareSaaS } from "@opencoredev/domain-sdk/cloudflare";
+
+    export const domains = createDomainClient({
+      provider: cloudflareSaaS({
+        apiToken: process.env.CLOUDFLARE_API_TOKEN!,
+        zoneId: process.env.CLOUDFLARE_ZONE_ID!,
+        cnameTarget: process.env.CLOUDFLARE_CNAME_TARGET!,
+      }),
+    });
+    ```
+
+  </Tab>
+  <Tab title="Railway">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { railway } from "@opencoredev/domain-sdk/railway";
+
+    export const domains = createDomainClient({
+      provider: railway({
+        token: process.env.RAILWAY_TOKEN!,
+        projectId: process.env.RAILWAY_PROJECT_ID!,
+        environmentId: process.env.RAILWAY_ENVIRONMENT_ID!,
+        serviceId: process.env.RAILWAY_SERVICE_ID!,
+      }),
+    });
+    ```
+
+  </Tab>
+  <Tab title="Render">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { render } from "@opencoredev/domain-sdk/render";
+
+    export const domains = createDomainClient({
+      provider: render({
+        apiKey: process.env.RENDER_API_KEY!,
+        serviceId: process.env.RENDER_SERVICE_ID!,
+      }),
+    });
+    ```
+
+  </Tab>
+  <Tab title="Netlify">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { netlify } from "@opencoredev/domain-sdk/netlify";
+
+    export const domains = createDomainClient({
+      provider: netlify({
+        accessToken: process.env.NETLIFY_ACCESS_TOKEN!,
+        siteId: process.env.NETLIFY_SITE_ID!,
+      }),
+    });
+    ```
+
+  </Tab>
+  <Tab title="bunny.net">
+    ```ts title="src/server/domains.ts"
+    import { createDomainClient } from "@opencoredev/domain-sdk";
+    import { bunny } from "@opencoredev/domain-sdk/bunny";
+
+    export const domains = createDomainClient({
+      provider: bunny({
+        apiKey: process.env.BUNNY_API_KEY!,
+        pullZoneId: process.env.BUNNY_PULL_ZONE_ID!,
+      }),
+    });
+    ```
+
+  </Tab>
+</Tabs>
+
+Never expose provider credentials through `NEXT_PUBLIC_`, `VITE_`, or another browser-accessible environment variable.
+
+## 4. Add and refresh a domain
+
+```ts title="src/server/customer-domain.ts"
+import { domains } from "./domains";
+
+const domain = await domains.add("app.customer.com");
+
+// Show every required record in your customer-facing DNS instructions.
+const requiredRecords = domain.records.filter((record) => record.required);
+
+const latest = await domains.refresh(domain.hostname);
+if (latest.status === "active") {
+  // The configured provider now reports the domain as ready.
+}
+```
+
+Each entry in `domain.records` is a [`DnsRecord`](./api-reference/dns-record.mdx), and the full return value is described in [`Domain`](./api-reference/domain.mdx).
+
+Store the hostname's tenant ownership in your own database. Domain SDK is stateless and the configured provider remains the source of truth for readiness.
+
+Read next: [Compare providers](./providers/index.mdx) or browse the [API reference](./api-reference/index.mdx).

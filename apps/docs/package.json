@@ -1,0 +1,39 @@
+{
+  "name": "@domain-sdk/docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "blume dev",
+    "build": "blume build",
+    "preview": "blume preview",
+    "check-types": "tsc --noEmit && blume check",
+    "check:snippets": "bun scripts/check-snippets.ts",
+    "validate": "blume validate --strict",
+    "audit": "blume audit",
+    "lint": "oxlint",
+    "test": "bun test lib integrations"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.9.0",
+    "@hugeicons/core-free-icons": "^4.4.0",
+    "@hugeicons/react": "^1.1.10",
+    "class-variance-authority": "^0.7.1",
+    "cnfast": "^0.2.0",
+    "gsap": "^3.15.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
+  },
+  "devDependencies": {
+    "@domain-sdk/config": "workspace:*",
+    "@opencoredev/domain-sdk": "workspace:*",
+    "@types/bun": "^1.4.4",
+    "@types/node": "^22.20.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "astro": "7.4.13",
+    "blume": "2.2.7",
+    "oxlint": "^1.73.0",
+    "typescript": "^6.0.3"
+  }
+}

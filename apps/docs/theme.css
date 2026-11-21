@@ -1,0 +1,227 @@
+/* Domain SDK theme. Fonts come from blume.config.ts; this file sets the docs
+   palette, the editorial page titles, the provider marks in the sidebar, and
+   the scope the component previews render in. The landing page keeps its own
+   styles in pages/_home/home.css. */
+
+/* Colors ------------------------------------------------------------------- */
+
+/* The site is dark only (theme.toggle is off). These are the landing page's
+   warm near-black, paper white, and lines, with a periwinkle accent. Every
+   text pair meets 4.5:1. The light block mirrors the dark one, so a reader
+   who chose light mode before the toggle was removed still sees the brand. */
+:root,
+:root[data-theme="dark"] {
+  --blume-background: #090908;
+  --blume-foreground: #f1efe8;
+  --blume-muted: #11110f;
+  --blume-muted-foreground: #a09f97;
+  --blume-border: #2b2b27;
+  --blume-accent: #8aabff;
+  --blume-accent-foreground: #090908;
+  --blume-code-background: #0e0e0c;
+  color-scheme: dark;
+}
+
+/* The editorial serif the landing page uses for its headlines. It is a system
+   stack, so it costs no download. */
+:root {
+  --domain-serif: "Iowan Old Style", Baskerville, "Times New Roman", serif;
+}
+
+::selection {
+  background: #8aabff;
+  color: #090908;
+}
+
+/* Scrolling ---------------------------------------------------------------- */
+
+html,
+body {
+  overscroll-behavior: none;
+}
+
+/* Page titles -------------------------------------------------------------- */
+
+/* Docs and blog titles use the landing page's serif, as the Fumadocs site
+   did. Section headings stay in Geist. */
+[data-blume-doc-grid] h1,
+article.prose h1 {
+  font-family: var(--domain-serif);
+  font-size: clamp(2.6rem, 4.6vw, 4.4rem);
+  font-weight: 400;
+  letter-spacing: -0.05em;
+  line-height: 0.98;
+}
+
+[data-blume-doc-grid] :not(pre) > code,
+article.prose :not(pre) > code {
+  border-color: #34342f;
+  background: #171715;
+  color: #c8d6ff;
+}
+
+/* Provider marks in the sidebar -------------------------------------------- */
+
+/* Blume's sidebar icons are Lucide names, so the provider marks from the
+   Fumadocs sidebar are drawn here, masked with the row's text color. Files:
+   public/providers/. */
+.blume-nav-link[href="/docs/providers/vercel"] {
+  --domain-logo: url("/providers/vercel.svg");
+}
+.blume-nav-link[href="/docs/providers/cloudflare"] {
+  --domain-logo: url("/providers/cloudflare.svg");
+}
+.blume-nav-link[href="/docs/providers/railway"] {
+  --domain-logo: url("/providers/railway.svg");
+}
+.blume-nav-link[href="/docs/providers/render"] {
+  --domain-logo: url("/providers/render.svg");
+}
+.blume-nav-link[href="/docs/providers/netlify"] {
+  --domain-logo: url("/providers/netlify.svg");
+}
+.blume-nav-link[href="/docs/providers/bunny"] {
+  --domain-logo: url("/providers/bunny.svg");
+}
+.blume-nav-link[href="/docs/providers/porkbun"] {
+  --domain-logo: url("/providers/porkbun.svg");
+}
+.blume-nav-link[href="/docs/providers/namecheap"] {
+  --domain-logo: url("/providers/namecheap.svg");
+}
+.blume-nav-link[href="/docs/providers/spaceship"] {
+  --domain-logo: url("/providers/spaceship.svg");
+}
+
+/* Same box and gap as Blume's own 14px row icons. */
+.blume-nav-link:is(
+  [href="/docs/providers/vercel"],
+  [href="/docs/providers/cloudflare"],
+  [href="/docs/providers/railway"],
+  [href="/docs/providers/render"],
+  [href="/docs/providers/netlify"],
+  [href="/docs/providers/bunny"],
+  [href="/docs/providers/porkbun"],
+  [href="/docs/providers/namecheap"],
+  [href="/docs/providers/spaceship"]
+)::before {
+  background-color: currentColor;
+  block-size: 14px;
+  content: "";
+  display: inline-block;
+  flex-shrink: 0;
+  inline-size: 14px;
+  margin-inline-end: 0.5rem;
+  mask: var(--domain-logo) center / contain no-repeat;
+  vertical-align: -2px;
+}
+
+/* Component previews ------------------------------------------------------- */
+
+/* The DNS records and one-click setup previews (islands/) are the shadcn
+   registry components, styled with shadcn's color names. They read these
+   variables inside .dns-records-preview only, so Blume's own utilities keep
+   their meaning everywhere else. */
+@theme inline {
+  --color-primary: var(--preview-primary);
+  --color-primary-foreground: var(--preview-primary-foreground);
+  --color-secondary: var(--preview-secondary);
+  --color-secondary-foreground: var(--preview-secondary-foreground);
+  --color-destructive: var(--preview-destructive);
+  --color-input: var(--preview-input);
+  --color-ring: var(--preview-ring);
+}
+
+.dns-records-preview {
+  --blume-background: #11110f;
+  --blume-muted: #171715;
+  --blume-accent: #20201d;
+  --blume-accent-foreground: #f1efe8;
+  --preview-primary: #8aabff;
+  --preview-primary-foreground: #090908;
+  --preview-secondary: #171715;
+  --preview-secondary-foreground: #f1efe8;
+  --preview-destructive: #ef4444;
+  --preview-input: #2b2b27;
+  --preview-ring: #8aabff;
+  color-scheme: dark;
+}
+
+.dns-records-preview h2,
+.dns-records-preview p,
+.dns-records-preview dl,
+.dns-records-preview dd {
+  margin: 0;
+}
+
+.dns-records-preview [data-slot="table-container"],
+.dns-records-preview table {
+  margin: 0;
+}
+
+.dns-records-preview [data-slot="table-head"],
+.dns-records-preview [data-slot="table-cell"] {
+  border-inline: 0;
+}
+
+.dns-records-preview code,
+article.prose .dns-records-preview code {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--blume-foreground);
+  padding: 0;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+/* Sidebar ------------------------------------------------------------------ */
+
+/* Page titles are long and descriptive (they double as SEO titles), so the
+   sidebar wraps them instead of cutting them off, as the Fumadocs sidebar did. */
+.blume-nav-link.truncate {
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+/* Preview borders follow the theme's lines, as shadcn's base layer sets them,
+   while utilities like border-transparent still win. */
+@layer base {
+  .dns-records-preview,
+  .dns-records-preview *,
+  .dns-records-preview ::before,
+  .dns-records-preview ::after {
+    border-color: var(--preview-input);
+  }
+}
+
+/* Body text ---------------------------------------------------------------- */
+
+/* The Fumadocs pages set body copy at 16px in near-white. Blume's default is a
+   smaller, muted measure; this restores the original reading size. The
+   description under the title keeps its muted color (it has a class). */
+article.prose {
+  font-size: 1rem;
+  line-height: 1.75;
+}
+
+article.prose :where(p:not([class]), li, td) {
+  color: #e4e2db;
+}
+
+/* Header brand ------------------------------------------------------------- */
+
+/* The mark is detailed artwork, so it shows at the 28px the Fumadocs header
+   used rather than Blume's 20px glyph size. */
+[data-blume-header] a > span:has(> svg > image),
+[data-blume-nav-drawer] a > span:has(> svg > image) {
+  height: 1.75rem;
+}
+
+[data-blume-header] a > span > svg:has(> image),
+[data-blume-nav-drawer] a > span > svg:has(> image) {
+  height: 1.75rem;
+  width: auto;
+}

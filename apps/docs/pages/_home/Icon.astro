@@ -1,0 +1,39 @@
+---
+// A Hugeicons icon rendered as static SVG, so the landing page ships no React.
+// The icon data is the same `[tag, attributes][]` list @hugeicons/react reads.
+import type { IconSvgElement } from "@hugeicons/react";
+
+interface Props {
+  icon: IconSvgElement;
+  size?: number;
+  strokeWidth?: number;
+}
+
+const { icon, size = 24, strokeWidth } = Astro.props;
+
+const toAttribute = (name: string): string =>
+  name.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`);
+
+const elements = icon.map(([tag, attributes]) => ({
+  tag,
+  attributes: Object.fromEntries(
+    Object.entries(attributes)
+      .filter(([name]) => name !== "key")
+      .map(([name, value]) => [
+        toAttribute(name),
+        name === "strokeWidth" && strokeWidth !== undefined ? String(strokeWidth) : value,
+      ]),
+  ),
+}));
+---
+
+<svg
+  xmlns="http://www.w3.org/2000/svg"
+  width={size}
+  height={size}
+  viewBox="0 0 24 24"
+  fill="none"
+  aria-hidden="true"
+>
+  {elements.map(({ tag: Tag, attributes }) => <Tag {...attributes} />)}
+</svg>

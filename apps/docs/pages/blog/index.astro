@@ -1,0 +1,106 @@
+---
+// Blog index. Posts are the `type: blog` pages in content/blog; Blume renders
+// each one, adds BlogPosting JSON-LD, and builds /blog/rss.xml. This page
+// lists them newest first, as the Fumadocs blog index did.
+import { getCollection } from "astro:content";
+import PageLayout from "blume/components/layout/PageLayout.astro";
+import data from "blume:data";
+import { getBlumeCollection } from "blume/runtime";
+
+const { config } = data;
+const pageTitle = "Blog | Domain SDK";
+const description =
+  "Guides to custom domains for SaaS apps and DNS automation with registrar APIs, with working TypeScript examples.";
+
+// getBlumeCollection drops drafts and hidden pages, so a post is listed only
+// when Blume also publishes it.
+const routeByEntry = new Map(
+  getBlumeCollection(data, { locale: config.i18n?.defaultLocale }).map((route) => [
+    route.entryId,
+    route.path,
+  ]),
+);
+
+const posts = (await getCollection("docs"))
+  .filter((entry) => entry.data.type === "blog")
+  .flatMap((entry) => {
+    const href = routeByEntry.get(entry.id);
+    if (href === undefined) return [];
+    const { date, description: summary, title } = entry.data;
+    // A post without these would have no feed date and no summary.
+    if (date === undefined || summary === undefined) {
+      throw new Error(`[blog] ${entry.id} needs a date and a description in its frontmatter.`);
+    }
+    return [{ date: new Date(date), description: summary, href, title }];
+  })
+  .toSorted((a, b) => b.date.getTime() - a.date.getTime() || a.href.localeCompare(b.href));
+
+const formatDate = (date: Date): string =>
+  date.toLocaleDateString("en-US", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "UTC",
+  });
+---
+
+<PageLayout
+  site={{ title: config.title, description: config.description }}
+  logo={config.logo}
+  banner={config.banner}
+  analytics={config.analytics}
+  navigation={data.navigation}
+  favicon={config.favicon}
+  appleIcon={config.appleIcon}
+  fontCssVars={data.fontCssVars}
+  themeMode="dark"
+  searchEnabled={config.search.enabled}
+  siteUrl={config.site}
+  ogEnabled={config.og.enabled}
+  page={{ title: pageTitle, description, route: "/blog" }}
+  lastModified={posts[0]?.date}
+>
+  <main class="mx-auto w-full max-w-3xl px-5 py-14 sm:px-8 sm:py-20">
+    <header class="mb-12">
+      <h1 class="blog-index-title text-5xl sm:text-7xl">Blog</h1>
+      <p class="mt-4 text-lg leading-8 text-muted-foreground">{description}</p>
+    </header>
+
+    <ul class="divide-y divide-border border-y border-border">
+      {
+        posts.map((post) => (
+          <li>
+            <a class="group block py-7" href={post.href}>
+              <time
+                class="font-mono text-xs uppercase tracking-[0.14em] text-muted-foreground"
+                datetime={post.date.toISOString().slice(0, 10)}
+              >
+                {formatDate(post.date)}
+              </time>
+              <h2 class="mt-2 text-xl font-semibold tracking-[-0.02em] group-hover:underline group-hover:underline-offset-4">
+                {post.title}
+              </h2>
+              <p class="mt-2 leading-7 text-muted-foreground">{post.description}</p>
+            </a>
+          </li>
+        ))
+      }
+    </ul>
+
+    <p class="mt-10 text-sm text-muted-foreground">
+      Subscribe with the{" "}
+      <a class="underline underline-offset-4 hover:text-foreground" href="/blog/rss.xml">RSS feed</a>,
+      or read the{" "}
+      <a class="underline underline-offset-4 hover:text-foreground" href="/docs">documentation</a>.
+    </p>
+  </main>
+</PageLayout>
+
+<style>
+  .blog-index-title {
+    font-family: var(--domain-serif);
+    font-weight: 400;
+    letter-spacing: -0.05em;
+    line-height: 0.95;
+  }
+</style>
