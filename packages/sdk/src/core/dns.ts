@@ -630,11 +630,11 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               after = await provider.listRecords({ zone }, ctx);
             } catch (error) {
               // Nothing was created when the delete failed, so leave every requested record alone.
-              return restore(zone, conflicts, creating ? missing : [], error, snapshot, wanted);
+              return restore(zone, conflicts, creating ? missing : [], error, snapshot);
             }
             const verificationError = verifyAfterWrite(after);
             if (verificationError)
-              return restore(zone, conflicts, missing, verificationError, snapshot, wanted);
+              return restore(zone, conflicts, missing, verificationError, snapshot);
             return after.filter(isWanted);
           }
 
@@ -642,7 +642,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             const baselineError = provider.capabilities.wholeZoneWrites
               ? verifyAfterWrite(existing)
               : undefined;
-            if (baselineError) return restore(zone, [], [], baselineError, snapshot, wanted);
+            if (baselineError) return restore(zone, [], [], baselineError, snapshot);
             return existing.filter(isWanted);
           }
           let after: ZoneRecord[];
@@ -651,12 +651,15 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             // A DNS host can accept a write and still drop, rewrite, or leave a conflict, so check the result.
             after = await provider.listRecords({ zone }, ctx);
           } catch (error) {
-            return restore(zone, [], missing, error, snapshot, wanted);
+            return restore(zone, [], missing, error, snapshot);
           }
           const verificationError = verifyAfterWrite(after);
           if (verificationError) {
-            if (verificationError.details?.collateralMissing)
-              return restore(zone, [], missing, verificationError, snapshot, wanted);
+            if (
+              verificationError.details?.collateralMissing ||
+              provider.capabilities.wholeZoneWrites
+            )
+              return restore(zone, [], missing, verificationError, snapshot);
             throw verificationError;
           }
           return after.filter(isWanted);
@@ -677,7 +680,6 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     requested: DnsRecordInput[],
     error: unknown,
     before: ZoneRecord[],
-    ensured: DnsRecordInput[] = requested,
   ): Promise<never> => {
     const cause = normalizeUnknownError(error, provider.id);
     // Roll back even when the caller's signal aborted the replacement.
@@ -694,11 +696,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     );
     const beforeEditable = provider.capabilities.wholeZoneWrites
       ? before.filter((record) => record.editable)
-      : before.filter(
-          (record) =>
-            record.editable &&
-            (replacedSet.has(record) || ensured.some((wanted) => sameRecord(record, wanted))),
-        );
+      : before.filter((record) => record.editable && replacedSet.has(record));
     const beforeForUnexpected = provider.capabilities.wholeZoneWrites
       ? beforeEditable
       : before.filter(

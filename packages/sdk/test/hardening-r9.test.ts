@@ -455,5 +455,134 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     );
     expect(badFlagCode).toBe(2);
     expect(badFlagOut).toContain("--limit is not supported by get.");
+
+    // Inapplicable command flags fail BEFORE credential checks
+    let noCredFlagOut = "";
+    const noCredFlagCode = await runCli(
+      ["get", "example.com", "--provider", "vercel", "--limit", "bogus"],
+      {
+        env: {},
+        stdout: () => {},
+        stderr: (s) => {
+          noCredFlagOut += s;
+        },
+      },
+    );
+    expect(noCredFlagCode).toBe(2);
+    expect(noCredFlagOut).toContain("--limit is not supported by get.");
+  });
+
+  test("redaction handles JSON URL+email, multi-cookie punctuation/Set-Cookie, multi-token Authorization, idempotency, prose, and missing DOMException", async () => {
+    const { normalizeUnknownError } = await import("../src/core/errors");
+
+    // Compact JSON URL followed by email is preserved
+    const jsonUrlEmail = '{"url":"https://example.com","email":"user@example.com"}';
+    expect(redact(jsonUrlEmail)).toBe(jsonUrlEmail);
+
+    // Cookie punctuation and multi-cookie Set-Cookie headers redact all cookies
+    expect(redact("Cookie: prefs={}; sid=fixture_secret_924")).toBe("Cookie: [REDACTED]");
+    expect(redact("Set-Cookie: sid=X; Path=/, refresh=zzzsecret2; Path=/")).toBe(
+      "Set-Cookie: [REDACTED]",
+    );
+
+    // Multi-token Authorization redacts all tokens, and already-redacted Authorization is idempotent
+    expect(redact("Authorization: Custom tok1 tok2")).toBe("Authorization: [REDACTED]");
+    expect(redact("Authorization: Bearer a b c")).toBe("Authorization: [REDACTED]");
+    expect(redact("Authorization: [REDACTED] failed with 401")).toBe(
+      "Authorization: [REDACTED] failed with 401",
+    );
+
+    // Ordinary prose after Basic / Bearer is preserved
+    expect(redact("Basic authentication is not enabled for this account")).toBe(
+      "Basic authentication is not enabled for this account",
+    );
+    expect(redact("Bearer token required")).toBe("Bearer token required");
+
+    // normalizeUnknownError does not throw when global DOMException is absent
+    const originalDomException = globalThis.DOMException;
+    try {
+      Object.defineProperty(globalThis, "DOMException", {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+      const normalized = normalizeUnknownError(new Error("boom"), "vercel");
+      expect(normalized.code).toBe("UNKNOWN_ERROR");
+      const abortErr = new Error("aborted");
+      abortErr.name = "AbortError";
+      expect(normalizeUnknownError(abortErr, "vercel").code).toBe("ABORTED");
+    } finally {
+      Object.defineProperty(globalThis, "DOMException", {
+        value: originalDomException,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
+  test("whole-zone add-only rewrite rolls back cleanly and per-record rollback never resurrects externally deleted wanted records", async () => {
+    // 1. Whole-zone add-only write rewritten by provider cleans up rewritten value via restore()
+    const baseWhole = memoryDnsProvider();
+    const wholeProvider: DnsProvider = {
+      ...baseWhole,
+      capabilities: { ...baseWhole.capabilities, wholeZoneWrites: true },
+      createRecords: (input, ctx) =>
+        baseWhole.createRecords(
+          {
+            ...input,
+            records: input.records.map((r) => ({ ...r, value: "rewritten" })),
+          },
+          ctx,
+        ),
+    };
+    const wholeDns = createDnsClient({ provider: wholeProvider });
+    const wholeErr = await wholeDns
+      .ensureRecords([{ type: "TXT", name: "_v.example.com", value: "expected" }])
+      .catch((caught: unknown) => caught);
+    expect(wholeErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { restored: true },
+    });
+    expect(baseWhole.records("example.com")).toEqual([]);
+
+    // 2. Per-record rollback does not resurrect a pre-existing wanted record deleted externally
+    const basePer = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "t1", type: "TXT", name: "_a.example.com", value: "already-there", editable: true },
+        ],
+      },
+    });
+    const origCreate = basePer.createRecords.bind(basePer);
+    const origDelete = basePer.deleteRecords.bind(basePer);
+    let failOnce = true;
+    const perProvider: DnsProvider = {
+      ...basePer,
+      async createRecords(input, ctx) {
+        if (failOnce) {
+          failOnce = false;
+          // External writer deletes _a while SDK is creating _b
+          const existingA = basePer.records("example.com").filter((r) => r.id === "t1");
+          if (existingA.length) await origDelete({ zone: input.zone, records: existingA }, ctx);
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "create failed", {
+            provider: basePer.id,
+          });
+        }
+        return origCreate(input, ctx);
+      },
+    };
+    const perDns = createDnsClient({ provider: perProvider });
+    const perErr = await perDns
+      .ensureRecords([
+        { type: "TXT", name: "_a.example.com", value: "already-there" },
+        { type: "TXT", name: "_b.example.com", value: "new-record" },
+      ])
+      .catch((caught: unknown) => caught);
+    expect(perErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true },
+    });
+    // Externally deleted _a must NOT be resurrected!
+    expect(basePer.records("example.com")).toEqual([]);
   });
 });

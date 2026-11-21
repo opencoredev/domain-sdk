@@ -183,23 +183,16 @@ function formatPage(page: DomainPage): string {
 
 const toJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
+const ALLOWED_FLAGS: Record<Command, ReadonlySet<ValueFlag>> = {
+  add: new Set(["provider"]),
+  get: new Set(["provider"]),
+  verify: new Set(["provider"]),
+  remove: new Set(["provider"]),
+  list: new Set(["provider", "limit", "cursor"]),
+  wait: new Set(["provider", "timeout-ms", "interval-ms"]),
+};
+
 async function execute(args: ParsedArgs, client: DomainClient, io: CliIo): Promise<string> {
-  const allowedFlags: Record<Command, ReadonlySet<ValueFlag>> = {
-    add: new Set(["provider"]),
-    get: new Set(["provider"]),
-    verify: new Set(["provider"]),
-    remove: new Set(["provider"]),
-    list: new Set(["provider", "limit", "cursor"]),
-    wait: new Set(["provider", "timeout-ms", "interval-ms"]),
-  };
-  if (args.command) {
-    const allowed = allowedFlags[args.command];
-    for (const flag of Object.keys(args.values) as ValueFlag[]) {
-      if (!allowed.has(flag)) {
-        throw new UsageError(`--${flag} is not supported by ${args.command}.`);
-      }
-    }
-  }
   const options = { signal: io.signal };
   const output = (domain: Domain) => (args.json ? toJson(domain) : formatDomain(domain));
   const hostname = () => {
@@ -282,6 +275,12 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<CliExi
       if (args.json) throw new UsageError("Pass a command.");
       io.stderr(HELP);
       return 2;
+    }
+    const allowed = ALLOWED_FLAGS[args.command];
+    for (const flag of Object.keys(args.values) as ValueFlag[]) {
+      if (!allowed.has(flag)) {
+        throw new UsageError(`--${flag} is not supported by ${args.command}.`);
+      }
     }
     const client = createClient(args, io);
     io.stdout(await execute(args, client, io));

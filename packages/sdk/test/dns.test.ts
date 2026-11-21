@@ -672,7 +672,7 @@ describe("ensureRecords write verification", () => {
         .sort(),
     ).toEqual(["192.0.2.10", "192.0.2.99"]);
 
-    // 2. Provider drops an unrelated pre-existing editable TXT record and refuses to recreate it.
+    // 2. Whole-zone provider drops an unrelated pre-existing editable TXT record and refuses to recreate it.
     const lossy = memoryDnsProvider({
       zones: {
         "example.com": [
@@ -681,16 +681,20 @@ describe("ensureRecords write verification", () => {
         ],
       },
     });
+    const lossyProvider = {
+      ...lossy,
+      capabilities: { ...lossy.capabilities, wholeZoneWrites: true },
+    };
     const lossyCreate = lossy.createRecords.bind(lossy);
     const lossyDelete = lossy.deleteRecords.bind(lossy);
-    lossy.createRecords = async (input, ctx) => {
+    lossyProvider.createRecords = async (input, ctx) => {
       // Drop pre-existing TXT during the replacement write and ignore TXT recreations during rollback.
       const existingTxt = lossy.records("example.com").filter((r) => r.type === "TXT");
       if (existingTxt.length) await lossyDelete({ zone: input.zone, records: existingTxt }, ctx);
       const nonTxt = input.records.filter((r) => r.type !== "TXT");
       if (nonTxt.length) await lossyCreate({ zone: input.zone, records: nonTxt }, ctx);
     };
-    const lossyDns = createDnsClient({ provider: lossy });
+    const lossyDns = createDnsClient({ provider: lossyProvider });
     const droppedErr = await lossyDns
       .ensureRecords(
         [

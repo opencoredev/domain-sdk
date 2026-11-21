@@ -26,7 +26,7 @@ export interface DomainSdkErrorOptions {
 const SECRET_KEYS =
   /^(?:[a-z0-9]+[_-]){0,4}(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)$/i;
 const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)[ \t]+/gi;
-const URL_USERINFO = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:\/\/)([^/?#\s]+)@/gi;
+const URL_USERINFO = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:\/\/)([^/?#\s"'<>\\]+)@/gi;
 const INLINE_SECRET_PREFIX =
   /(?<![A-Za-z0-9])(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)\\*["']?\s*(?:=|:)\s*/gi;
 const MAX_STRING = 1_000;
@@ -41,7 +41,7 @@ function scanSecretValueEnd(
   let index = start;
   const first = value[start];
   if (value.startsWith("[REDACTED]", start)) {
-    index = start + "[REDACTED]".length;
+    return start + "[REDACTED]".length;
   } else if (first === '"' || first === "'") {
     index = start + 1;
     while (index < value.length) {
@@ -75,20 +75,23 @@ function scanSecretValueEnd(
         index += 1;
       }
     } else if (options.includeSemicolons) {
-      while (index < value.length && !/[\r\n)}\]]/.test(value[index]!)) index += 1;
+      while (index < value.length && !/[\r\n]/.test(value[index]!)) index += 1;
     } else {
       while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
     }
   } else if (options.includeSemicolons) {
-    while (index < value.length && !/[\r\n)}\]]/.test(value[index]!)) index += 1;
+    while (index < value.length && !/[\r\n]/.test(value[index]!)) index += 1;
   } else {
     while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
   }
   if (options.allowSecondToken && index < value.length && /[ \t]/.test(value[index]!)) {
-    let next = index;
-    while (next < value.length && /[ \t]/.test(value[next]!)) next += 1;
-    const tokenEnd = scanSecretValueEnd(value, next);
-    if (tokenEnd > next) index = tokenEnd;
+    while (index < value.length && /[ \t,;]/.test(value[index]!)) {
+      let next = index;
+      while (next < value.length && /[ \t,;]/.test(value[next]!)) next += 1;
+      const tokenEnd = scanSecretValueEnd(value, next);
+      if (tokenEnd <= next) break;
+      index = tokenEnd;
+    }
   }
   return index;
 }
@@ -121,7 +124,11 @@ function scrubAuthSchemes(value: string): string {
       while (valueEnd < value.length && !/[\s"',;)}\]\\]/.test(value[valueEnd]!)) valueEnd += 1;
       const token = value.slice(valueStart, valueEnd);
       if (
-        (lower === "basic" && !/^(?:[A-Za-z0-9+/=]{8,}|[^:]*:[^:]+)$/.test(token)) ||
+        (lower === "basic" &&
+          (!/^(?:[A-Za-z0-9+/=]{8,}|[^:]*:[^:]+)$/.test(token) ||
+            /^[A-Za-z]?[a-z]+$/.test(token))) ||
+        (lower === "bearer" &&
+          /^(?:token|tokens|auth|authentication|authorization|header|credentials)$/i.test(token)) ||
         (lower === "token" && !/[0-9_.:/+-]/.test(token))
       ) {
         continue;
@@ -143,7 +150,7 @@ function scrubInlineSecrets(value: string): string {
   while ((match = INLINE_SECRET_PREFIX.exec(value)) !== null) {
     const valueStart = match.index + match[0].length;
     const isAuthHeader = /^(?:x-)?authorization\b/i.test(match[0]);
-    const isCookieHeader = /^(?:x-)?cookie\s*:/i.test(match[0]);
+    const isCookieHeader = /^(?:x-)?(?:set-)?cookie\s*:/i.test(match[0]);
     const valueEnd = scanSecretValueEnd(value, valueStart, {
       allowSecondToken: isAuthHeader,
       includeSemicolons: isCookieHeader,
@@ -248,7 +255,11 @@ export function abortedError(provider?: string, cause?: unknown) {
 
 export function normalizeUnknownError(error: unknown, provider?: string): DomainSdkError {
   if (error instanceof DomainSdkError) return error;
-  if ((error instanceof DOMException || error instanceof Error) && error.name === "AbortError")
+  if (
+    ((typeof DOMException === "function" && error instanceof DOMException) ||
+      error instanceof Error) &&
+    error.name === "AbortError"
+  )
     return abortedError(provider, error);
   return new DomainSdkError("UNKNOWN_ERROR", "The domain operation failed unexpectedly.", {
     provider,
