@@ -94,4 +94,15 @@ describe("DnsRecordsTable", () => {
     );
     await waitFor(() => expect(screen.getByText(/check clipboard permissions/i)).toBeTruthy());
   });
+
+  test("status badges set one background and one text color", () => {
+    render(<DnsRecordsTable records={records} defaultFilter="all" />);
+    for (const label of ["Valid", "Pending"]) {
+      for (const badge of screen.getAllByText(label)) {
+        const classes = badge.className.split(/\s+/);
+        expect(classes.filter((name) => /^bg-/.test(name))).toHaveLength(1);
+        expect(classes.filter((name) => /^text-(?!xs|sm|base|lg)/.test(name))).toHaveLength(1);
+      }
+    }
+  });
 });

@@ -49,14 +49,12 @@ const statusMeta = {
   Valid: {
     icon: CheckmarkCircle02Icon,
     variant: "outline",
-    className:
-      "border-transparent bg-primary/10 text-primary bg-[var(--dns-success)] text-[var(--dns-success-foreground)]",
+    className: "border-transparent bg-[var(--dns-success)] text-[var(--dns-success-foreground)]",
   },
   Pending: {
     icon: TimeQuarter02Icon,
     variant: "outline",
-    className:
-      "border-transparent bg-secondary text-secondary-foreground bg-[var(--dns-warning)] text-[var(--dns-warning-foreground)]",
+    className: "border-transparent bg-[var(--dns-warning)] text-[var(--dns-warning-foreground)]",
   },
   Invalid: { icon: Alert02Icon, variant: "destructive", className: "" },
 } as const;
