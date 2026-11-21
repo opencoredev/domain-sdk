@@ -3096,5 +3096,54 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
 
     // Rolled-back replacements and external changes clear retryable.
     expect(prReplaceErr.retryable).toBe(false);
+
+    // 7. Single-read onConflict getter stability, deep-frozen non-Error object cause, and asymmetric spaced-colon redaction.
+    expect(String(redact('ApiKey :invalid "supersecret"'))).not.toContain("supersecret");
+    const objCauseErr = new DomainSdkError("REQUEST_FAILED", "failed", {
+      cause: { nested: { flag: true } },
+    });
+    expect(Object.isFrozen(objCauseErr.cause)).toBe(true);
+    expect(Object.isFrozen((objCauseErr.cause as { nested: object }).nested)).toBe(true);
+
+    let onConflictReads = 0;
+    let conflictingDeletes = 0;
+    const unstableOnConflictErr = await createDnsClient({
+      provider: {
+        id: "stable-conflict",
+        capabilities: {
+          wholeZoneWrites: false,
+          recordTypes: ["A"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return [
+            {
+              id: "c1",
+              type: "A",
+              name: "app.example.com",
+              value: "9.9.9.9",
+              ttl: 300,
+              editable: true,
+            },
+          ];
+        },
+        async deleteRecords() {
+          conflictingDeletes += 1;
+        },
+        async createRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+        get onConflict() {
+          onConflictReads += 1;
+          return (onConflictReads === 1 ? "error" : "replace") as "error";
+        },
+      })
+      .catch((e) => e);
+    expect(unstableOnConflictErr).toMatchObject({ code: "DOMAIN_CONFLICT" });
+    expect(onConflictReads).toBe(1);
+    expect(conflictingDeletes).toBe(0);
   });
 });

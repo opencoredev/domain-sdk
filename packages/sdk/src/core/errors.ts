@@ -252,7 +252,8 @@ function scrubAuthSchemes(value: string): string {
         (first === ":" &&
           (value[valueStart + 1] === "=" ||
             value[valueStart + 1] === " " ||
-            value[valueStart + 1] === "\t")) ||
+            value[valueStart + 1] === "\t" ||
+            /^:[A-Za-z]+[ \t]/.test(value.slice(valueStart, valueStart + 24)))) ||
         /^%(?:3A|3D)/i.test(value.slice(valueStart, valueStart + 3)))
     ) {
       continue;
@@ -759,7 +760,10 @@ function redactedCause(cause: Error, seen = new WeakSet<object>(), depth = 0): E
     else if (safeInstanceOf(rawNested, DomainSdkError)) nested = rawNested;
     else if (safeInstanceOf(rawNested, Error))
       nested = seen.has(rawNested) ? "[Circular]" : redactedCause(rawNested, seen, depth + 1);
-    else nested = redact(rawNested, seen, depth + 1);
+    else {
+      nested = redact(rawNested, seen, depth + 1);
+      deepFreeze(nested);
+    }
   }
   const safe = nested !== undefined ? new Error(message, { cause: nested }) : new Error(message);
   safe.name = scrubString(nameText.slice(0, MAX_STRING * 8)).slice(0, MAX_STRING);
@@ -807,6 +811,9 @@ export class DomainSdkError extends Error {
       : safeInstanceOf(options.cause, Error)
         ? redactedCause(options.cause)
         : redact(options.cause);
+    if (!safeInstanceOf(safeCause, DomainSdkError) && !safeInstanceOf(safeCause, Error)) {
+      deepFreeze(safeCause);
+    }
     super(String(redact(message)), { cause: safeCause });
     this.name = "DomainSdkError";
     this.code = code;

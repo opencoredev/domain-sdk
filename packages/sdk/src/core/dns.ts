@@ -653,10 +653,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                   item.type.toUpperCase() as DnsRecordType,
                 ),
             );
-            const onConflict = Object.hasOwn(options, "onConflict")
-              ? (options.onConflict ?? "error")
-              : "error";
-            if (locked.length || onConflict === "error")
+            if (locked.length || rawOnConflict === "error")
               throw new DomainSdkError(
                 "DOMAIN_CONFLICT",
                 `Existing DNS records in ${zone} conflict with the records being written.`,
@@ -673,7 +670,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 },
               );
             const committedWrite = (err: unknown): boolean =>
-              safeInstanceOf(err, DomainSdkError) && err.details?.committed === true;
+              safeInstanceOf(err, DomainSdkError) &&
+              err.details !== undefined &&
+              Object.hasOwn(err.details, "committed") &&
+              err.details.committed === true;
             let creating = false;
             let writeCommitted = false;
             let after: ZoneRecord[];
