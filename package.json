@@ -15,7 +15,7 @@
     "test": "turbo run test",
     "test:registry": "bun test --preload ./registry/test-support/dom.ts registry/domain/*.test.ts registry/domain/*.test.tsx",
     "registry:validate": "bunx --bun shadcn@latest registry validate ./registry.json",
-    "registry:build": "rm -rf apps/fumadocs/public/r && bunx --bun shadcn@latest build registry.json --output apps/fumadocs/public/r",
+    "registry:build": "rm -rf apps/docs/public/r && bunx --bun shadcn@latest build registry.json --output apps/docs/public/r",
     "format": "oxfmt --write .",
     "check": "bun run lint && bun run typecheck && oxfmt --check .",
     "tegami": "node scripts/tegami.mts",
@@ -45,7 +45,6 @@
   "overrides": {
     "baseline-browser-mapping": "2.11.0",
     "fflate": "0.4.9",
-    "js-yaml": "5.5.0",
     "nanoid": "3.3.18",
     "postcss": "8.5.33",
     "sharp": "0.35.5",

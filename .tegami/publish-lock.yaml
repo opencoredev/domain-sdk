@@ -33,4 +33,3 @@ core:packages:
     updated: true
 npm:packages:
   - id: npm:@opencoredev/domain-sdk
-  - id: npm:fumadocs

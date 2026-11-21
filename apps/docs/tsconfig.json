@@ -1,0 +1,11 @@
+{
+  "extends": "@domain-sdk/config/tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "types": ["node", "bun"]
+  },
+  "include": ["**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules", ".blume", ".blume-verify", "dist", ".vercel"]
+}

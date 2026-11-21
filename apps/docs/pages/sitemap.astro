@@ -1,0 +1,122 @@
+---
+// Human-readable sitemap at /sitemap, linked from the footer and llms.txt.
+// Groups every docs page by its top-level folder, then lists blog posts.
+// The XML sitemap for crawlers is Blume's /sitemap.xml.
+import PageLayout from "blume/components/layout/PageLayout.astro";
+import data from "blume:data";
+import { getBlumeCollection } from "blume/runtime";
+
+const { config } = data;
+const description =
+  "Browse every Domain SDK guide, provider adapter, concept, component, and TypeScript API reference page.";
+
+const sectionOrder = [
+  "Getting started",
+  "Guides",
+  "Providers",
+  "Components",
+  "Concepts",
+  "API reference",
+  "Project",
+  "Blog",
+] as const;
+type Section = (typeof sectionOrder)[number];
+
+const sectionByFolder: Record<string, Section> = {
+  guides: "Guides",
+  providers: "Providers",
+  components: "Components",
+  concepts: "Concepts",
+  "api-reference": "API reference",
+  project: "Project",
+};
+
+const sectionFor = (path: string): Section => {
+  if (path.startsWith("/blog/")) return "Blog";
+  const folder = path.split("/")[2] ?? "";
+  return sectionByFolder[folder] ?? "Getting started";
+};
+
+const routes = getBlumeCollection(data, { locale: config.i18n?.defaultLocale }).filter(
+  (route) => route.indexable && (route.path === "/docs" || route.path.startsWith("/docs/") || route.path.startsWith("/blog/")),
+);
+
+const groups = sectionOrder.map((section) => ({
+  section,
+  id: `section-${section.toLowerCase().replaceAll(" ", "-")}`,
+  routes: routes
+    .filter((route) => sectionFor(route.path) === section)
+    .toSorted(
+      (a, b) =>
+        a.path.split("/").length - b.path.split("/").length || a.title.localeCompare(b.title),
+    ),
+}));
+---
+
+<PageLayout
+  site={{ title: config.title, description: config.description }}
+  logo={config.logo}
+  banner={config.banner}
+  analytics={config.analytics}
+  navigation={data.navigation}
+  favicon={config.favicon}
+  appleIcon={config.appleIcon}
+  fontCssVars={data.fontCssVars}
+  themeMode="dark"
+  searchEnabled={config.search.enabled}
+  siteUrl={config.site}
+  ogEnabled={config.og.enabled}
+  page={{ title: "Sitemap | Domain SDK", description, route: "/sitemap" }}
+>
+  <div class="mx-auto w-full max-w-6xl px-5 py-14 sm:px-8 sm:py-20">
+    <header class="mb-14 max-w-3xl">
+      <p class="mb-3 font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">
+        Site index
+      </p>
+      <h1 class="sitemap-title text-5xl sm:text-7xl">Sitemap</h1>
+      <p class="mt-5 max-w-2xl text-lg leading-8 text-muted-foreground">
+        Find every guide, supported platform, reusable component, core concept, TypeScript API
+        reference, and blog post in Domain SDK.
+      </p>
+    </header>
+
+    <div class="grid gap-x-10 gap-y-14 md:grid-cols-2 lg:grid-cols-3">
+      {
+        groups.map(({ section, id, routes: pages }) => (
+          <section aria-labelledby={id}>
+            <h2 class="mb-4 border-b border-border pb-3 text-xl font-semibold" id={id}>
+              {section}
+            </h2>
+            <ul class="space-y-3">
+              {pages.map((page) => (
+                <li>
+                  <a class="group block" href={page.path}>
+                    <span class="font-medium group-hover:underline group-hover:underline-offset-4">
+                      {page.title}
+                    </span>
+                    {
+                      page.description && (
+                        <span class="mt-1 block text-sm leading-5 text-muted-foreground">
+                          {page.description}
+                        </span>
+                      )
+                    }
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))
+      }
+    </div>
+  </div>
+</PageLayout>
+
+<style>
+  .sitemap-title {
+    font-family: var(--domain-serif);
+    font-weight: 400;
+    letter-spacing: -0.05em;
+    line-height: 0.95;
+  }
+</style>

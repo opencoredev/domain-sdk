@@ -1,0 +1,33 @@
+---
+title: Custom domains and DNS SDK for TypeScript
+description: Domain SDK docs. Add and verify SaaS customer domains on Vercel, Cloudflare, Railway, Render, and Netlify, and write DNS records at Porkbun, Namecheap, and Spaceship.
+---
+
+Domain SDK handles the custom-domain lifecycle across [Vercel](/docs/providers/vercel), [Cloudflare for SaaS](/docs/providers/cloudflare), [Railway](/docs/providers/railway), [Render](/docs/providers/render), [Netlify](/docs/providers/netlify), and [bunny.net](/docs/providers/bunny). Add a hostname, show your customer the exact DNS records, and track provider state until the domain is ready.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+export const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+  }),
+});
+```
+
+Use Domain SDK when your SaaS needs to show exact DNS instructions, track provider-authoritative status, and keep provider-specific APIs out of the rest of your application. It does not register domains, host DNS, deploy apps, proxy traffic, or store tenant data.
+
+## Read next
+
+<CardGroup cols={2}>
+  <Card title="Install Domain SDK" href="/docs/installation" />
+  <Card title="Compare providers" href="/docs/providers" />
+  <Card title="Build a domain settings page" href="/docs/guides/custom-domain-settings-page" />
+  <Card title="Understand the domain lifecycle" href="/docs/concepts/domain-lifecycle" />
+  <Card title="Use the DNS records component" href="/docs/components/dns-records-table" />
+  <Card title="Browse the API reference" href="/docs/api-reference" />
+</CardGroup>
+
+The blog has longer guides with working code: [custom domains for SaaS](/blog/custom-domains-for-saas), [Cloudflare for SaaS custom hostnames](/blog/cloudflare-for-saas), [the Porkbun API](/blog/porkbun-api), and [the Namecheap API](/blog/namecheap-api).

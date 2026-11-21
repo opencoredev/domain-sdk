@@ -1,0 +1,73 @@
+---
+title: "Railway domains: custom domain DNS, SSL, and the API"
+description: "Add a custom domain to Railway: a CNAME to your up.railway.app target, a TXT record for ownership, CNAME flattening or ALIAS at the root, automatic SSL, and the API."
+---
+
+How does Railway handle custom domains and SSL certificates? You add the domain to a service under **Settings → Networking → Public Networking → + Custom Domain**, then create the CNAME and the TXT verification record Railway shows at your DNS provider. Without the TXT record, requests return a 404 even after the CNAME resolves. Once DNS is in place, Railway issues a Let's Encrypt certificate automatically, usually within an hour, and renews it when 30 days of its 90-day validity remain. Root domains need CNAME flattening or an ALIAS record at the DNS provider, because Railway doesn't publish a static IP for an `A` record.
+
+These are the records Railway asks for ([working with domains](https://docs.railway.com/networking/domains/working-with-domains), checked 2026-11-17):
+
+| Hostname                                    | Record                                          | Value                                                                                         |
+| ------------------------------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Subdomain, like `app.customer.com` or `www` | `CNAME`                                         | The target Railway shows for the domain, like `g05ns7.up.railway.app`                         |
+| Ownership check for that hostname           | `TXT`                                           | The verification value Railway shows (the adapter returns it at `_railway-verify.<hostname>`) |
+| Root domain, like `customer.com`            | Flattened `CNAME`, or a dynamic `ALIAS`/`ANAME` | The same `up.railway.app` target                                                              |
+| Wildcard, like `*.customer.com`             | Two `CNAME`s and a `TXT`                        | One `CNAME` for the wildcard, one for `_acme-challenge` (keep it unproxied), plus the `TXT`   |
+
+Railway counts `customer.com` and `www.customer.com` as two custom domains, so add both if your customer wants both. DNS changes can take up to 72 hours to propagate. The Trial plan allows 1 custom domain, Hobby 2 per service, and Pro 20 per service by default (Pro users can ask Railway to raise it).
+
+The adapter below does the same through Railway's public GraphQL API, so your app can add a customer's domain and tell them which records to create.
+
+## Scope and credentials
+
+The adapter checks availability, creates, retrieves, lists, and deletes Railway custom domains. It does not deploy services or edit customer DNS. Set `RAILWAY_TOKEN`, `RAILWAY_PROJECT_ID`, `RAILWAY_ENVIRONMENT_ID`, and `RAILWAY_SERVICE_ID`. A project token is the narrowest choice, since it covers one environment in one project. Railway expects it in the `Project-Access-Token` header, so pass `tokenType: "project"`. Workspace and account tokens use the default `tokenType: "bearer"`, which sends `Authorization: Bearer`. Any other value throws `INVALID_CONFIGURATION`.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { railway } from "@opencoredev/domain-sdk/railway";
+
+export const domains = createDomainClient({
+  provider: railway({
+    token: process.env.RAILWAY_TOKEN!,
+    tokenType: "project",
+    projectId: process.env.RAILWAY_PROJECT_ID!,
+    environmentId: process.env.RAILWAY_ENVIRONMENT_ID!,
+    serviceId: process.env.RAILWAY_SERVICE_ID!,
+  }),
+});
+const domain = await domains.add("app.customer.com");
+```
+
+## DNS, verification, and certificates
+
+`status.dnsRecords` becomes routing DNS. `status.verificationToken` becomes the required `_railway-verify` TXT record. Both are required; valid routing alone never becomes active. Certificate `ISSUED` confirms readiness. Root domains use an ALIAS/ANAME or CNAME-flattening instruction because Railway does not publish a static A record.
+
+## Errors and limitations
+
+GraphQL errors are detected even with HTTP 200. Unavailable domains map to `DOMAIN_CONFLICT`. The current public API has no explicit verification mutation, so refresh state with `refresh()`. Wildcards remain disabled in v0.1.
+
+Official references: [Public API](https://docs.railway.com/integrations/api), [manage domains](https://docs.railway.com/integrations/api/manage-domains), [working with domains](https://docs.railway.com/networking/domains/working-with-domains), and [Railway Domains](https://docs.railway.com/networking/domains/railway-domains).
+
+## Common questions
+
+### How are custom domains and SSL certificates handled by Railway?
+
+You attach the domain to one service, add the `CNAME` and `TXT` records Railway shows, and Railway verifies ownership and issues a Let's Encrypt certificate (ECDSA, valid 90 days) within about an hour of DNS being in place. It renews the certificate automatically when 30 days remain. Railway doesn't accept certificates you upload yourself. In the adapter, the domain becomes `active` once every routing record is valid and Railway reports the certificate as `ISSUED`.
+
+### Why does my Railway custom domain return a 404?
+
+Check the `TXT` verification record first. Railway checks it before it routes traffic, so without it the domain returns a 404 even when the `CNAME` already resolves. Add the `TXT` record exactly as the dashboard shows it, or as `domain.records` lists it with `purpose: "ownership"`, and wait for the green check mark.
+
+### Can I use a root domain on Railway?
+
+Yes, if your DNS provider supports CNAME flattening or a dynamic `ALIAS` record, such as Cloudflare, DNSimple, Namecheap or bunny.net. Railway lists AWS Route 53, Azure DNS, GoDaddy, Hostinger, NameSilo, Hurricane Electric and Squarespace as providers that don't. On those, either serve `www` and redirect the root, or move the domain's nameservers to a provider that flattens. [Apex domains: A records, ALIAS, and CNAME flattening](/blog/apex-domain) compares the options across platforms.
+
+### How do I put Cloudflare in front of a Railway custom domain?
+
+With Cloudflare's proxy on (the orange cloud), set **SSL/TLS** to **Full**. Railway says **Full (Strict)** won't work as intended, and it lists `ERR_TOO_MANY_REDIRECTS` as the error you see when Cloudflare and Railway aren't set up together correctly. Through the proxy, Railway may not be able to issue a certificate for your domain; traffic from Cloudflare to Railway is still encrypted with Railway's `*.up.railway.app` certificate. A proxied domain deeper than one level, like `a.b.customer.com`, needs Cloudflare's Advanced Certificate Manager; otherwise set its record to DNS only (the grey cloud).
+
+### Can I buy a domain on Railway?
+
+Yes. Railway Domains lets you search and buy a domain from [railway.com/domains](https://railway.com/domains) or from a service's networking settings, with DNS on Railway's nameservers, WHOIS privacy and auto-renewal on by default. A domain bought from a service is attached and configured for you. Domain SDK doesn't buy or register domains: it attaches domains your customers already own and returns the records they need to add.
+
+Read next: [Poll until active](../guides/poll-until-active.mdx). For the raw GraphQL calls, tokens and rate limits, see [the Railway API](/blog/railway-api) on the blog.
