@@ -237,7 +237,14 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
         try {
           // The polling loop already retries transient failures, so each poll is one attempt.
           const domain = await get(normalized, polling.signal, { maxAttempts: 1 });
-          polling.onStatus?.(domain);
+          try {
+            polling.onStatus?.(domain);
+          } catch {
+            logger.warn?.("Domain onStatus hook threw.", {
+              provider: provider.id,
+              hostname: normalized,
+            });
+          }
           if (domain.status === "active") return domain;
           // A non-retryable error, so the catch below rethrows it instead of polling again.
           if (shouldStop(domain)) throw stoppedError(domain, provider.id);

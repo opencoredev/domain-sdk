@@ -560,4 +560,37 @@ describe("spaceship DNS", () => {
     ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE", retryable: true });
     expect(mock.calls).toHaveLength(8);
   });
+
+  test("restarts when a record shifts into a later page with the same total", async () => {
+    const record = (index: number) => ({
+      type: "TXT",
+      name: `r${index}`,
+      value: "x",
+      ttl: 300,
+      group: { type: "custom" },
+    });
+    let zone = Array.from({ length: 150 }, (_, index) => record(index));
+    let pages = 0;
+    const mock = mockFetch((url) => {
+      const skip = Number(url.searchParams.get("skip"));
+      const page = { items: zone.slice(skip, skip + 100), total: zone.length };
+      // Inserting one record at the front and dropping one at the end keeps total=150
+      // while pushing r99 from page 1 into page 2.
+      if (++pages === 1) zone = [record(999), ...zone.slice(0, 149)];
+      return json(page);
+    });
+    const records = await spaceship({ ...credentials, fetch: mock.fetch }).listRecords(
+      { zone: "example.com" },
+      context,
+    );
+    expect(records).toHaveLength(150);
+    expect(new Set(records.map((item) => item.name)).size).toBe(150);
+    expect(records[0]?.name).toBe("r999.example.com");
+    expect(mock.calls.map((call) => new URL(call.url).searchParams.get("skip"))).toEqual([
+      "0",
+      "100",
+      "0",
+      "100",
+    ]);
+  });
 });

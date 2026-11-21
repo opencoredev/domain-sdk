@@ -525,21 +525,50 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           } else if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
           if (!missing.length && !conflicts.length) return existing.filter(isWanted);
           const after = await provider.listRecords({ zone }, ctx);
-          // A DNS host can accept a write and still drop or rewrite a record, so check the result.
+          // A DNS host can accept a write and still drop, rewrite, or keep a record, so check the result.
           const dropped = wanted.filter(
             (record) => !after.some((item) => sameRecord(item, record)),
           );
-          if (dropped.length)
-            throw new DomainSdkError(
+          const remaining = conflicts.filter((conflict) =>
+            after.some((item) =>
+              sameRecord(item, {
+                type: conflict.type as DnsRecordType,
+                name: conflict.name,
+                value: conflict.value,
+              }),
+            ),
+          );
+          if (dropped.length || remaining.length) {
+            const summary =
+              dropped.length && remaining.length
+                ? `${dropped.length} DNS record(s) are missing and ${remaining.length} conflicting record(s) remain in ${zone}`
+                : dropped.length
+                  ? `${dropped.length} DNS record(s) are missing from ${zone}`
+                  : `${remaining.length} conflicting DNS record(s) remain in ${zone}`;
+            const verificationError = new DomainSdkError(
               "REQUEST_FAILED",
-              `${provider.id} accepted the write but ${dropped.length} DNS record(s) are missing from ${zone}. Re-read the zone before retrying.`,
+              `${provider.id} accepted the write but ${summary}. Re-read the zone before retrying.`,
               {
                 provider: provider.id,
                 details: {
-                  missing: dropped.map(({ type, name, value }) => ({ type, name, value })),
+                  ...(dropped.length
+                    ? { missing: dropped.map(({ type, name, value }) => ({ type, name, value })) }
+                    : {}),
+                  ...(remaining.length
+                    ? {
+                        remaining: remaining.map(({ type, name, value }) => ({
+                          type,
+                          name,
+                          value,
+                        })),
+                      }
+                    : {}),
                 },
               },
             );
+            if (conflicts.length) return restore(zone, conflicts, missing, verificationError);
+            throw verificationError;
+          }
           return after.filter(isWanted);
         }),
       options.signal,
@@ -606,6 +635,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         retryAfter: cause.retryAfter,
         cause,
         details: {
+          ...cause.details,
           restored,
           replaced: replaced.map(({ type, name, value }) => ({ type, name, value })),
         },

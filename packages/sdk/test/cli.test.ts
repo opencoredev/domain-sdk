@@ -189,6 +189,28 @@ describe("domain-sdk CLI commands", () => {
     expect(mock.calls[0]?.url).toBe("https://api.netlify.com/api/v1/sites/site_123");
     expect(cli.stdout() + cli.stderr()).not.toContain("secret-token");
   });
+
+  test("deduplicates records shared between domain.records and verification.records", async () => {
+    const shared = {
+      type: "TXT" as const,
+      name: "_verify.app.customer.com",
+      value: "vc-domain-verify=123",
+      required: true,
+      purpose: "ownership" as const,
+      status: "pending" as const,
+    };
+    const memory = memoryProvider({ records: [shared] });
+    const baseGet = memory.get.bind(memory);
+    memory.get = async (input, ctx) => {
+      const domain = await baseGet(input, ctx);
+      return { ...domain, verification: { ...domain.verification, records: [shared] } };
+    };
+    const cli = harness({ providers: { memory: { required: [], create: () => memory } } });
+    expect(await cli.run("add", "app.customer.com", "--provider", "memory")).toBe(0);
+    cli.clear();
+    expect(await cli.run("get", "app.customer.com", "--provider", "memory")).toBe(0);
+    expect(cli.stdout().match(/vc-domain-verify=123/g)).toHaveLength(1);
+  });
 });
 
 describe("built domain-sdk bin", () => {

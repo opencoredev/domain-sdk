@@ -2,6 +2,7 @@ import { createDomainClient } from "../core/client";
 import { DomainSdkError, normalizeUnknownError } from "../core/errors";
 import type { Fetch } from "../core/http";
 import type { DomainClient } from "../core/provider";
+import { deduplicateRecords } from "../core/records";
 import type { Domain, DomainPage } from "../core/types";
 import { CLI_PROVIDERS, type CliEnv, type CliProviderFactory } from "./providers";
 
@@ -121,7 +122,7 @@ function formatDomain(domain: Domain): string {
     `  verification:  ${domain.verification.status}`,
     `  certificate:   ${domain.certificate.status}`,
   ];
-  const records = [...domain.records, ...domain.verification.records];
+  const records = deduplicateRecords([...domain.records, ...domain.verification.records]);
   if (records.length) {
     lines.push("", "  DNS records:");
     for (const record of records)

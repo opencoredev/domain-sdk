@@ -448,4 +448,73 @@ describe("ensureRecords write verification", () => {
       details: { missing: [{ type: "A", name: "app.example.com", value: "192.0.2.1" }] },
     });
   });
+
+  test("rolls back replaced conflicts when a replacement write is silently dropped", async () => {
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
+        ],
+      },
+    });
+    const { createRecords } = provider;
+    let dropFirst = true;
+    provider.createRecords = (input, context) => {
+      if (dropFirst) {
+        dropFirst = false;
+        return Promise.resolve();
+      }
+      return createRecords(input, context);
+    };
+    const dns = createDnsClient({ provider });
+    const error = await dns
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DomainSdkError);
+    expect(error).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        restored: true,
+        missing: [{ type: "A", name: "app.example.com", value: "192.0.2.20" }],
+        replaced: [{ type: "A", name: "app.example.com", value: "192.0.2.10" }],
+      },
+    });
+    expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.10"]);
+  });
+
+  test("fails and rolls back newly created records when conflict deletion was ignored", async () => {
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
+        ],
+      },
+    });
+    const { deleteRecords } = provider;
+    let ignoreFirstDelete = true;
+    provider.deleteRecords = (input, context) => {
+      if (ignoreFirstDelete) {
+        ignoreFirstDelete = false;
+        return Promise.resolve();
+      }
+      return deleteRecords(input, context);
+    };
+    const dns = createDnsClient({ provider });
+    const error = await dns
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DomainSdkError);
+    expect(error).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        restored: true,
+        remaining: [{ type: "A", name: "app.example.com", value: "192.0.2.10" }],
+      },
+    });
+    expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.10"]);
+  });
 });

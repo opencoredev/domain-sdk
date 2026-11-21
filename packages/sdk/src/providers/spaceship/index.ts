@@ -227,9 +227,22 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
     },
     async listRecords({ zone }, context) {
       let records: ZoneRecord[] = [];
+      let previousPages = new Set<string>();
       let skip = 0;
       let expectedTotal: number | undefined;
       let restarts = 0;
+      const restart = () => {
+        if (++restarts > MAX_LIST_RESTARTS)
+          throw new DomainSdkError(
+            "PROVIDER_UNAVAILABLE",
+            "Spaceship records kept changing while they were listed. Try again.",
+            { provider: "spaceship", retryable: true },
+          );
+        records = [];
+        previousPages = new Set<string>();
+        skip = 0;
+        expectedTotal = undefined;
+      };
       while (true) {
         const page = await request<{ items: SpaceshipRecord[]; total: number }>(
           `${recordsPath(zone)}?take=100&skip=${skip}`,
@@ -243,15 +256,7 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
           expectedTotal !== undefined &&
           page.total !== expectedTotal
         ) {
-          if (++restarts > MAX_LIST_RESTARTS)
-            throw new DomainSdkError(
-              "PROVIDER_UNAVAILABLE",
-              "Spaceship records kept changing while they were listed. Try again.",
-              { provider: "spaceship", retryable: true },
-            );
-          records = [];
-          skip = 0;
-          expectedTotal = undefined;
+          restart();
           continue;
         }
         if (
@@ -269,6 +274,8 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
               provider: "spaceship",
             },
           );
+        const pageKeys: string[] = [];
+        let shifted = false;
         for (const item of page.items) {
           if (
             !item ||
@@ -291,9 +298,23 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
             editable: item.group?.type === "custom",
           };
           if (record.type === "MX") record.priority = item.preference;
-          identities.set(record, { type: item.type, name: item.name, ...recordFields(item) });
+          const identity = { type: item.type, name: item.name, ...recordFields(item) };
+          const key = JSON.stringify(identity);
+          // Even when total is unchanged (an add and delete between pages), a record shifting
+          // from an earlier page into this one reveals an inconsistent offset snapshot.
+          if (previousPages.has(key)) {
+            shifted = true;
+            break;
+          }
+          pageKeys.push(key);
+          identities.set(record, identity);
           records.push(record);
         }
+        if (shifted) {
+          restart();
+          continue;
+        }
+        for (const key of pageKeys) previousPages.add(key);
         expectedTotal = page.total;
         skip += page.items.length;
         if (skip >= page.total) return records;

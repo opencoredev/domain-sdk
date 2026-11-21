@@ -69,3 +69,22 @@ test("keeps a wrapped cause's name, stack, and code while redacting its message"
   expect(frames(cause.stack)).toContain("errors.test.ts");
   expect(cause.stack).not.toContain("sk_live_abc123");
 });
+
+test("recursively redacts nested fetch error causes and handles circular causes", () => {
+  const socketError = Object.assign(new Error("connect failed Bearer secret_nested"), {
+    code: "ENOTFOUND",
+  });
+  const fetchError = new TypeError("fetch failed", { cause: socketError });
+  const wrapped = new DomainSdkError("PROVIDER_UNAVAILABLE", "Down.", { cause: fetchError });
+  const cause = wrapped.cause as Error & { cause?: Error & { code?: string } };
+  expect(cause).toBeInstanceOf(Error);
+  expect(cause.name).toBe("TypeError");
+  expect(cause.cause).toBeInstanceOf(Error);
+  expect(cause.cause?.code).toBe("ENOTFOUND");
+  expect(cause.cause?.message).toBe("connect failed Bearer [REDACTED]");
+
+  const cyclic = new Error("loop") as Error & { cause?: unknown };
+  cyclic.cause = cyclic;
+  const wrappedCycle = new DomainSdkError("UNKNOWN_ERROR", "Loop.", { cause: cyclic });
+  expect((wrappedCycle.cause as Error).cause).toBe("[Circular]");
+});

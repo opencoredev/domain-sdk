@@ -43,12 +43,20 @@ export function redact(value: unknown, seen = new WeakSet<object>()): unknown {
 }
 
 /**
- * Copy a non-SDK error with its message redacted, keeping its name, stack frames, and a string or
- * numeric `code` such as `ECONNRESET` so provider failures stay traceable.
+ * Copy a non-SDK error with its message and nested causes redacted, keeping its name, stack
+ * frames, and a string or numeric `code` such as `ECONNRESET` so provider failures stay traceable.
  */
-function redactedCause(cause: Error): Error {
+function redactedCause(cause: Error, seen = new WeakSet<object>()): Error {
+  seen.add(cause);
   const message = String(redact(cause.message));
-  const safe = new Error(message);
+  let nested: unknown;
+  if (cause.cause !== undefined) {
+    if (cause.cause instanceof DomainSdkError) nested = cause.cause;
+    else if (cause.cause instanceof Error)
+      nested = seen.has(cause.cause) ? "[Circular]" : redactedCause(cause.cause, seen);
+    else nested = redact(cause.cause, seen);
+  }
+  const safe = nested !== undefined ? new Error(message, { cause: nested }) : new Error(message);
   safe.name = cause.name;
   const header = `${cause.name}: ${cause.message}`;
   const stack = cause.stack?.startsWith(header)

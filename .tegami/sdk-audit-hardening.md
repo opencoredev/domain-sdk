@@ -8,7 +8,7 @@ packages:
 ## Behavior changes
 
 - `waitUntilActive()` stops as soon as the provider reports `failed` and rejects with `VERIFICATION_FAILED` (status and issues in `details`) instead of polling until `TIMEOUT`. Pass `shouldStop` to also stop on `misconfigured`, or `() => false` for the old behavior.
-- `ensureRecords()` and `applyDomainRecords()` re-read the zone after writing and reject with `REQUEST_FAILED` (`details.missing`) when the DNS host dropped or rewrote a record it accepted.
+- `ensureRecords()` and `applyDomainRecords()` re-read the zone after writing, roll back a replacement when the write was dropped or a replaced conflict stayed behind, and reject with `REQUEST_FAILED` (`details.missing` / `details.remaining`).
 - `createSubdomainClient()` reserves `www`, `api`, `admin`, and `mail` by default. A `reservedLabels` list replaces the defaults; pass `[]` to reserve none or `[...DEFAULT_RESERVED_LABELS, "billing"]` to extend them.
 - Every client method rejects its promise instead of throwing synchronously, including `list()` and `verify()` on unsupported providers and invalid hostnames.
 - A `list()` limit outside 1 to 100 and invalid `waitUntilActive()` options reject with `INVALID_CONFIGURATION` instead of `REQUEST_FAILED`. Creating a client in a browser throws a `DomainSdkError` with `INVALID_CONFIGURATION` instead of a plain `Error`.
@@ -18,8 +18,8 @@ packages:
 
 - `add({ hostname }, { signal })` now honors the signal in the second argument.
 - Netlify `add()` and `remove()` run one at a time per provider instance, so concurrent calls no longer overwrite each other's aliases.
-- Spaceship `listRecords()` starts over when records change between pages instead of failing or skipping a record.
-- Error redaction hides `AccessKey` (bunny.net) and `access_token` values, and a wrapped cause keeps its name, stack frames, and `code` with its message redacted.
+- Spaceship `listRecords()` starts over when `total` shifts or a record from an earlier page reappears on a later page instead of failing or returning a skewed offset snapshot.
+- Error redaction hides `AccessKey` (bunny.net) and `access_token` values, and a wrapped cause keeps its name, stack frames, `code`, and nested `cause` chain with messages redacted.
 
 ## New
 
