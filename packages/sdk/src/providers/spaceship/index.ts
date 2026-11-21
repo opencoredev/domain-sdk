@@ -69,6 +69,8 @@ function recordFields(record: SpaceshipRecord): Record<string, unknown> {
 // A full page holds 100 records whose values may reach 65,535 characters each, and JSON escaping
 // can double quotes and backslashes.
 const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+/** Times `listRecords()` starts over when the zone changes between pages. */
+const MAX_LIST_RESTARTS = 3;
 /** Spaceship accepts at most 500 records per save or delete request. */
 const MAX_BATCH = 500;
 
@@ -224,13 +226,34 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
       zoneInfo: true,
     },
     async listRecords({ zone }, context) {
-      const records: ZoneRecord[] = [];
+      let records: ZoneRecord[] = [];
       let skip = 0;
+      let expectedTotal: number | undefined;
+      let restarts = 0;
       while (true) {
         const page = await request<{ items: SpaceshipRecord[]; total: number }>(
           `${recordsPath(zone)}?take=100&skip=${skip}`,
           context,
         );
+        // Pages are offsets, so a record added or deleted between pages shifts every later
+        // page and would skip or repeat a record. Start over to get a consistent snapshot.
+        if (
+          page &&
+          Number.isInteger(page.total) &&
+          expectedTotal !== undefined &&
+          page.total !== expectedTotal
+        ) {
+          if (++restarts > MAX_LIST_RESTARTS)
+            throw new DomainSdkError(
+              "PROVIDER_UNAVAILABLE",
+              "Spaceship records kept changing while they were listed. Try again.",
+              { provider: "spaceship", retryable: true },
+            );
+          records = [];
+          skip = 0;
+          expectedTotal = undefined;
+          continue;
+        }
         if (
           !page ||
           !Array.isArray(page.items) ||
@@ -271,6 +294,7 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
           identities.set(record, { type: item.type, name: item.name, ...recordFields(item) });
           records.push(record);
         }
+        expectedTotal = page.total;
         skip += page.items.length;
         if (skip >= page.total) return records;
       }

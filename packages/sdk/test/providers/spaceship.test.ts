@@ -507,4 +507,57 @@ describe("spaceship DNS", () => {
         expect.objectContaining({ code: "INVALID_CONFIGURATION" }),
       );
   });
+
+  test("restarts the listing when records change between pages", async () => {
+    const record = (index: number) => ({
+      type: "TXT",
+      name: `r${index}`,
+      value: "x",
+      ttl: 300,
+      group: { type: "custom" },
+    });
+    let zone = Array.from({ length: 150 }, (_, index) => record(index));
+    let pages = 0;
+    const mock = mockFetch((url) => {
+      const skip = Number(url.searchParams.get("skip"));
+      const page = { items: zone.slice(skip, skip + 100), total: zone.length };
+      // Two records are deleted elsewhere right after the first page is read.
+      if (++pages === 1) zone = zone.slice(2);
+      return json(page);
+    });
+    const records = await spaceship({ ...credentials, fetch: mock.fetch }).listRecords(
+      { zone: "example.com" },
+      context,
+    );
+    expect(records).toHaveLength(148);
+    expect(new Set(records.map((item) => item.name)).size).toBe(148);
+    expect(records[0]?.name).toBe("r2.example.com");
+    expect(mock.calls.map((call) => new URL(call.url).searchParams.get("skip"))).toEqual([
+      "0",
+      "100",
+      "0",
+      "100",
+    ]);
+  });
+
+  test("gives up with a retryable error when the zone never settles", async () => {
+    let total = 150;
+    const mock = mockFetch((url) => {
+      const skip = Number(url.searchParams.get("skip"));
+      const items = Array.from({ length: Math.min(100, total - skip) }, (_, index) => ({
+        type: "TXT",
+        name: `r${skip + index}`,
+        value: "x",
+        ttl: 300,
+      }));
+      return json({ items, total: total++ });
+    });
+    await expect(
+      spaceship({ ...credentials, fetch: mock.fetch }).listRecords(
+        { zone: "example.com" },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE", retryable: true });
+    expect(mock.calls).toHaveLength(8);
+  });
 });
