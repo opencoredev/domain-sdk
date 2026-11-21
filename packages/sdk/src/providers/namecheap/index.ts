@@ -10,6 +10,7 @@ import {
 } from "../../core/dns";
 import {
   DomainSdkError,
+  normalizeUnknownError,
   parseRetryAfter,
   safeInstanceOf,
   type DomainSdkErrorCode,
@@ -311,7 +312,21 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
           "DomainDNSSetHostsResult",
         );
         if (payload.attributes.IsSuccess !== "true") malformed();
-        const after = await readHosts(zone, context);
+        let after: Awaited<ReturnType<typeof readHosts>>;
+        try {
+          after = await readHosts(zone, context);
+        } catch (error) {
+          // setHosts already succeeded, so the zone changed even though it could not be re-read.
+          const cause = normalizeUnknownError(error, "namecheap");
+          throw new DomainSdkError(cause.code, cause.message, {
+            provider: "namecheap",
+            statusCode: cause.statusCode,
+            retryable: cause.retryable,
+            retryAfter: cause.retryAfter,
+            cause,
+            details: { ...cause.details, committed: true },
+          });
+        }
         const expected = hosts.map((host) => hostKey(host, zone)).sort();
         const actual = after.hosts.map((host) => hostKey(host, zone)).sort();
         if (

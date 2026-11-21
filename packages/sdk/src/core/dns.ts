@@ -663,7 +663,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 error,
                 snapshot,
                 existing.filter(isWanted),
-                creating && committedWrite(error),
+                committedWrite(error),
               );
             }
             const verificationError = verifyAfterWrite(after);
@@ -754,6 +754,9 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     const beforeEditable = provider.capabilities.wholeZoneWrites
       ? before.filter((record) => record.editable && !preWantedSet.has(record))
       : before.filter((record) => record.editable && replacedSet.has(record));
+    const beforeLocked = provider.capabilities.wholeZoneWrites
+      ? before.filter((record) => !record.editable && !preWantedSet.has(record))
+      : [];
     const ownedKeys = new Set([
       ...requestedKeys,
       ...replaced.map(recordKey),
@@ -834,6 +837,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         const verified = await provider.listRecords({ zone }, ctx);
         const stillGone = subtract(beforeEditable, verified, true);
         const bystandersLost = subtract(touchedBystanders, verified);
+        const lockedLost = subtract(beforeLocked, verified).length > 0;
         const preWantedLost = subtract(preExistingWanted, verified).length > 0;
         const foreignAdded = provider.capabilities.wholeZoneWrites
           ? subtract(
@@ -852,6 +856,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         restored =
           stillGone.length === 0 &&
           bystandersLost.length === 0 &&
+          !lockedLost &&
           remainingUnexpected.length === 0 &&
           (!provider.capabilities.wholeZoneWrites || !preWantedLost);
       }

@@ -139,6 +139,16 @@ function scrubAuthSchemes(value: string): string {
       while (valueEnd < value.length && !/[\r\n;}\]]/.test(value[valueEnd]!)) valueEnd += 1;
     } else {
       while (valueEnd < value.length && !/[\s"',;)}\]\\]/.test(value[valueEnd]!)) valueEnd += 1;
+      if (
+        valueEnd > valueStart &&
+        value[valueEnd - 1] === "=" &&
+        valueEnd < value.length &&
+        (value[valueEnd] === '"' ||
+          value[valueEnd] === "'" ||
+          (value[valueEnd] === "\\" && /^\\+"/.test(value.slice(valueEnd))))
+      ) {
+        valueEnd = scanSecretValueEnd(value, valueEnd);
+      }
       const token = value.slice(valueStart, valueEnd);
       const word = token.replace(/[.!?:]+$/, "");
       if (/^(?:bearer|basic|digest|apikey|token)$/i.test(word)) continue;

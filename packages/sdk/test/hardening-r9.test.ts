@@ -5,6 +5,8 @@ import { createDomainClient } from "../src/core/client";
 import { createDnsClient, type DnsProvider, type ZoneRecord } from "../src/core/dns";
 import { DomainSdkError, redact } from "../src/core/errors";
 import { sleep, withRetry, type Fetch } from "../src/core/http";
+import { createSubdomainClient } from "../src/core/subdomains";
+import type { Domain } from "../src/core/types";
 import { bunny } from "../src/providers/bunny";
 import { cloudflareSaaS } from "../src/providers/cloudflare";
 import { namecheap } from "../src/providers/namecheap";
@@ -1466,5 +1468,169 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
         `Error: {'url':'https://example.com','email':'user@example.com'}`,
       ).message,
     ).toBe(`Error: {'url':'https://example.com','email':'user@example.com'}`);
+
+    // 7. Quoted HTTP auth-param credentials redact while WWW-Authenticate Basic realm stays intact
+    expect(
+      new DomainSdkError("REQUEST_FAILED", 'Authorization: Token token="SUPER_SECRET_VALUE"')
+        .message,
+    ).not.toContain("SUPER_SECRET_VALUE");
+    expect(
+      new DomainSdkError("REQUEST_FAILED", 'Token token="SUPER_SECRET_VALUE"').message,
+    ).not.toContain("SUPER_SECRET_VALUE");
+    expect(
+      new DomainSdkError("REQUEST_FAILED", 'WWW-Authenticate: Basic realm="api"').message,
+    ).toBe('WWW-Authenticate: Basic realm="api"');
+
+    // 8. Whole-zone rollback detects dropped host-managed (editable: false) records and committed deleteRecords failures
+    let lockedZone: ZoneRecord[] = [
+      {
+        id: "ns",
+        type: "NS",
+        name: "example.com",
+        value: "ns1.host.test",
+        ttl: 300,
+        editable: false,
+      },
+      { id: "a", type: "A", name: "example.com", value: "1.1.1.1", ttl: 300, editable: true },
+    ];
+    const lockedDropErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "wz-locked",
+        capabilities: {
+          recordTypes: ["A", "TXT"],
+          ttl: { min: 60, max: 86400 },
+          wholeZoneWrites: true,
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return lockedZone.map((r) => ({ ...r }));
+        },
+        async createRecords() {
+          lockedZone = lockedZone.filter((r) => r.id !== "ns");
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "503", {
+            provider: "wz-locked",
+            statusCode: 503,
+            retryable: true,
+          });
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "new.example.com", value: "2.2.2.2" }])
+      .catch((e) => e);
+    expect(lockedDropErr).toMatchObject({ details: { restored: false } });
+
+    let delCommitState: ZoneRecord[] = [
+      { id: "1", type: "A", name: "example.com", value: "1.1.1.1", ttl: 1800, editable: true },
+    ];
+    const delCommitErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "wz-del-commit",
+        capabilities: {
+          recordTypes: ["A"],
+          ttl: { min: 60, max: 60000 },
+          wholeZoneWrites: true,
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return delCommitState.map((r) => ({ ...r }));
+        },
+        async deleteRecords() {
+          delCommitState = [
+            {
+              id: "2",
+              type: "A",
+              name: "example.com",
+              value: "9.9.9.9",
+              ttl: 1800,
+              editable: true,
+            },
+          ];
+          throw new DomainSdkError("REQUEST_FAILED", "did not retain", {
+            provider: "wz-del-commit",
+            details: { committed: true },
+          });
+        },
+        async createRecords({ records }) {
+          for (const r of records)
+            delCommitState.push({ id: "3", editable: true, ttl: 1800, ...r });
+        },
+      },
+    })
+      .ensureRecords([{ type: "A", name: "example.com", value: "2.2.2.2" }], {
+        zone: "example.com",
+        onConflict: "replace",
+      })
+      .catch((e) => e);
+    expect(delCommitErr).toMatchObject({
+      details: {
+        restored: false,
+        unexpected: [expect.objectContaining({ value: "9.9.9.9" })],
+      },
+    });
+
+    // 9. Namecheap post-setHosts readHosts failure marks committed: true so rewritten records report restored: false
+    let ncHostsXml = `<host HostId="1" Name="@" Type="A" Address="1.1.1.1" TTL="1800" />`;
+    let ncGetCalls = 0;
+    const ncCommitFail = namecheap({
+      apiUser: "u",
+      apiKey: "k",
+      clientIp: "1.2.3.4",
+      fetch: async (input, init) => {
+        const url = String(input);
+        const body = typeof init?.body === "string" ? init.body : "";
+        if (url.includes("setHosts") || body.includes("setHosts")) {
+          ncHostsXml += `<host HostId="2" Name="_v" Type="TXT" Address="REWRITTEN_OURS" TTL="1800" />`;
+          return new Response(
+            `<?xml version="1.0"?><ApiResponse Status="OK"><CommandResponse><DomainDNSSetHostsResult IsSuccess="true" /></CommandResponse></ApiResponse>`,
+            { status: 200 },
+          );
+        }
+        ncGetCalls += 1;
+        if (ncGetCalls === 3) return new Response("unavailable", { status: 503 });
+        return new Response(
+          `<?xml version="1.0"?><ApiResponse Status="OK"><CommandResponse><DomainDNSGetHostsResult IsUsingOurDNS="true">${ncHostsXml}</DomainDNSGetHostsResult></CommandResponse></ApiResponse>`,
+          { status: 200 },
+        );
+      },
+    });
+    const ncCommitErr = await createDnsClient({
+      provider: ncCommitFail,
+      retry: { maxAttempts: 1 },
+    })
+      .ensureRecords([{ type: "TXT", name: "_v.example.com", value: '"OURS"' }])
+      .catch((e) => e);
+    expect(ncCommitErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: {
+        committed: true,
+        restored: false,
+        externalChange: true,
+        unexpected: [expect.objectContaining({ value: "REWRITTEN_OURS" })],
+      },
+    });
+
+    // 10. subdomains.list wraps throwing hostname getter and malformed page.domains into DomainSdkError
+    const baseDomClient = createDomainClient({ provider: memoryProvider() });
+    const hostileSub = createSubdomainClient({
+      baseDomain: "app.example.com",
+      domainClient: {
+        ...baseDomClient,
+        async list() {
+          return {
+            domains: [
+              {
+                get hostname() {
+                  throw new Error("hostile getter");
+                },
+              } as unknown as Domain,
+            ],
+          };
+        },
+      },
+    });
+    await expect(hostileSub.list()).rejects.toBeInstanceOf(DomainSdkError);
   });
 });

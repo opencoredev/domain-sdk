@@ -3,6 +3,14 @@ title: Changelog
 description: User-visible Domain SDK releases and compatibility changes.
 ---
 
+## Unreleased
+
+- Added the `domain-sdk` CLI (`add`, `get`, `list`, `verify`, `remove`, `wait`) with `--provider` and `--json` output.
+- Added `onOperation` hooks on `createDomainClient()` and `createDnsClient()`, `SubdomainClient.list()`, `shouldStop` on `waitUntilActive()`, `render({ apexAddress })`, and exported DNS record helpers.
+- `createSubdomainClient()` now reserves `www`, `api`, `admin`, and `mail` by default (`DEFAULT_RESERVED_LABELS`).
+- `ensureRecords()` and `applyDomainRecords()` re-read the zone after writing, roll back failed writes while preserving foreign concurrent records, and report `details.restored`, `details.externalChange`, and `details.unexpected`.
+- Provider JSON responses are capped at 8 MiB by default (16 MiB for Porkbun and Spaceship zone reads); Namecheap XML responses are capped at 1 MiB.
+
 ## 0.3.0
 
 - Added the bunny.net adapter for custom hostnames on a bunny.net pull zone, with apex and wildcard support and `verify()` as a certificate request.
@@ -10,7 +18,7 @@ description: User-visible Domain SDK releases and compatibility changes.
 - Both clients retry rate limits and transient outages up to 3 attempts, honoring `Retry-After`. Configure it with `retry`.
 - `waitUntilActive()` backs off between polls (`backoffFactor`, `maxIntervalMs`, `jitter`).
 - `createDnsClient({ lock })` accepts a shared per-zone lock for several workers.
-- Responses over 16 KB parse correctly (up to 8 MiB by default, 16 MiB for whole-zone DNS providers), and the SDK no longer imports any `node:*` module.
+- Responses over 16 KB parse correctly, and the SDK no longer imports any `node:*` module.
 
 ## 0.2.0
 

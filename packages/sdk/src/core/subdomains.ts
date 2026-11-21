@@ -1,4 +1,4 @@
-import { DomainSdkError, safeInstanceOf } from "./errors";
+import { DomainSdkError, normalizeUnknownError, safeInstanceOf } from "./errors";
 import { normalizeHostname } from "./hostname";
 import type { DomainClient } from "./provider";
 import type { Domain, ListDomainsOptions, RequestOptions, WaitUntilActiveOptions } from "./types";
@@ -172,14 +172,20 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
     },
     async list(listOptions) {
       const page = await domainClient.list(listOptions);
+      let domains: readonly Domain[];
+      try {
+        domains = Array.from(page.domains);
+      } catch (error) {
+        throw normalizeUnknownError(error, domainClient.provider);
+      }
       const subdomains: TenantSubdomain[] = [];
-      for (const domain of page.domains) {
+      for (const domain of domains) {
         let label: string;
         try {
           label = fromHostname(domain.hostname);
         } catch (error) {
           if (safeInstanceOf(error, DomainSdkError) && error.code === "INVALID_HOSTNAME") continue;
-          throw error;
+          throw normalizeUnknownError(error, domainClient.provider);
         }
         subdomains.push({ label, domain });
       }
