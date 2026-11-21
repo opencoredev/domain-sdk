@@ -94,6 +94,13 @@ const groups = sectionOrder.map((section) => ({
                     <span class="font-medium group-hover:underline group-hover:underline-offset-4">
                       {page.title}
                     </span>
+                    {
+                      page.description && (
+                        <span class="mt-1 block text-sm leading-5 text-muted-foreground">
+                          {page.description}
+                        </span>
+                      )
+                    }
                   </a>
                 </li>
               ))}

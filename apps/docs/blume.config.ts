@@ -169,7 +169,7 @@ export default defineConfig({
 
   seo: {
     jsonLd: {
-      author: { "@id": "https://www.domain-sdk.dev#organization" },
+      author: { "@id": `${site}#organization` },
     },
     // Shipped via public/robots.txt to preserve Blume's Content-Signal line
     // alongside Disallow rules for /api/ and /ingest/.
