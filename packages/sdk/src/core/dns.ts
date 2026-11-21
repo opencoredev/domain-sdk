@@ -392,12 +392,22 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           signal,
           // A failed replacement was already rolled back; the caller decides whether to try again.
           // An add-only write that rolled back cleanly with nothing replaced and no external deletion is safe to retry.
-          shouldRetry: (error) =>
-            error.details?.restored === undefined ||
-            (error.details.restored === true &&
-              error.details.externalChange !== true &&
-              Array.isArray(error.details.replaced) &&
-              error.details.replaced.length === 0),
+          shouldRetry: (error) => {
+            const details = error.details;
+            if (details === undefined || !Object.hasOwn(details, "restored")) return true;
+            const restored = details.restored;
+            if (restored === undefined) return true;
+            const externalChange = Object.hasOwn(details, "externalChange")
+              ? details.externalChange
+              : undefined;
+            const replaced = Object.hasOwn(details, "replaced") ? details.replaced : undefined;
+            return (
+              restored === true &&
+              externalChange !== true &&
+              Array.isArray(replaced) &&
+              replaced.length === 0
+            );
+          },
           onRetry: (error, attempt, delayMs) =>
             safeLog("warn", "DNS operation will be retried.", {
               provider: provider.id,
@@ -643,6 +653,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             );
           };
 
+          const committedWrite = (err: unknown): boolean =>
+            safeInstanceOf(err, DomainSdkError) &&
+            err.details !== undefined &&
+            Object.hasOwn(err.details, "committed") &&
+            err.details.committed === true;
+
           if (conflicts.length) {
             // A record the provider cannot create again could not be restored if the replacement
             // failed, so it blocks replacement just like a record the host manages.
@@ -669,11 +685,6 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                   },
                 },
               );
-            const committedWrite = (err: unknown): boolean =>
-              safeInstanceOf(err, DomainSdkError) &&
-              err.details !== undefined &&
-              Object.hasOwn(err.details, "committed") &&
-              err.details.committed === true;
             let creating = false;
             let writeCommitted = false;
             let after: ZoneRecord[];
@@ -710,8 +721,6 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           }
 
           if (!missing.length) return snapshot.filter(isWanted);
-          const committedWrite = (err: unknown): boolean =>
-            safeInstanceOf(err, DomainSdkError) && err.details?.committed === true;
           let writeCommitted = false;
           let after: ZoneRecord[];
           try {

@@ -3145,5 +3145,151 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     expect(unstableOnConflictErr).toMatchObject({ code: "DOMAIN_CONFLICT" });
     expect(onConflictReads).toBe(1);
     expect(conflictingDeletes).toBe(0);
+
+    // 8. Prototype pollution immunity for committed, onConflict, and retry veto details on both add-only and replace paths.
+    const proto = Object.prototype as Record<string, unknown>;
+    try {
+      proto.committed = true;
+      proto.onConflict = "replace";
+      proto.restored = false;
+      proto.externalChange = true;
+
+      // (a) Add-only whole-zone pre-commit failure carrying `details` must NOT treat Object.prototype.committed as committed
+      // and must NOT resurrect a concurrently deleted unrelated TXT record.
+      let listStep = 0;
+      let restoreCreates = 0;
+      const addOnlyWholeZoneErr = await createDnsClient({
+        provider: {
+          id: "proto-wz-add",
+          capabilities: {
+            wholeZoneWrites: true,
+            recordTypes: ["A", "TXT"],
+            ttl: { min: 60, max: 86400 },
+            zoneInfo: false,
+          },
+          async listRecords() {
+            listStep += 1;
+            if (listStep === 1) {
+              return [
+                {
+                  id: "txt-1",
+                  type: "TXT",
+                  name: "keep.example.com",
+                  value: "hello",
+                  ttl: 300,
+                  editable: true,
+                },
+              ];
+            }
+            // Concurrent writer deleted txt-1 before createRecords failed pre-commit.
+            return [];
+          },
+          async createRecords() {
+            if (listStep === 1) {
+              throw new DomainSdkError("REQUEST_FAILED", "pre-commit fail", {
+                provider: "proto-wz-add",
+                retryable: true,
+                details: { phase: "pre-commit" },
+              });
+            }
+            restoreCreates += 1;
+          },
+          async deleteRecords() {},
+        },
+        retry: { maxAttempts: 1 },
+      })
+        .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+          zone: "example.com",
+        })
+        .catch((e) => e);
+      expect(restoreCreates).toBe(0);
+      expect(addOnlyWholeZoneErr).toMatchObject({
+        code: "REQUEST_FAILED",
+        retryable: false,
+        details: { restored: true, externalChange: true },
+      });
+
+      // (b) Object.prototype.onConflict = "replace" must be ignored when options.onConflict is omitted.
+      let protoConflictDeletes = 0;
+      const protoConflictErr = await createDnsClient({
+        provider: {
+          id: "proto-conflict",
+          capabilities: {
+            wholeZoneWrites: false,
+            recordTypes: ["A"],
+            ttl: { min: 60, max: 86400 },
+            zoneInfo: false,
+          },
+          async listRecords() {
+            return [
+              {
+                id: "c1",
+                type: "A",
+                name: "app.example.com",
+                value: "9.9.9.9",
+                ttl: 300,
+                editable: true,
+              },
+            ];
+          },
+          async deleteRecords() {
+            protoConflictDeletes += 1;
+          },
+          async createRecords() {},
+        },
+      })
+        .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+          zone: "example.com",
+        })
+        .catch((e) => e);
+      expect(protoConflictErr).toMatchObject({ code: "DOMAIN_CONFLICT" });
+      expect(protoConflictDeletes).toBe(0);
+
+      // (c) Object.prototype.restored/externalChange must not veto retries of ordinary transient errors.
+      let transientAttempts = 0;
+      const retriedRecords = await createDnsClient({
+        provider: {
+          id: "proto-retry",
+          capabilities: {
+            wholeZoneWrites: false,
+            recordTypes: ["A"],
+            ttl: { min: 60, max: 86400 },
+            zoneInfo: false,
+          },
+          async listRecords() {
+            transientAttempts += 1;
+            if (transientAttempts === 1) {
+              throw new DomainSdkError("PROVIDER_UNAVAILABLE", "transient", {
+                provider: "proto-retry",
+                retryable: true,
+                details: { transient: true },
+              });
+            }
+            return [
+              {
+                id: "a1",
+                type: "A",
+                name: "app.example.com",
+                value: "1.2.3.4",
+                ttl: 300,
+                editable: true,
+              },
+            ];
+          },
+          async createRecords() {},
+          async deleteRecords() {},
+        },
+        retry: { maxAttempts: 2, baseDelayMs: 1 },
+      }).ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+      });
+      expect(transientAttempts).toBe(2);
+      expect(retriedRecords).toHaveLength(1);
+    } finally {
+      delete proto.committed;
+      delete proto.onConflict;
+      delete proto.restored;
+      delete proto.externalChange;
+    }
   });
 });

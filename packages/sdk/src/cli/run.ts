@@ -18,7 +18,7 @@ export interface CliIo {
   providers?: Readonly<Record<string, CliProviderFactory>>;
 }
 
-/** Exit codes: 0 success, 1 the operation failed, 2 the command line was invalid. */
+/** Exit codes: 0 success, 1 operation or provider configuration failed, 2 CLI usage or required environment variables were invalid. */
 export type CliExitCode = 0 | 1 | 2;
 
 const COMMANDS = ["add", "get", "list", "verify", "remove", "wait"] as const;
