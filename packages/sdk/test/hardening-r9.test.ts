@@ -2467,4 +2467,87 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       },
     });
   });
+
+  test("R31: linear-time Basic/LF-only redaction, quoted trailing creds, quote-comma/16-brace/pipe Basic creds, nested compact JSON, and partial-rollback foreignAdded", async () => {
+    // 1. O(N) performance on LF-only newlines and repeated Basic colon+delimiters (no quadratic stall).
+    const t0 = performance.now();
+    new DomainSdkError("REQUEST_FAILED", "Basic authentication\n".repeat(160_000));
+    new DomainSdkError("REQUEST_FAILED", "Basic " + "a".repeat(40_000) + ":" + ",b".repeat(40_000));
+    expect(performance.now() - t0).toBeLessThan(500);
+
+    // 2. Quoted trailing credentials (including lowercase/short), Basic quote-comma, 16+ braces, and pipe delimiter.
+    for (const [input, leaked] of [
+      ['Bearer invalid "supersecret"', "supersecret"],
+      ['Bearer invalid "12345"', "12345"],
+      ['secret is "lowercaseonly"', "lowercaseonly"],
+      ['Basic admin:pa",SECRET123', "SECRET123"],
+      ["Basic admin:pa',SECRET123", "SECRET123"],
+      ["Basic admin:pa" + "}".repeat(16) + "SECRET123", "SECRET123"],
+      ["Basic admin:" + "}".repeat(16) + "SECRET123", "SECRET123"],
+      ["level=error|auth=Basic dXNlcjpwYXNz|status=401", "dXNlcjpwYXNz"],
+    ] as const) {
+      const msg = new DomainSdkError("REQUEST_FAILED", input).message;
+      expect(msg).not.toContain(leaked);
+      expect(msg).toContain("[REDACTED]");
+    }
+
+    // 3. Nested compact JSON preserves surrounding structure.
+    expect(
+      new DomainSdkError(
+        "REQUEST_FAILED",
+        'Upstream error: {"nested":{"header":"Basic admin:pass"},"status":401}',
+      ).message,
+    ).toBe('Upstream error: {"nested":{"header":"Basic [REDACTED]"},"status":401}');
+
+    // 4. Whole-zone partial rollback (dropped un-restorable MX + foreign unrelated TXT added) sets externalChange: true.
+    const z: ZoneRecord[] = [
+      {
+        id: "mx1",
+        type: "MX",
+        name: "example.com",
+        value: "mail.example.com",
+        ttl: 300,
+        editable: true,
+      },
+    ];
+    const pErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "wz-partial-foreign",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["A", "TXT"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return z.map((r) => ({ ...r }));
+        },
+        async createRecords() {
+          z.length = 0;
+          z.push({
+            id: "t1",
+            type: "TXT",
+            name: "other.example.com",
+            value: "ext",
+            ttl: 300,
+            editable: true,
+          });
+          throw new DomainSdkError("REQUEST_FAILED", "committed drop+foreign", {
+            provider: "wz-partial-foreign",
+            details: { committed: true },
+          });
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "2.2.2.2" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(pErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { committed: true, restored: false, externalChange: true },
+    });
+  });
 });

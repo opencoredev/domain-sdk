@@ -882,6 +882,13 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           (!provider.capabilities.wholeZoneWrites || !preWantedLost);
       } else {
         const afterPartial = await provider.listRecords({ zone }, ctx);
+        const partialForeignAdded = provider.capabilities.wholeZoneWrites
+          ? subtract(
+              afterPartial.filter((record) => !isOwned(record)),
+              before,
+            )
+          : [];
+        if (partialForeignAdded.length > 0) externalChange = true;
         remainingUnexpected = subtract(
           subtract(sameKeyUnexpectedCandidates(afterPartial), beforeForUnexpected),
           afterAcceptedWrite ? [] : foreignSameKey,

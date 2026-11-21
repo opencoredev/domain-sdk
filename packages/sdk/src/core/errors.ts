@@ -138,7 +138,11 @@ function scanSecretValueEnd(
   return index;
 }
 
-function looksLikeTrailingCredential(token: string, mode: "basic" | "generic"): boolean {
+function looksLikeTrailingCredential(
+  token: string,
+  mode: "basic" | "generic",
+  wasQuoted = false,
+): boolean {
   const unwrapped =
     (token.startsWith("<") && token.endsWith(">")) ||
     (token.startsWith('"') && token.endsWith('"')) ||
@@ -146,6 +150,7 @@ function looksLikeTrailingCredential(token: string, mode: "basic" | "generic"): 
       ? token.slice(1, -1)
       : token;
   if (unwrapped.length === 0 || EXEMPT_AUTH_WORDS.test(unwrapped)) return false;
+  if (wasQuoted) return true;
   if (mode === "basic") {
     return (
       isShortBasicCredential(unwrapped) ||
@@ -184,7 +189,9 @@ function scanTrailingCredential(
       const tokEnd = Math.min(lineEnd, scanSecretValueEnd(value, tokStart));
       if (tokEnd <= tokStart) break;
       const rawTok = value.slice(tokStart, tokEnd).replace(/^\\+"|\\+"$/g, '"');
-      return looksLikeTrailingCredential(rawTok, mode) ? { start: tokStart, end: tokEnd } : null;
+      return looksLikeTrailingCredential(rawTok, mode, true)
+        ? { start: tokStart, end: tokEnd }
+        : null;
     }
     const peek = value.slice(tokStart, Math.min(lineEnd, tokStart + 64));
     // Stop before another auth scheme or key=value auth parameter so dedicated passes handle them.
@@ -202,7 +209,9 @@ function scanTrailingCredential(
       scan = tokEnd;
       continue;
     }
-    return looksLikeTrailingCredential(cleanTok, mode) ? { start: tokStart, end: tokEnd } : null;
+    return looksLikeTrailingCredential(cleanTok, mode, false)
+      ? { start: tokStart, end: tokEnd }
+      : null;
   }
   return null;
 }
@@ -211,11 +220,12 @@ function scrubAuthSchemes(value: string): string {
   AUTH_SCHEME_PREFIX.lastIndex = 0;
   let out = "";
   let cursor = 0;
+  const hasCR = value.includes("\r");
   let cachedLineEnd = -1;
   const getLineEnd = (pos: number): number => {
     if (pos >= cachedLineEnd) {
       const nl = value.indexOf("\n", pos);
-      const cr = value.indexOf("\r", pos);
+      const cr = hasCR ? value.indexOf("\r", pos) : -1;
       cachedLineEnd =
         nl === -1 ? (cr === -1 ? value.length : cr) : cr === -1 ? nl : Math.min(nl, cr);
     }
@@ -311,17 +321,35 @@ function scrubAuthSchemes(value: string): string {
       }
     } else {
       const allowParams = lower === "token" || lower === "apikey";
-      const isValueStop = (idx: number, from: number): boolean => {
-        const ch = value[idx]!;
-        if (
-          lower === "basic" &&
-          /[;,)}\]"'\\]/.test(ch) &&
-          value.slice(from, idx).includes(":") &&
-          idx + 1 < value.length &&
-          !/^(?:[\s<]|[,}\])]+(?=$|[\s<]))/.test(value.slice(idx + 1, idx + 16)) &&
-          !((ch === '"' || ch === "'") && /^,["'A-Za-z_]/.test(value.slice(idx + 1, idx + 8)))
+      const opener = match.index > 0 ? value[match.index - 1] : undefined;
+      const enclosingQuote = opener === '"' || opener === "'" ? opener : undefined;
+      const isTrailingClosingDelims = (startIdx: number): boolean => {
+        let p = startIdx;
+        while (
+          p < value.length &&
+          (value[p] === "," || value[p] === "}" || value[p] === "]" || value[p] === ")")
         ) {
-          return false;
+          p += 1;
+        }
+        return p >= value.length || /[\s<]/.test(value[p]!);
+      };
+      const isValueStop = (idx: number, from: number, hasColon: boolean): boolean => {
+        const ch = value[idx]!;
+        if (lower === "basic") {
+          if (enclosingQuote !== undefined && ch === enclosingQuote) {
+            return true;
+          }
+          if (hasColon && /[;,)}\]"'\\]/.test(ch)) {
+            if (idx + 1 >= value.length || /[\s<]/.test(value[idx + 1]!)) return true;
+            if (
+              (ch === "," || ch === "}" || ch === "]" || ch === ")") &&
+              isTrailingClosingDelims(idx + 1)
+            ) {
+              return true;
+            }
+            return false;
+          }
+          if (!hasColon && ch === "|") return true;
         }
         if (/[\s"',;)}\]\\]/.test(ch)) return true;
         if (
@@ -351,14 +379,20 @@ function scrubAuthSchemes(value: string): string {
               return scanSecretValueEnd(value, valStart);
             }
             let unqEnd = valStart;
-            while (unqEnd < value.length && !isValueStop(unqEnd, valStart)) {
+            let hasColon = false;
+            while (unqEnd < value.length && !isValueStop(unqEnd, valStart, hasColon)) {
+              if (value[unqEnd] === ":") hasColon = true;
               unqEnd += 1;
             }
             return unqEnd;
           }
         }
         let end = from;
-        while (end < value.length && !isValueStop(end, from)) end += 1;
+        let hasColon = false;
+        while (end < value.length && !isValueStop(end, from, hasColon)) {
+          if (value[end] === ":") hasColon = true;
+          end += 1;
+        }
         return end;
       };
       valueEnd = scanAuthParam(valueStart);
@@ -437,11 +471,12 @@ function scrubInlineSecrets(value: string): string {
   INLINE_SECRET_PREFIX.lastIndex = 0;
   let out = "";
   let cursor = 0;
+  const hasCR = value.includes("\r");
   let cachedLineEnd = -1;
   const getLineEnd = (pos: number): number => {
     if (pos >= cachedLineEnd) {
       const nl = value.indexOf("\n", pos);
-      const cr = value.indexOf("\r", pos);
+      const cr = hasCR ? value.indexOf("\r", pos) : -1;
       cachedLineEnd =
         nl === -1 ? (cr === -1 ? value.length : cr) : cr === -1 ? nl : Math.min(nl, cr);
     }
@@ -564,7 +599,13 @@ function setDataProperty(target: Record<string, unknown>, key: string, value: un
 }
 
 export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
-  if (typeof value === "string") return scrubString(value, depth).slice(0, MAX_STRING);
+  if (typeof value === "string") {
+    const bounded =
+      value.length > MAX_STRING * 8 && !/^[\s]*["{[]/.test(value)
+        ? value.slice(0, MAX_STRING * 8)
+        : value;
+    return scrubString(bounded, depth).slice(0, MAX_STRING);
+  }
   if (value === null || typeof value !== "object") return value;
   if (depth > MAX_REDACT_DEPTH) return "[Truncated]";
   if (seen.has(value)) return "[Circular]";

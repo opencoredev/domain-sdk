@@ -19,7 +19,7 @@ packages:
 - `add({ hostname }, { signal })` now honors the signal in the second argument.
 - Netlify `add()` and `remove()` run one at a time per provider instance, so concurrent calls no longer overwrite each other's aliases.
 - Spaceship `listRecords()` starts over when `total` shifts or a record from an earlier page reappears on a later page instead of failing or returning a skewed offset snapshot.
-- Error redaction hides `AccessKey` (bunny.net) and `access_token` values, and a wrapped cause keeps its name, stack frames, `code`, and nested `cause` chain with messages redacted.
+- Error redaction hides `AccessKey` (bunny.net), `access_token`, Basic/Digest/Bearer/Token credentials (including quoted, encoded, and trailing parameters), and inline secret values (`password`/`secret`), and a wrapped cause keeps its name, stack frames, `code`, and nested `cause` chain with messages redacted.
 
 ## New
 
