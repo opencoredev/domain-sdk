@@ -158,6 +158,22 @@ if (
   );
 }
 
+const sampleDocHtml = readFileSync(join(staticDir, "docs/providers/vercel/index.html"), "utf8");
+if (!sampleDocHtml.includes('"author":{"@id":"https://www.domain-sdk.dev#organization"}')) {
+  throw new Error("Expected docs article JSON-LD to include organization author @id.");
+}
+
+const sampleBlogPostHtml = readFileSync(
+  join(staticDir, "blog/cloudflare-for-saas/index.html"),
+  "utf8",
+);
+if (
+  !sampleBlogPostHtml.includes('class="domain-blog-byline"') ||
+  !sampleBlogPostHtml.includes("Domain SDK team")
+) {
+  throw new Error("Expected blog post HTML to render publish date and Domain SDK team byline.");
+}
+
 console.log(
   `Verified Vercel post-build patch: /ingest routes, /llms.txt noindex, ${ENTRY_PATCH_MARKER}, /blog & /sitemap JSON-LD, self-hosted Outfit, and synced sitemap/agent JSON/MCP dates.`,
 );

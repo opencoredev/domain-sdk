@@ -7,8 +7,7 @@
 
 /* The site is dark only (theme.toggle is off). These are the landing page's
    warm near-black, paper white, and lines, with a periwinkle accent. Every
-   text pair meets 4.5:1. The light block mirrors the dark one, so a reader
-   who chose light mode before the toggle was removed still sees the brand. */
+   text pair meets 4.5:1. */
 :root,
 :root[data-theme="dark"] {
   --blume-background: #090908;
@@ -57,6 +56,13 @@ article.prose h1 {
 [data-blume-doc-grid]:has(.dns-records-preview) h1 {
   font-size: clamp(2.65rem, 3.4vw, 3.5rem);
   letter-spacing: -0.045em;
+}
+
+.domain-blog-byline {
+  margin-top: -0.5rem;
+  margin-bottom: 1.75rem;
+  color: var(--blume-muted-foreground);
+  font-size: 0.875rem;
 }
 
 [data-blume-doc-grid] :not(pre) > code,

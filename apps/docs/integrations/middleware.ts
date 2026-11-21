@@ -61,6 +61,39 @@ const extractTitle = (source: string): string | undefined => {
   return match?.[1]?.trim();
 };
 
+/** Extracts an ISO `YYYY-MM-DD` `date` field from MDX frontmatter when present. */
+const extractDate = (source: string): string | undefined => {
+  const match = /^---\n[\s\S]*?^date:\s*["']?(\d{4}-\d{2}-\d{2})["']?\s*$/m.exec(source);
+  return match?.[1];
+};
+
+const formatPublishDate = (isoDate: string): string =>
+  new Date(`${isoDate}T00:00:00Z`).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+
+/** Injects the blog publish date and team byline right below the article header. */
+export const injectBlogByline = ({
+  html,
+  markdown,
+}: {
+  html: string;
+  markdown: string;
+}): string => {
+  const isoDate = extractDate(markdown);
+  if (!isoDate || html.includes('class="domain-blog-byline"')) return html;
+  const byline = `<p class="domain-blog-byline"><time datetime="${isoDate}">${formatPublishDate(isoDate)}</time> · Domain SDK team</p>`;
+  const withLead = html.replace(
+    /(<article[^>]*>[\s\S]*?<\/h1>\s*<p class="text-lg[^>]*>[\s\S]*?<\/p>)/,
+    `$1${byline}`,
+  );
+  if (withLead !== html) return withLead;
+  return html.replace(/(<article[^>]*>[\s\S]*?<\/h1>)/, `$1${byline}`);
+};
+
 const SECTION_LABELS: Record<string, string> = {
   "api-reference": "API reference",
   components: "Components",
@@ -239,6 +272,7 @@ export const onRequest = (async (
 
   const { pathname } = context.url;
   let tags = "";
+  let blogMarkdown: string | undefined;
   let breadcrumbItems: ReturnType<typeof breadcrumbItemsFor> = [];
   if (pathname === "/") {
     tags = ogVideoTags(new URL(VIDEO_PATH, context.site).href);
@@ -254,18 +288,24 @@ export const onRequest = (async (
       const url = new URL(pathname.replace(/\/+$/, ""), context.site).href;
       tags = faqJsonLd({ markdown, url });
       breadcrumbItems = breadcrumbItemsFor({ pathname, markdown, site: context.site });
+      if (pathname.startsWith("/blog/")) blogMarkdown = markdown;
     } else {
       breadcrumbItems = breadcrumbItemsFor({ pathname, markdown: "", site: context.site });
     }
   }
   const isSitemap = pathname === "/sitemap" || pathname === "/sitemap/";
-  if (tags === "" && breadcrumbItems.length === 0 && !isSitemap) return response;
+  if (tags === "" && breadcrumbItems.length === 0 && !isSitemap && blogMarkdown === undefined) {
+    return response;
+  }
 
   let html = await response.text();
   if (pathname === "/blog" || pathname === "/blog/") {
     html = html.replace(/"@type":"TechArticle"/g, '"@type":"Blog"');
   } else if (pathname === "/sitemap" || pathname === "/sitemap/") {
     html = html.replace(/"@type":"TechArticle"/g, '"@type":"CollectionPage"');
+  }
+  if (blogMarkdown !== undefined) {
+    html = injectBlogByline({ html, markdown: blogMarkdown });
   }
   const nextHtml = applyBreadcrumbsToHtml({ html, items: breadcrumbItems, extraTags: tags });
   return new Response(nextHtml, {

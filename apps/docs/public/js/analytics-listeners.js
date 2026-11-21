@@ -41,11 +41,24 @@
 
       const copy = event.target.closest("[data-blume-copy]");
       if (copy) {
+        const tabs = copy.closest("blume-tabs");
+        const activePanel = tabs
+          ? (Array.from(tabs.querySelectorAll("[data-blume-tab-panel]")).find(
+              (panel) =>
+                !panel.classList.contains("hidden") &&
+                !panel.hasAttribute("hidden") &&
+                panel.style.display !== "none" &&
+                panel.offsetParent !== null,
+            ) ??
+            tabs.querySelector(
+              '[data-blume-tab-panel]:not(.hidden):not([hidden]):not([style*="display: none"])',
+            ))
+          : null;
         const block =
           copy.closest("[data-language]") ??
-          copy
-            .closest("blume-tabs")
-            ?.querySelector("[data-blume-tab-panel]:not([hidden]) [data-language]") ??
+          (activePanel?.matches("[data-language]")
+            ? activePanel
+            : activePanel?.querySelector("[data-language]")) ??
           copy.parentElement?.querySelector("[data-language]");
         const codeClass = block?.querySelector("code")?.className ?? "";
         const classLang = codeClass.match(/\blanguage-([\w-]+)/)?.[1]?.toLowerCase() ?? null;
