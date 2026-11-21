@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test";
 import { runCli } from "../src/cli/run";
 import { createDnsClient, type DnsProvider, type ZoneRecord } from "../src/core/dns";
 import { DomainSdkError, redact } from "../src/core/errors";
-import { sleep, type Fetch } from "../src/core/http";
+import { sleep, withRetry, type Fetch } from "../src/core/http";
 import { bunny } from "../src/providers/bunny";
 import { cloudflareSaaS } from "../src/providers/cloudflare";
 import { namecheap } from "../src/providers/namecheap";
@@ -265,5 +265,108 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     expect(stderr2).toBe("");
     expect(stdout2).toContain("app.example.com");
     expect(capturedAuth).toBe("Bearer tok_trimmed");
+  });
+
+  test("per-record rollback preserves pre-existing non-conflicting same-owner same-type TXT/CAA records", async () => {
+    const base = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "a1", type: "A", name: "example.com", value: "1.1.1.1", editable: true },
+          { id: "spf", type: "TXT", name: "example.com", value: "v=spf1 ~all", editable: true },
+        ],
+      },
+    });
+    const origCreate = base.createRecords.bind(base);
+    let failFirstCreate = true;
+    const provider: DnsProvider = {
+      ...base,
+      async createRecords(input, ctx) {
+        if (failFirstCreate) {
+          failFirstCreate = false;
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "create rejected before writing", {
+            provider: base.id,
+          });
+        }
+        return origCreate(input, ctx);
+      },
+    };
+
+    const dns = createDnsClient({ provider });
+    const err = await dns
+      .ensureRecords(
+        [
+          { type: "A", name: "example.com", value: "2.2.2.2" },
+          { type: "TXT", name: "example.com", value: "vc-domain-verify=123" },
+        ],
+        { onConflict: "replace" },
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(err).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true },
+    });
+    const finalRecords = base.records("example.com");
+    expect(finalRecords.filter((r) => r.type === "A").map((r) => r.value)).toEqual(["1.1.1.1"]);
+    // Pre-existing SPF TXT at the same (name, type) must NOT be deleted by rollback!
+    expect(finalRecords.filter((r) => r.type === "TXT").map((r) => r.value)).toEqual([
+      "v=spf1 ~all",
+    ]);
+  });
+
+  test("redact is idempotent on Bearer/ApiKey, redacts quoted schemes/credentials, Digest, cookies, and URL userinfo", () => {
+    const onceBearer = redact("Bearer secret_tok_123") as string;
+    expect(onceBearer).toBe("Bearer [REDACTED]");
+    expect(redact(onceBearer)).toBe("Bearer [REDACTED]");
+
+    const onceApiKey = redact("ApiKey secret_key_456") as string;
+    expect(onceApiKey).toBe("ApiKey [REDACTED]");
+    expect(redact(onceApiKey)).toBe("ApiKey [REDACTED]");
+
+    expect(redact('Bearer "fixture_secret"')).toBe("Bearer [REDACTED]");
+    expect(redact('Authorization: "Bearer" fixture_secret')).toBe("Authorization: [REDACTED]");
+    expect(redact('Authorization: "CustomScheme" raw_secret_xyz')).toBe(
+      "Authorization: [REDACTED]",
+    );
+    expect(redact('Authorization: Digest username="u", response="deadbeef"')).toBe(
+      "Authorization: [REDACTED]",
+    );
+    expect(redact("https://alice:topsecret@api.example.com/v1")).toBe(
+      "https://[REDACTED]:[REDACTED]@api.example.com/v1",
+    );
+    expect(redact({ cookie: "sid=secret", session: "abc" })).toEqual({
+      cookie: "[REDACTED]",
+      session: "[REDACTED]",
+    });
+  });
+
+  test("withRetry baseDelayMs: 0 never produces NaN at high attempts and Netlify rejects junk cursors", async () => {
+    const seenDelays: number[] = [];
+    let attempts = 0;
+    await expect(
+      withRetry(
+        async () => {
+          attempts += 1;
+          throw new DomainSdkError("RATE_LIMITED", "slow down", { retryable: true });
+        },
+        {
+          retry: { maxAttempts: 1030, baseDelayMs: 0, maxDelayMs: 1000 },
+          onRetry(_err, _attempt, delayMs) {
+            seenDelays.push(delayMs);
+          },
+        },
+      ),
+    ).rejects.toMatchObject({ code: "RATE_LIMITED" });
+    expect(attempts).toBe(1030);
+    expect(seenDelays.every((d) => d === 0 && Number.isFinite(d))).toBe(true);
+
+    const provider = netlify({
+      accessToken: "t",
+      siteId: "s",
+      fetch: async () => new Response(JSON.stringify({ domain_aliases: [] }), { status: 200 }),
+    });
+    await expect(
+      provider.list!({ cursor: "1junk", limit: 10 }, { logger: noopLogger }),
+    ).rejects.toMatchObject({ code: "REQUEST_FAILED", provider: "netlify" });
   });
 });

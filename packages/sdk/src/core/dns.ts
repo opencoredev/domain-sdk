@@ -701,6 +701,13 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             record.editable &&
             (replacedSet.has(record) || ensured.some((wanted) => sameRecord(record, wanted))),
         );
+    const beforeForUnexpected = provider.capabilities.wholeZoneWrites
+      ? beforeEditable
+      : before.filter(
+          (record) =>
+            record.editable &&
+            requestedKeys.has(`${normalizeOwnerName(record.name)}\0${record.type.toUpperCase()}`),
+        );
     const unexpectedCandidates = (records: ZoneRecord[]) =>
       provider.capabilities.wholeZoneWrites
         ? records.filter((record) => record.editable)
@@ -731,7 +738,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     let restored = false;
     try {
       const current = await provider.listRecords({ zone }, ctx);
-      const unexpected = subtract(unexpectedCandidates(current), beforeEditable);
+      const unexpected = subtract(unexpectedCandidates(current), beforeForUnexpected);
       if (unexpected.length) await provider.deleteRecords({ zone, records: unexpected }, ctx);
       // Match one for one, exact TTL matches first, so every pre-write editable record that
       // disappeared is restored with its own TTL. Ids are not used because whole-zone hosts reissue them.
@@ -743,7 +750,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       if (records.length === gone.length) {
         const verified = await provider.listRecords({ zone }, ctx);
         const stillGone = subtract(beforeEditable, verified, true);
-        const stillUnexpected = subtract(unexpectedCandidates(verified), beforeEditable);
+        const stillUnexpected = subtract(unexpectedCandidates(verified), beforeForUnexpected);
         restored = stillGone.length === 0 && stillUnexpected.length === 0;
       }
     } catch {

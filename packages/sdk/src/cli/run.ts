@@ -270,7 +270,6 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<CliExi
       jsonRequested = args.json;
     } else {
       for (const arg of argv) {
-        if (arg === "--") break;
         if (arg === "--json" || arg === "--json=true") jsonRequested = true;
         else if (arg === "--json=false") jsonRequested = false;
       }

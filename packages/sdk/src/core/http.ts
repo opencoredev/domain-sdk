@@ -226,7 +226,9 @@ export async function withRetry<T>(
       const delayMs =
         error.retryAfter !== undefined
           ? Math.min(error.retryAfter, maxDelayMs)
-          : Math.random() * Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
+          : baseDelayMs === 0
+            ? 0
+            : Math.random() * Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
       options.onRetry?.(error, attempt, delayMs);
       await wait(delayMs, options.signal);
     }

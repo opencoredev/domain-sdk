@@ -258,8 +258,12 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
     },
     get,
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
-      const offset = input.cursor ? Number.parseInt(input.cursor, 10) : 0;
-      if (!Number.isInteger(offset) || offset < 0)
+      if (input.cursor !== undefined && !/^\d+$/.test(input.cursor))
+        throw new DomainSdkError("REQUEST_FAILED", "Invalid Netlify list cursor.", {
+          provider: "netlify",
+        });
+      const offset = input.cursor !== undefined ? Number(input.cursor) : 0;
+      if (!Number.isSafeInteger(offset) || offset < 0)
         throw new DomainSdkError("REQUEST_FAILED", "Invalid Netlify list cursor.", {
           provider: "netlify",
         });

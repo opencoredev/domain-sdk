@@ -24,52 +24,59 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(?:[a-z0-9]+[_-]){0,4}(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key)$/i;
+  /^(?:[a-z0-9]+[_-]){0,4}(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)$/i;
 const BEARER =
-  /\b(?:(Bearer|ApiKey)\s+[^\s"',;)}\]\\]+|(Basic)\s+(?:[A-Za-z0-9+/=]{8,}|[^\s"',;)}\]\\]*:[^\s"',;)}\]\\]+)|(Token)\s+(?=[A-Za-z0-9._~+/=:-]*[\d_.:/+-])[^\s"',;)}\]\\]+)/gi;
+  /\b(?:(Bearer|ApiKey)\s+(?:\[REDACTED\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s"',;)}\]\\]+)|(Basic)\s+(?:\[REDACTED\]|[A-Za-z0-9+/=]{8,}|[^\s"',;)}\]\\]*:[^\s"',;)}\]\\]+)|(Digest)\s+(?:\[REDACTED\]|[^\r\n;}\]]+)|(Token)\s+(?:\[REDACTED\]|(?=[A-Za-z0-9._~+/=:-]*[\d_.:/+-])[^\s"',;)}\]\\]+))/gi;
+const URL_USERINFO = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:\/\/)([^/@\s:]+):([^@\s/]+)@/gi;
 const INLINE_SECRET_PREFIX =
-  /(?<![A-Za-z0-9])(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|token|secret)\\*["']?\s*(?:=|:)\s*/gi;
+  /(?<![A-Za-z0-9])(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session[_-]?id|token|secret)\\*["']?\s*(?:=|:)\s*/gi;
 const MAX_STRING = 1_000;
 const MAX_REDACT_DEPTH = 32;
 
 function scanSecretValueEnd(value: string, start: number, allowSecondToken = false): number {
   if (start >= value.length) return start;
-  if (value.startsWith("[REDACTED]", start)) return start + "[REDACTED]".length;
+  let index = start;
   const first = value[start];
-  if (first === '"' || first === "'") {
-    let index = start + 1;
+  if (value.startsWith("[REDACTED]", start)) {
+    index = start + "[REDACTED]".length;
+  } else if (first === '"' || first === "'") {
+    index = start + 1;
     while (index < value.length) {
       if (value[index] === "\\") {
         index += 2;
         continue;
       }
-      if (value[index] === first) return index + 1;
+      if (value[index] === first) {
+        index += 1;
+        break;
+      }
       index += 1;
     }
-    return value.length;
-  }
-  if (first === "\\") {
+  } else if (first === "\\") {
     let slashes = 0;
     while (value[start + slashes] === "\\") slashes += 1;
     if (value[start + slashes] === '"') {
-      let index = start + slashes + 1;
+      index = start + slashes + 1;
       const step = (slashes + 1) * 2;
       while (index < value.length) {
         if (value[index] === "\\") {
           let run = 0;
           while (value[index + run] === "\\") run += 1;
-          if (value[index + run] === '"' && (run < slashes || (run - slashes) % step === 0))
-            return index + run + 1;
+          if (value[index + run] === '"' && (run < slashes || (run - slashes) % step === 0)) {
+            index = index + run + 1;
+            break;
+          }
           index += run + (value[index + run] === '"' ? 1 : 0);
           continue;
         }
         index += 1;
       }
-      return value.length;
+    } else {
+      while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
     }
+  } else {
+    while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
   }
-  let index = start;
-  while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
   if (allowSecondToken && index < value.length && /[ \t]/.test(value[index]!)) {
     let next = index;
     while (next < value.length && /[ \t]/.test(value[next]!)) next += 1;
@@ -97,10 +104,14 @@ function scrubInlineSecrets(value: string): string {
 }
 
 function scrubString(value: string): string {
+  const withoutUserinfo =
+    value.includes("://") && value.includes("@")
+      ? value.replace(URL_USERINFO, "$1[REDACTED]:[REDACTED]@")
+      : value;
   return scrubInlineSecrets(
-    value.replace(
+    withoutUserinfo.replace(
       BEARER,
-      (_match, a?: string, b?: string, c?: string) => `${a ?? b ?? c} [REDACTED]`,
+      (_match, a?: string, b?: string, c?: string, d?: string) => `${a ?? b ?? c ?? d} [REDACTED]`,
     ),
   );
 }
