@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { join } from "node:path";
+import manifest from "../package.json";
 
 describe("published package exports", () => {
   test("loads every built subpath", async () => {
@@ -52,5 +54,23 @@ describe("published package exports", () => {
     await expect(
       createDomainClient({ provider: memoryProvider() }).get("missing.example.com"),
     ).rejects.toBeInstanceOf(DomainSdkError);
+  });
+
+  test("every subpath and package.json resolve through require and default conditions", () => {
+    const subpaths = Object.keys(manifest.exports).map((key) =>
+      key === "." ? manifest.name : `${manifest.name}${key.slice(1)}`,
+    );
+    const script = `
+      const { createRequire } = require("node:module");
+      const local = createRequire(${JSON.stringify(join(import.meta.dir, "..", "package.json"))});
+      const resolved = ${JSON.stringify(subpaths)}.map((id) => local.resolve(id));
+      console.log(JSON.stringify({ resolved, version: local("${manifest.name}/package.json").version }));
+    `;
+    const result = Bun.spawnSync(["node", "-e", script], { stdout: "pipe", stderr: "pipe" });
+    expect(result.stderr.toString()).toBe("");
+    const output = JSON.parse(result.stdout.toString()) as { resolved: string[]; version: string };
+    expect(output.version).toBe(manifest.version);
+    expect(output.resolved).toHaveLength(subpaths.length);
+    for (const path of output.resolved) expect(path).toMatch(/\/(dist\/.+\.js|package\.json)$/);
   });
 });

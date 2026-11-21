@@ -20,7 +20,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/opencoredev/domain-sdk.git"
+    "url": "git+https://github.com/opencoredev/domain-sdk.git",
+    "directory": "packages/sdk"
   },
   "files": [
     "dist",
@@ -33,48 +34,60 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./vercel": {
       "types": "./dist/providers/vercel/index.d.ts",
-      "import": "./dist/providers/vercel/index.js"
+      "import": "./dist/providers/vercel/index.js",
+      "default": "./dist/providers/vercel/index.js"
     },
     "./cloudflare": {
       "types": "./dist/providers/cloudflare/index.d.ts",
-      "import": "./dist/providers/cloudflare/index.js"
+      "import": "./dist/providers/cloudflare/index.js",
+      "default": "./dist/providers/cloudflare/index.js"
     },
     "./railway": {
       "types": "./dist/providers/railway/index.d.ts",
-      "import": "./dist/providers/railway/index.js"
+      "import": "./dist/providers/railway/index.js",
+      "default": "./dist/providers/railway/index.js"
     },
     "./render": {
       "types": "./dist/providers/render/index.d.ts",
-      "import": "./dist/providers/render/index.js"
+      "import": "./dist/providers/render/index.js",
+      "default": "./dist/providers/render/index.js"
     },
     "./netlify": {
       "types": "./dist/providers/netlify/index.d.ts",
-      "import": "./dist/providers/netlify/index.js"
+      "import": "./dist/providers/netlify/index.js",
+      "default": "./dist/providers/netlify/index.js"
     },
     "./bunny": {
       "types": "./dist/providers/bunny/index.d.ts",
-      "import": "./dist/providers/bunny/index.js"
+      "import": "./dist/providers/bunny/index.js",
+      "default": "./dist/providers/bunny/index.js"
     },
     "./porkbun": {
       "types": "./dist/providers/porkbun/index.d.ts",
-      "import": "./dist/providers/porkbun/index.js"
+      "import": "./dist/providers/porkbun/index.js",
+      "default": "./dist/providers/porkbun/index.js"
     },
     "./namecheap": {
       "types": "./dist/providers/namecheap/index.d.ts",
-      "import": "./dist/providers/namecheap/index.js"
+      "import": "./dist/providers/namecheap/index.js",
+      "default": "./dist/providers/namecheap/index.js"
     },
     "./spaceship": {
       "types": "./dist/providers/spaceship/index.d.ts",
-      "import": "./dist/providers/spaceship/index.js"
+      "import": "./dist/providers/spaceship/index.js",
+      "default": "./dist/providers/spaceship/index.js"
     },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
-      "import": "./dist/testing/index.js"
-    }
+      "import": "./dist/testing/index.js",
+      "default": "./dist/testing/index.js"
+    },
+    "./package.json": "./package.json"
   },
   "publishConfig": {
     "access": "public"
