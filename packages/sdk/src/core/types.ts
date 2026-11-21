@@ -74,11 +74,8 @@ export interface DomainLogger {
 export interface RequestOptions {
   signal?: AbortSignal;
 }
-export interface AddDomainOptions extends RequestOptions {}
-export interface GetDomainOptions extends RequestOptions {}
-export interface VerifyDomainOptions extends RequestOptions {}
-export interface RemoveDomainOptions extends RequestOptions {}
-export interface AddDomainObject extends AddDomainOptions {
+/** The object form of `DomainClient.add()`. */
+export interface AddDomainObject extends RequestOptions {
   hostname: string;
 }
 export interface ListDomainsOptions extends RequestOptions {

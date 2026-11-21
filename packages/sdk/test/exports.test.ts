@@ -15,4 +15,42 @@ describe("published package exports", () => {
     expect(await import("@opencoredev/domain-sdk/spaceship")).toHaveProperty("spaceship");
     expect(await import("@opencoredev/domain-sdk/testing")).toHaveProperty("memoryProvider");
   });
+
+  test("exports the DNS record helpers adapter authors need as values", async () => {
+    const sdk = await import("@opencoredev/domain-sdk");
+    expect(sdk.normalizeZone("Example.com.")).toBe("example.com");
+    expect(sdk.normalizeRecordName("@", "example.com")).toBe("example.com");
+    expect(sdk.relativeRecordName("www.example.com", "example.com")).toBe("www");
+    expect(sdk.absoluteRecordName("www", "example.com")).toBe("www.example.com");
+    expect(sdk.canonicalRecordValue("CNAME", "Target.Example.net.")).toBe("target.example.net");
+    expect(sdk.parseCaaValue('0 issue "letsencrypt.org"')).toEqual({
+      flag: 0,
+      tag: "issue",
+      value: "letsencrypt.org",
+    });
+    expect(sdk.formatCaaValue(0, "ISSUE", "letsencrypt.org")).toBe('0 issue "letsencrypt.org"');
+    expect(
+      sdk.sameRecord(
+        { type: "cname", name: "app.example.com", value: "t.example.net." },
+        { type: "CNAME", name: "app.example.com", value: "t.example.net" },
+      ),
+    ).toBe(true);
+  });
+
+  test("subpath entries share one DomainSdkError class with the root entry", async () => {
+    const { DomainSdkError } = await import("@opencoredev/domain-sdk");
+    const { netlify } = await import("@opencoredev/domain-sdk/netlify");
+    const { memoryProvider } = await import("@opencoredev/domain-sdk/testing");
+    let caught: unknown;
+    try {
+      netlify({ accessToken: "", siteId: "site" });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(DomainSdkError);
+    const { createDomainClient } = await import("@opencoredev/domain-sdk");
+    await expect(
+      createDomainClient({ provider: memoryProvider() }).get("missing.example.com"),
+    ).rejects.toBeInstanceOf(DomainSdkError);
+  });
 });

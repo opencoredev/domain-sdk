@@ -32,6 +32,15 @@ bun run lint
 bun run build
 ```
 
+## Write a DNS adapter
+
+A `DnsProvider` only lists, creates, and deletes records; `createDnsClient()` does the diffing, conflict checks, and rollback. Use the record helpers exported from `@opencoredev/domain-sdk` instead of reimplementing them, so names and values compare the same way the client compares them:
+
+- `normalizeZone(zone)` and `normalizeRecordName(name, zone)` turn input into lowercase FQDNs.
+- `relativeRecordName(name, zone)` and `absoluteRecordName(name, zone)` convert between FQDNs and the zone-relative names (`@`, `www`) most DNS APIs use.
+- `parseCaaValue(value)` and `formatCaaValue(flag, tag, value)` convert CAA presentation values.
+- `canonicalRecordValue(type, value)` and `sameRecord(existing, wanted)` compare records the way the client does.
+
 ## Test documentation changes
 
 Check generated MDX types and the production build before opening a pull request.

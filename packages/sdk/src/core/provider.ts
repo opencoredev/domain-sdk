@@ -1,4 +1,13 @@
-import type { Domain, DomainLogger, DomainPage, ListDomainsOptions, RetryOptions } from "./types";
+import type {
+  AddDomainObject,
+  Domain,
+  DomainLogger,
+  DomainPage,
+  ListDomainsOptions,
+  RequestOptions,
+  RetryOptions,
+  WaitUntilActiveOptions,
+} from "./types";
 
 export interface DomainProviderCapabilities {
   list: boolean;
@@ -43,17 +52,13 @@ export interface DomainClientOptions {
 export interface DomainClient {
   readonly provider: string;
   readonly capabilities: DomainProviderCapabilities;
-  add(
-    input: string | ({ hostname: string } & { signal?: AbortSignal }),
-    options?: { signal?: AbortSignal },
-  ): Promise<Domain>;
-  get(hostname: string, options?: { signal?: AbortSignal }): Promise<Domain>;
-  refresh(hostname: string, options?: { signal?: AbortSignal }): Promise<Domain>;
+  /** Attach a hostname. A signal on the object form wins over one in `options`. */
+  add(input: string | AddDomainObject, options?: RequestOptions): Promise<Domain>;
+  get(hostname: string, options?: RequestOptions): Promise<Domain>;
+  /** Same as `get()`: the client keeps no cache, so every read is fresh. */
+  refresh(hostname: string, options?: RequestOptions): Promise<Domain>;
   list(options?: ListDomainsOptions): Promise<DomainPage>;
-  verify(hostname: string, options?: { signal?: AbortSignal }): Promise<Domain>;
-  remove(hostname: string, options?: { signal?: AbortSignal }): Promise<void>;
-  waitUntilActive(
-    hostname: string,
-    options?: import("./types").WaitUntilActiveOptions,
-  ): Promise<Domain>;
+  verify(hostname: string, options?: RequestOptions): Promise<Domain>;
+  remove(hostname: string, options?: RequestOptions): Promise<void>;
+  waitUntilActive(hostname: string, options?: WaitUntilActiveOptions): Promise<Domain>;
 }
