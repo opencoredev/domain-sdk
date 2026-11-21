@@ -8,7 +8,13 @@ import {
   type ZoneRecord,
 } from "../../core/dns";
 import { DomainSdkError, type DomainSdkErrorCode } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import {
+  httpError,
+  isResponseTooLarge,
+  readJson,
+  requireString,
+  type Fetch,
+} from "../../core/http";
 
 export interface PorkbunOptions {
   apiKey: string;
@@ -35,6 +41,8 @@ interface PorkbunRecord {
   prio?: string | number | null;
 }
 
+/** Porkbun returns a whole zone in one response, so allow more than the 8 MiB default. */
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const normalizeNameserver = (name: string) => name.toLowerCase().replace(/\.$/, "");
 const isPorkbunNameserver = (name: string) => normalizeNameserver(name).endsWith(".porkbun.com");
 
@@ -89,11 +97,11 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
       });
     }
 
-    // Porkbun returns a whole zone in one response, so never truncate it before parsing.
     let body: PorkbunResponse | undefined;
     try {
-      body = (await readJson(response, Number.POSITIVE_INFINITY)) as PorkbunResponse | undefined;
-    } catch {
+      body = (await readJson(response, MAX_RESPONSE_BYTES)) as PorkbunResponse | undefined;
+    } catch (error) {
+      if (isResponseTooLarge(error)) throw error;
       if (context.signal?.aborted)
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {
           provider: "porkbun",

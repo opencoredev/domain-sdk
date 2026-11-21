@@ -8,7 +8,13 @@ import {
   type ZoneRecord,
 } from "../../core/dns";
 import { DomainSdkError } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import {
+  httpError,
+  isResponseTooLarge,
+  readJson,
+  requireString,
+  type Fetch,
+} from "../../core/http";
 
 export interface SpaceshipOptions {
   apiKey: string;
@@ -62,7 +68,7 @@ function recordFields(record: SpaceshipRecord): Record<string, unknown> {
 
 // A full page holds 100 records whose values may reach 65,535 characters each, and JSON escaping
 // can double quotes and backslashes.
-const MAX_RESPONSE_LENGTH = 16_000_000;
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 /** Spaceship accepts at most 500 records per save or delete request. */
 const MAX_BATCH = 500;
 
@@ -170,8 +176,9 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
     }
     let body: unknown;
     try {
-      body = await readJson(response, MAX_RESPONSE_LENGTH);
+      body = await readJson(response, MAX_RESPONSE_BYTES);
     } catch (error) {
+      if (isResponseTooLarge(error)) throw error;
       if (context.signal?.aborted || (error instanceof Error && error.name === "AbortError"))
         throw new DomainSdkError("ABORTED", "The Spaceship request was cancelled.", {
           provider: "spaceship",
