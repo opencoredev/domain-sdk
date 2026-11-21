@@ -521,8 +521,8 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     }
   });
 
-  test("whole-zone add-only rewrite rolls back cleanly and per-record rollback never resurrects externally deleted wanted records", async () => {
-    // 1. Whole-zone add-only write rewritten by provider cleans up rewritten value via restore()
+  test("whole-zone add-only rewrite keeps unrequested record with restored: false and per-record rollback never resurrects externally deleted wanted records", async () => {
+    // 1. Whole-zone add-only write rewritten by provider keeps unrequested value (cannot distinguish from concurrent writer) and reports restored: false + unexpected
     const baseWhole = memoryDnsProvider();
     const wholeProvider: DnsProvider = {
       ...baseWhole,
@@ -542,9 +542,13 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       .catch((caught: unknown) => caught);
     expect(wholeErr).toMatchObject({
       code: "REQUEST_FAILED",
-      details: { restored: true },
+      details: {
+        restored: false,
+        externalChange: true,
+        unexpected: [expect.objectContaining({ value: "rewritten" })],
+      },
     });
-    expect(baseWhole.records("example.com")).toEqual([]);
+    expect(baseWhole.records("example.com").map((r) => r.value)).toEqual(["rewritten"]);
 
     // 2. Per-record rollback does not resurrect a pre-existing wanted record deleted externally
     const basePer = memoryDnsProvider({
@@ -1395,5 +1399,72 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     const ncRecords = await ncBadCaa.listRecords({ zone: "example.com" }, { logger: {} });
     expect(ncRecords).toHaveLength(2);
     expect(ncRecords[0]?.value).toBe("garbage");
+
+    // 5. Whole-zone accepted-but-dropped write + concurrent same-key ACME TXT preserves foreign record with restored: false
+    let droppedZone: ZoneRecord[] = [
+      { id: "a", type: "A", name: "example.com", value: "1.1.1.1", ttl: 300, editable: true },
+    ];
+    const droppedProvider: DnsProvider = {
+      id: "whole-zone-drop",
+      capabilities: {
+        recordTypes: ["A", "TXT"],
+        ttl: { min: 60, max: 86400 },
+        wholeZoneWrites: true,
+        zoneInfo: false,
+      },
+      async listRecords() {
+        return droppedZone.map((r) => ({ ...r }));
+      },
+      async createRecords() {
+        droppedZone = [
+          ...droppedZone,
+          {
+            id: "acme",
+            type: "TXT",
+            name: "_acme-challenge.example.com",
+            value: "FOREIGN-ACME",
+            ttl: 300,
+            editable: true,
+          },
+        ];
+      },
+      async deleteRecords({ records }) {
+        const ids = new Set(records.map((r) => r.id));
+        droppedZone = droppedZone.filter((r) => !ids.has(r.id));
+      },
+    };
+    const droppedErr = await createDnsClient({
+      provider: droppedProvider,
+      retry: { maxAttempts: 1 },
+    })
+      .ensureRecords([{ type: "TXT", name: "_acme-challenge.example.com", value: "OURS" }])
+      .catch((e) => e);
+    expect(droppedErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        restored: false,
+        externalChange: true,
+        unexpected: [expect.objectContaining({ value: "FOREIGN-ACME" })],
+      },
+    });
+    expect(droppedZone.some((r) => r.value === "FOREIGN-ACME")).toBe(true);
+
+    // 6. Quoted and cross-quoted raw URL passwords redact without mangling JSON/email diagnostics
+    for (const leaky of [
+      'connect failed: "postgres://u:LEAK",1@db.example.com/db"',
+      `connect failed: 'postgres://u:LEAK",1@db.example.com/db'`,
+      `connect failed: "postgres://u:LEAK',1@db.example.com/db"`,
+      JSON.stringify({ msg: `connect failed: 'postgres://u:LEAK",1@db.example.com/db'` }),
+    ]) {
+      const e = new DomainSdkError("REQUEST_FAILED", leaky);
+      expect(e.message).not.toContain("LEAK");
+      expect(e.message).toContain("[REDACTED]:[REDACTED]@");
+    }
+    expect(
+      new DomainSdkError(
+        "REQUEST_FAILED",
+        `Error: {'url':'https://example.com','email':'user@example.com'}`,
+      ).message,
+    ).toBe(`Error: {'url':'https://example.com','email':'user@example.com'}`);
   });
 });

@@ -1,7 +1,7 @@
 import { getDomain } from "tldts";
 
 import { assertServerEnvironment } from "./client";
-import { DomainSdkError, normalizeUnknownError } from "./errors";
+import { DomainSdkError, normalizeUnknownError, safeInstanceOf } from "./errors";
 import { normalizeHostname } from "./hostname";
 import { withRetry } from "./http";
 import type {
@@ -645,6 +645,8 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                   },
                 },
               );
+            const committedWrite = (err: unknown): boolean =>
+              safeInstanceOf(err, DomainSdkError) && err.details?.committed === true;
             let creating = false;
             let after: ZoneRecord[];
             try {
@@ -661,6 +663,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 error,
                 snapshot,
                 existing.filter(isWanted),
+                creating && committedWrite(error),
               );
             }
             const verificationError = verifyAfterWrite(after);
@@ -678,13 +681,23 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           }
 
           if (!missing.length) return existing.filter(isWanted);
+          const committedWrite = (err: unknown): boolean =>
+            safeInstanceOf(err, DomainSdkError) && err.details?.committed === true;
           let after: ZoneRecord[];
           try {
             await provider.createRecords({ zone, records: missing }, ctx);
             // A DNS host can accept a write and still drop, rewrite, or leave a conflict, so check the result.
             after = await provider.listRecords({ zone }, ctx);
           } catch (error) {
-            return restore(zone, [], missing, error, snapshot, existing.filter(isWanted), false);
+            return restore(
+              zone,
+              [],
+              missing,
+              error,
+              snapshot,
+              existing.filter(isWanted),
+              committedWrite(error),
+            );
           }
           const verificationError = verifyAfterWrite(after);
           if (verificationError) {
@@ -759,14 +772,15 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     const beforeForUnexpected = provider.capabilities.wholeZoneWrites
       ? before
       : before.filter((record) => requestedKeys.has(recordKey(record)));
+    // Only a record whose value the SDK itself requested is safe to delete. A whole-zone host
+    // that accepted the write but dropped it leaves another writer's record at the same key,
+    // which is indistinguishable from a host rewrite of our value.
     const deletableUnexpectedCandidates = (records: ZoneRecord[]) =>
-      provider.capabilities.wholeZoneWrites
-        ? records.filter((record) => record.editable && isOwned(record))
-        : requested.length
-          ? records.filter(
-              (record) => record.editable && requested.some((wanted) => sameRecord(record, wanted)),
-            )
-          : [];
+      requested.length
+        ? records.filter(
+            (record) => record.editable && requested.some((wanted) => sameRecord(record, wanted)),
+          )
+        : [];
     const sameKeyUnexpectedCandidates = (records: ZoneRecord[]) =>
       provider.capabilities.wholeZoneWrites
         ? records.filter(isOwned)
@@ -795,30 +809,17 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     try {
       const current = await provider.listRecords({ zone }, ctx);
       externalChange = subtract(preExistingWanted, current).length > 0;
-      let unexpected = subtract(deletableUnexpectedCandidates(current), beforeForUnexpected);
+      const unexpected = subtract(deletableUnexpectedCandidates(current), beforeForUnexpected);
       if (provider.capabilities.wholeZoneWrites) {
-        // A new same-key record with a value the SDK never requested is the host's rewrite of a
-        // requested value only when a requested value at that key is missing. Otherwise another
-        // writer added it, so keep it and report the concurrent change.
+        // A new same-key record with a value the SDK never requested is either the host's rewrite
+        // of our value or another writer's record. The zone cannot tell them apart, so keep it
+        // and report the concurrent change instead of risking deleting foreign data.
         const isRequested = (record: ZoneRecord) =>
           requested.some((wanted) => sameRecord(record, wanted));
-        const missingAtKey = (key: string) =>
-          !afterAcceptedWrite
-            ? 0
-            : requested.filter(
-                (wanted) =>
-                  recordKey(wanted) === key && !current.some((item) => sameRecord(item, wanted)),
-              ).length;
-        const others = unexpected.filter((record) => !isRequested(record));
-        foreignSameKey = afterAcceptedWrite
-          ? others.filter(
-              (record) =>
-                others.filter((other) => recordKey(other) === recordKey(record)).length >
-                missingAtKey(recordKey(record)),
-            )
-          : others;
-        const foreign = new Set(foreignSameKey);
-        unexpected = unexpected.filter((record) => !foreign.has(record));
+        foreignSameKey = subtract(
+          current.filter((record) => record.editable && isOwned(record) && !isRequested(record)),
+          before,
+        );
         if (foreignSameKey.length) externalChange = true;
       }
       if (unexpected.length) await provider.deleteRecords({ zone, records: unexpected }, ctx);
@@ -841,9 +842,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             )
           : [];
         externalChange ||= preWantedLost || foreignAdded.length > 0;
+        // A kept unrequested same-key record means rollback is incomplete when the write was
+        // accepted or committed (it may be the host's rewrite of our value). When the write threw
+        // before committing, the record is purely another writer's and our own writes are clean.
         remainingUnexpected = subtract(
           subtract(sameKeyUnexpectedCandidates(verified), beforeForUnexpected),
-          foreignSameKey,
+          afterAcceptedWrite ? [] : foreignSameKey,
         );
         restored =
           stillGone.length === 0 &&

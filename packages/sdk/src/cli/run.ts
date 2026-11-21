@@ -1,5 +1,5 @@
 import { createDomainClient } from "../core/client";
-import { DomainSdkError, normalizeUnknownError } from "../core/errors";
+import { DomainSdkError, normalizeUnknownError, safeInstanceOf } from "../core/errors";
 import type { Fetch } from "../core/http";
 import type { DomainClient } from "../core/provider";
 import { deduplicateRecords } from "../core/records";
@@ -296,7 +296,7 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<CliExi
         else if (arg === "--json=false") jsonRequested = false;
       }
     }
-    if (error instanceof UsageError) {
+    if (safeInstanceOf(error, UsageError)) {
       if (jsonRequested) {
         io.stderr(toJson({ error: { code: "USAGE", message: error.message } }));
       } else {

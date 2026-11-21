@@ -593,8 +593,9 @@ describe("ensureRecords write verification", () => {
     expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.10"]);
   });
 
-  test("rollback cleans up provider-rewritten values on whole-zone hosts and preserves concurrent records on per-record hosts", async () => {
-    // 1. Whole-zone provider rewrites replacement value to 192.0.2.99; rollback removes it and restores 192.0.2.10.
+  test("rollback keeps unrequested same-key records and reports restored: false on both whole-zone and per-record hosts", async () => {
+    // 1. Whole-zone provider rewrites replacement value to 192.0.2.99; rollback restores 192.0.2.10,
+    // keeps the unrequested 192.0.2.99 (indistinguishable from a concurrent writer), and reports restored: false.
     const baseWholeZone = memoryDnsProvider({
       zones: {
         "example.com": [
@@ -625,10 +626,20 @@ describe("ensureRecords write verification", () => {
         onConflict: "replace",
       })
       .catch((caught: unknown) => caught);
-    expect(rewrittenErr).toMatchObject({ code: "REQUEST_FAILED", details: { restored: true } });
-    expect(baseWholeZone.records("example.com").map((record) => record.value)).toEqual([
-      "192.0.2.10",
-    ]);
+    expect(rewrittenErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        restored: false,
+        externalChange: true,
+        unexpected: [expect.objectContaining({ value: "192.0.2.99" })],
+      },
+    });
+    expect(
+      baseWholeZone
+        .records("example.com")
+        .map((record) => record.value)
+        .sort(),
+    ).toEqual(["192.0.2.10", "192.0.2.99"]);
 
     // 1b. Per-record provider: concurrent writer adds a same-(name, type) record mid-operation.
     // Rollback must NOT delete the foreign record and must report restored: false + details.unexpected.

@@ -30,8 +30,10 @@ const EXEMPT_AUTH_WORDS =
   /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your)$/i;
 const URL_USERINFO_BARE =
   /(?<![a-z0-9+."'-])([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:\/|(?![/\\]))|[^/?#\s\\<>])+)@/gi;
-const URL_USERINFO_QUOTED =
-  /(?<=["'])([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/"']|(?![/\\"']))|[^/?#\s\\"'<>]|["'](?=[^,}\]:\s]))+)@/gi;
+const URL_USERINFO_DOUBLE_QUOTED =
+  /(?<=")([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/"]|(?![/\\"]))|[^/?#\s\\"<>]|"(?=[^}\]:\s])(?!,\s*"))+)@/gi;
+const URL_USERINFO_SINGLE_QUOTED =
+  /(?<=')([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/']|(?![/\\']))|[^/?#\s\\'<>]|'(?=[^}\]:\s])(?!,\s*'))+)@/gi;
 const INLINE_SECRET_PREFIX =
   /(?<![A-Za-z0-9])(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))\\*["']?\s*(?:=|:)\s*/gi;
 
@@ -204,7 +206,10 @@ function scrubString(value: string, depth = 0): string {
     return userinfo.includes(":") ? `${scheme}[REDACTED]:[REDACTED]@` : `${scheme}[REDACTED]@`;
   };
   const withoutUserinfo = value.includes("@")
-    ? value.replace(URL_USERINFO_QUOTED, scrubUserinfo).replace(URL_USERINFO_BARE, scrubUserinfo)
+    ? value
+        .replace(URL_USERINFO_DOUBLE_QUOTED, scrubUserinfo)
+        .replace(URL_USERINFO_SINGLE_QUOTED, scrubUserinfo)
+        .replace(URL_USERINFO_BARE, scrubUserinfo)
     : value;
   return scrubInlineSecrets(scrubAuthSchemes(withoutUserinfo));
 }

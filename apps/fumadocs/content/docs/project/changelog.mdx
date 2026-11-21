@@ -10,7 +10,7 @@ description: User-visible Domain SDK releases and compatibility changes.
 - Both clients retry rate limits and transient outages up to 3 attempts, honoring `Retry-After`. Configure it with `retry`.
 - `waitUntilActive()` backs off between polls (`backoffFactor`, `maxIntervalMs`, `jitter`).
 - `createDnsClient({ lock })` accepts a shared per-zone lock for several workers.
-- Responses over 16 KB parse correctly, and the SDK no longer imports any `node:*` module.
+- Responses over 16 KB parse correctly (up to 8 MiB by default, 16 MiB for whole-zone DNS providers), and the SDK no longer imports any `node:*` module.
 
 ## 0.2.0
 

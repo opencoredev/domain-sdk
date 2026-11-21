@@ -321,7 +321,7 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
           throw new DomainSdkError(
             "REQUEST_FAILED",
             "Namecheap did not retain the expected DNS records. Re-read the zone before retrying.",
-            { provider: "namecheap" },
+            { provider: "namecheap", details: { committed: true } },
           );
       });
     queues.set(zone, pending);

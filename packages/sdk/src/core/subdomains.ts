@@ -1,4 +1,4 @@
-import { DomainSdkError } from "./errors";
+import { DomainSdkError, safeInstanceOf } from "./errors";
 import { normalizeHostname } from "./hostname";
 import type { DomainClient } from "./provider";
 import type { Domain, ListDomainsOptions, RequestOptions, WaitUntilActiveOptions } from "./types";
@@ -178,7 +178,7 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
         try {
           label = fromHostname(domain.hostname);
         } catch (error) {
-          if (error instanceof DomainSdkError && error.code === "INVALID_HOSTNAME") continue;
+          if (safeInstanceOf(error, DomainSdkError) && error.code === "INVALID_HOSTNAME") continue;
           throw error;
         }
         subdomains.push({ label, domain });
