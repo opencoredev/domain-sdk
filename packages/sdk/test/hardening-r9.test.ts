@@ -1040,4 +1040,129 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     await ncDns.removeRecords([{ type: "A", name: "example.com", value: "192.0.2.1" }]);
     expect(currentHosts).toEqual([]);
   });
+
+  test("R16: whole-zone rollback preserves unrelated concurrent same-owner records, redacts chained auth schemes & __proto__, and contains hostile error.name / revoked Proxy", async () => {
+    // 1. Whole-zone rollback keeps unrelated concurrent TXT sharing owner+type with baseline SPF
+    const wzSameOwnerBase = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          {
+            id: "spf",
+            type: "TXT",
+            name: "example.com",
+            value: "v=spf1 -all",
+            ttl: 300,
+            editable: true,
+          },
+        ],
+      },
+    });
+    const origSameOwnerCreate = wzSameOwnerBase.createRecords.bind(wzSameOwnerBase);
+    let createCalls = 0;
+    const wzProvider: DnsProvider = {
+      ...wzSameOwnerBase,
+      capabilities: { ...wzSameOwnerBase.capabilities, wholeZoneWrites: true },
+      async createRecords(input, ctx) {
+        createCalls += 1;
+        await origSameOwnerCreate(input, ctx);
+        if (createCalls === 1) {
+          // Concurrent actor adds an unrelated TXT at apex alongside existing SPF
+          await origSameOwnerCreate(
+            {
+              zone: input.zone,
+              records: [
+                {
+                  type: "TXT",
+                  name: "example.com",
+                  value: "google-site-verification=abc",
+                  ttl: 300,
+                },
+              ],
+            },
+            ctx,
+          );
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "transient 503", {
+            provider: wzSameOwnerBase.id,
+            statusCode: 503,
+            retryable: true,
+          });
+        }
+      },
+    };
+    const wzDns = createDnsClient({
+      provider: wzProvider,
+      retry: { maxAttempts: 3, baseDelayMs: 1, maxDelayMs: 5 },
+    });
+    const wzErr = await wzDns
+      .ensureRecords([{ type: "TXT", name: "_mine.example.com", value: "mine", ttl: 300 }])
+      .catch((e) => e);
+    expect(wzErr).toBeInstanceOf(DomainSdkError);
+    expect(wzErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true, externalChange: true },
+    });
+    expect(createCalls).toBe(1);
+    const afterRecords = await wzSameOwnerBase.listRecords({ zone: "example.com" }, { logger: {} });
+    expect(afterRecords.some((r) => r.value === "google-site-verification=abc")).toBe(true);
+    expect(afterRecords.some((r) => r.value === "v=spf1 -all")).toBe(true);
+    expect(afterRecords.some((r) => r.value === "mine")).toBe(false);
+
+    // 2. Chained auth scheme words ("token Bearer <secret>") redact the real secret
+    const chained = new DomainSdkError("REQUEST_FAILED", "Invalid token Bearer sk_live_QQQ");
+    expect(chained.message).not.toContain("sk_live_QQQ");
+    expect(chained.message).toContain("Bearer [REDACTED]");
+
+    // 3. __proto__ key in details does not mutate prototype
+    const evilDetails = JSON.parse('{"__proto__":{"polluted":true},"ok":"yes"}') as Record<
+      string,
+      unknown
+    >;
+    const protoErr = new DomainSdkError("REQUEST_FAILED", "fail", { details: evilDetails });
+    expect(Object.getPrototypeOf(protoErr.details)).toBe(Object.prototype);
+    expect((protoErr.details as Record<string, unknown>)["polluted"]).toBeUndefined();
+
+    // 4. Hostile Error (throwing name getter, null-proto message) and revoked Proxy normalize cleanly
+    const hostileName = new Error("boom");
+    Object.defineProperty(hostileName, "name", {
+      get() {
+        throw new Error("name-boom");
+      },
+    });
+    const { proxy: revokedProxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    const hostileMsg = new Error("ok");
+    Object.defineProperty(hostileMsg, "message", {
+      get() {
+        return Object.create(null);
+      },
+    });
+    expect(new DomainSdkError("UNKNOWN_ERROR", "x", { cause: hostileMsg })).toBeInstanceOf(
+      DomainSdkError,
+    );
+    expect(new DomainSdkError("UNKNOWN_ERROR", "x", { cause: revokedProxy })).toBeInstanceOf(
+      DomainSdkError,
+    );
+
+    const dcHostileName = createDomainClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        ...memoryProvider(),
+        async get() {
+          throw hostileName;
+        },
+      },
+    });
+    await expect(dcHostileName.get("app.example.com")).rejects.toBeInstanceOf(DomainSdkError);
+
+    const dcRevoked = createDomainClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        ...memoryProvider(),
+        async get() {
+          throw revokedProxy;
+        },
+      },
+    });
+    await expect(dcRevoked.get("app.example.com")).rejects.toBeInstanceOf(DomainSdkError);
+  });
 });

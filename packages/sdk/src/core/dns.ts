@@ -740,7 +740,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       : before.filter((record) => record.editable && replacedSet.has(record));
     const ownedKeys = new Set([
       ...requestedKeys,
-      ...beforeEditable.map(recordKey),
+      ...replaced.map(recordKey),
       ...preExistingWanted.map(recordKey),
     ]);
     const isOwned = (record: ZoneRecord) => ownedKeys.has(recordKey(record));
@@ -806,7 +806,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         const bystandersLost = subtract(touchedBystanders, verified);
         const preWantedLost = subtract(preExistingWanted, verified).length > 0;
         const foreignAdded = provider.capabilities.wholeZoneWrites
-          ? verified.filter((record) => record.editable && !isOwned(record))
+          ? subtract(
+              verified.filter((record) => record.editable && !isOwned(record)),
+              before,
+            )
           : [];
         externalChange ||= preWantedLost || foreignAdded.length > 0;
         remainingUnexpected = subtract(sameKeyUnexpectedCandidates(verified), beforeForUnexpected);

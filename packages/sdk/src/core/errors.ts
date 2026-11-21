@@ -136,6 +136,7 @@ function scrubAuthSchemes(value: string): string {
     } else {
       while (valueEnd < value.length && !/[\s"',;)}\]\\]/.test(value[valueEnd]!)) valueEnd += 1;
       const token = value.slice(valueStart, valueEnd);
+      if (/^(?:bearer|basic|digest|apikey|token)$/i.test(token)) continue;
       if (
         (lower === "basic" &&
           !isShortBasicCredential(token) &&
@@ -202,15 +203,46 @@ function safeRead(target: object, key: string): unknown {
   }
 }
 
+function safeInstanceOf<T>(value: unknown, ctor: abstract new (...args: never[]) => T): value is T {
+  try {
+    return value instanceof ctor;
+  } catch {
+    return false;
+  }
+}
+
+function safeString(value: unknown): string {
+  try {
+    return String(value ?? "");
+  } catch {
+    return "[Unreadable]";
+  }
+}
+
+function setDataProperty(target: Record<string, unknown>, key: string, value: unknown): void {
+  Object.defineProperty(target, key, {
+    value,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+}
+
 export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
   if (typeof value === "string") return scrubString(value).slice(0, MAX_STRING);
   if (value === null || typeof value !== "object") return value;
   if (depth > MAX_REDACT_DEPTH) return "[Truncated]";
   if (seen.has(value)) return "[Circular]";
   seen.add(value);
-  if (Array.isArray(value)) {
+  let isArray: boolean;
+  try {
+    isArray = Array.isArray(value);
+  } catch {
+    return "[Unreadable]";
+  }
+  if (isArray) {
     try {
-      return value.slice(0, 50).map((item) => redact(item, seen, depth + 1));
+      return (value as unknown[]).slice(0, 50).map((item) => redact(item, seen, depth + 1));
     } catch {
       return "[Unreadable]";
     }
@@ -224,17 +256,17 @@ export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0):
   const safe: Record<string, unknown> = {};
   for (const key of keys) {
     if (SECRET_KEYS.test(key)) {
-      safe[key] = "[REDACTED]";
+      setDataProperty(safe, key, "[REDACTED]");
       continue;
     }
     let child: unknown;
     try {
       child = Reflect.get(value, key);
     } catch {
-      safe[key] = "[Unreadable]";
+      setDataProperty(safe, key, "[Unreadable]");
       continue;
     }
-    safe[key] = redact(child, seen, depth + 1);
+    setDataProperty(safe, key, redact(child, seen, depth + 1));
   }
   return safe;
 }
@@ -249,14 +281,14 @@ function redactedCause(cause: Error, seen = new WeakSet<object>(), depth = 0): E
   const rawName = safeRead(cause, "name");
   const rawStack = safeRead(cause, "stack");
   const rawNested = safeRead(cause, "cause");
-  const messageText = typeof rawMessage === "string" ? rawMessage : String(rawMessage ?? "");
+  const messageText = typeof rawMessage === "string" ? rawMessage : safeString(rawMessage);
   const nameText = typeof rawName === "string" ? rawName : "Error";
   const message = String(redact(messageText));
   let nested: unknown;
   if (rawNested !== undefined) {
     if (depth >= MAX_REDACT_DEPTH) nested = "[Truncated]";
-    else if (rawNested instanceof DomainSdkError) nested = rawNested;
-    else if (rawNested instanceof Error)
+    else if (safeInstanceOf(rawNested, DomainSdkError)) nested = rawNested;
+    else if (safeInstanceOf(rawNested, Error))
       nested = seen.has(rawNested) ? "[Circular]" : redactedCause(rawNested, seen, depth + 1);
     else nested = redact(rawNested, seen, depth + 1);
   }
@@ -287,12 +319,11 @@ export class DomainSdkError extends Error {
   override readonly cause?: unknown;
 
   constructor(code: DomainSdkErrorCode, message: string, options: DomainSdkErrorOptions = {}) {
-    const safeCause =
-      options.cause instanceof DomainSdkError
-        ? options.cause
-        : options.cause instanceof Error
-          ? redactedCause(options.cause)
-          : redact(options.cause);
+    const safeCause = safeInstanceOf(options.cause, DomainSdkError)
+      ? options.cause
+      : safeInstanceOf(options.cause, Error)
+        ? redactedCause(options.cause)
+        : redact(options.cause);
     super(String(redact(message)), { cause: safeCause });
     this.name = "DomainSdkError";
     this.code = code;
@@ -312,11 +343,11 @@ export function abortedError(provider?: string, cause?: unknown) {
 }
 
 export function normalizeUnknownError(error: unknown, provider?: string): DomainSdkError {
-  if (error instanceof DomainSdkError) return error;
+  if (safeInstanceOf(error, DomainSdkError)) return error;
   if (
-    ((typeof DOMException === "function" && error instanceof DOMException) ||
-      error instanceof Error) &&
-    error.name === "AbortError"
+    ((typeof DOMException === "function" && safeInstanceOf(error, DOMException)) ||
+      safeInstanceOf(error, Error)) &&
+    safeRead(error, "name") === "AbortError"
   )
     return abortedError(provider, error);
   return new DomainSdkError("UNKNOWN_ERROR", "The domain operation failed unexpectedly.", {
