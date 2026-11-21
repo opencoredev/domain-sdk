@@ -592,4 +592,82 @@ describe("ensureRecords write verification", () => {
     });
     expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.10"]);
   });
+
+  test("rollback cleans up provider-rewritten values and reports restored false if any pre-write editable record disappears", async () => {
+    // 1. Provider rewrites replacement value to 192.0.2.99; rollback removes it and restores 192.0.2.10.
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
+        ],
+      },
+    });
+    const baseCreate = provider.createRecords.bind(provider);
+    let createCalls = 0;
+    provider.createRecords = (input, ctx) =>
+      baseCreate(
+        {
+          ...input,
+          records:
+            ++createCalls === 1
+              ? input.records.map((record) => ({ ...record, value: "192.0.2.99" }))
+              : input.records,
+        },
+        ctx,
+      );
+    const dns = createDnsClient({ provider });
+    const rewrittenErr = await dns
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(rewrittenErr).toMatchObject({ code: "REQUEST_FAILED", details: { restored: true } });
+    expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.10"]);
+
+    // 2. Provider drops an unrelated pre-existing editable TXT record and refuses to recreate it.
+    const lossy = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old-a", type: "A", name: "example.com", value: "1.1.1.1", editable: true },
+          { id: "old-txt", type: "TXT", name: "_v.example.com", value: "tok", editable: true },
+        ],
+      },
+    });
+    const lossyCreate = lossy.createRecords.bind(lossy);
+    const lossyDelete = lossy.deleteRecords.bind(lossy);
+    lossy.createRecords = async (input, ctx) => {
+      // Drop pre-existing TXT during the replacement write and ignore TXT recreations during rollback.
+      const existingTxt = lossy.records("example.com").filter((r) => r.type === "TXT");
+      if (existingTxt.length) await lossyDelete({ zone: input.zone, records: existingTxt }, ctx);
+      const nonTxt = input.records.filter((r) => r.type !== "TXT");
+      if (nonTxt.length) await lossyCreate({ zone: input.zone, records: nonTxt }, ctx);
+    };
+    const lossyDns = createDnsClient({ provider: lossy });
+    const droppedErr = await lossyDns
+      .ensureRecords(
+        [
+          { type: "A", name: "example.com", value: "2.2.2.2" },
+          { type: "TXT", name: "_v.example.com", value: "tok" },
+        ],
+        { onConflict: "replace" },
+      )
+      .catch((caught: unknown) => caught);
+    expect(droppedErr).toMatchObject({ code: "REQUEST_FAILED", details: { restored: false } });
+  });
+
+  test("handles lowercase ZoneRecord.type during conflict replacement", async () => {
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "lower", type: "a", name: "app.example.com", value: "192.0.2.1", editable: true },
+        ],
+      },
+    });
+    const dns = createDnsClient({ provider });
+    const records = await dns.ensureRecords(
+      [{ type: "A", name: "app.example.com", value: "192.0.2.2" }],
+      { onConflict: "replace" },
+    );
+    expect(records.map((r) => r.value)).toEqual(["192.0.2.2"]);
+  });
 });

@@ -240,9 +240,14 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<CliExi
   let args: ParsedArgs | undefined;
   try {
     args = parseArgs(argv);
-    if (args.help || !args.command) {
-      (args.help ? io.stdout : io.stderr)(HELP);
-      return args.help ? 0 : 2;
+    if (args.help) {
+      io.stdout(HELP);
+      return 0;
+    }
+    if (!args.command) {
+      if (args.json) throw new UsageError("Pass a command.");
+      io.stderr(HELP);
+      return 2;
     }
     const client = createClient(args, io);
     io.stdout(await execute(args, client, io));

@@ -113,7 +113,7 @@ export function render(options: RenderOptions): RenderProvider {
       });
     }
 
-    const body = await readJson(response);
+    const body = await readJson(response, undefined, "render");
     if (!response.ok) {
       if (notFoundOkay && response.status === 404) return undefined;
       throw httpError("render", response, body, "Render rejected the request.");

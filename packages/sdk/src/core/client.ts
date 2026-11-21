@@ -263,8 +263,8 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       const backoffFactor = polling.backoffFactor ?? 1.5;
       const maxIntervalMs = polling.maxIntervalMs ?? Math.max(30_000, intervalMs);
       if (
-        !(timeoutMs >= 0) ||
-        !(intervalMs >= 250) ||
+        !(timeoutMs >= 0 && Number.isFinite(timeoutMs)) ||
+        !(intervalMs >= 250 && Number.isFinite(intervalMs)) ||
         !(backoffFactor >= 1 && Number.isFinite(backoffFactor)) ||
         !(maxIntervalMs >= intervalMs && Number.isFinite(maxIntervalMs))
       )

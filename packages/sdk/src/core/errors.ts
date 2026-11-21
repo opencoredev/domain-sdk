@@ -24,14 +24,14 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(?:x-)?(token|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|authorization|secret|password|private[_-]?key)$/i;
-const BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
+  /^(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key)$/i;
+const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi;
 const INLINE_SECRET =
-  /(\b(?:x-)?(?:access[_-]?token|accessToken|access[_-]?key|accessKey|api[_-]?token|apiToken|api[_-]?key|apiKey|api[_-]?secret|apiSecret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|authorization|password|private[_-]?key|token|secret)\s*(?:=|:)\s*)(?:"[^"]*"|'[^']*'|[^\s&,;)]+)/gi;
+  /(\b(?:x-)?(?:access[_-]?token|accessToken|access[_-]?key|accessKey|api[_-]?token|apiToken|api[_-]?key|apiKey|api[_-]?secret|apiSecret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|clientSecret|refresh[_-]?token|refreshToken|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|token|secret)["']?\s*(?:=|:)\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s&,;)}\]]+)/gi;
 const MAX_STRING = 1_000;
 
 function scrubString(value: string): string {
-  return value.replace(BEARER, "Bearer [REDACTED]").replace(INLINE_SECRET, "$1[REDACTED]");
+  return value.replace(BEARER, "$1 [REDACTED]").replace(INLINE_SECRET, "$1[REDACTED]");
 }
 
 export function redact(value: unknown, seen = new WeakSet<object>()): unknown {

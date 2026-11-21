@@ -88,7 +88,7 @@ export function vercel(options: VercelOptions): VercelProvider {
         cause: error,
       });
     }
-    const body = await readJson(response);
+    const body = await readJson(response, undefined, "vercel");
     if (!response.ok) {
       if (notFoundOkay && response.status === 404) return undefined;
       throw httpError("vercel", response, body, "Vercel rejected the request.");

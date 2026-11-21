@@ -561,7 +561,9 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             const locked = conflicts.filter(
               (item) =>
                 !item.editable ||
-                !provider.capabilities.recordTypes.includes(item.type as DnsRecordType),
+                !provider.capabilities.recordTypes.includes(
+                  item.type.toUpperCase() as DnsRecordType,
+                ),
             );
             if (locked.length || (options.onConflict ?? "error") === "error")
               throw new DomainSdkError(
@@ -588,10 +590,11 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               after = await provider.listRecords({ zone }, ctx);
             } catch (error) {
               // Nothing was created when the delete failed, so leave every requested record alone.
-              return restore(zone, conflicts, creating ? missing : [], error);
+              return restore(zone, conflicts, creating ? missing : [], error, existing);
             }
             const verificationError = verifyAfterWrite(after);
-            if (verificationError) return restore(zone, conflicts, missing, verificationError);
+            if (verificationError)
+              return restore(zone, conflicts, missing, verificationError, existing);
             return after.filter(isWanted);
           }
 
@@ -609,27 +612,36 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
 
   /**
    * Roll back a failed replacement, then report the original failure. Deletes and creates may
-   * have partly succeeded, so the zone is read again: requested records that now exist are
-   * removed, and replaced records that are gone are created again, then verified with a re-read.
+   * have partly succeeded (or a provider may have rewritten a value or dropped another editable
+   * record), so the zone is compared against the pre-write editable snapshot, cleaned up,
+   * restored, and verified with a re-read.
    */
   const restore = async (
     zone: string,
     replaced: ZoneRecord[],
     requested: DnsRecordInput[],
     error: unknown,
+    before: ZoneRecord[],
   ): Promise<never> => {
     const cause = normalizeUnknownError(error, provider.id);
     // Roll back even when the caller's signal aborted the replacement.
     const ctx: DnsProviderContext = { logger };
     const asInput = ({ type, name, value, ttl }: ZoneRecord): DnsRecordInput => ({
-      type: type as DnsRecordType,
+      type: type.toUpperCase() as DnsRecordType,
       name,
       value,
       ttl,
     });
-    const unmatchedReplaced = (snapshot: ZoneRecord[]) => {
-      const pool = [...snapshot];
-      let pending = replaced;
+    const beforeEditable = before.filter((record) => record.editable);
+    const affectedNames = new Set([
+      ...replaced.map((record) => normalizeHostname(record.name)),
+      ...requested.map((record) => normalizeHostname(record.name)),
+    ]);
+    const isAffectedEditable = (record: ZoneRecord) =>
+      record.editable && affectedNames.has(normalizeHostname(record.name));
+    const subtract = (expected: ZoneRecord[], actual: ZoneRecord[]) => {
+      const pool = [...actual];
+      let pending = expected;
       for (const exact of [true, false])
         pending = pending.filter((record) => {
           const index = pool.findIndex(
@@ -643,27 +655,24 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     let restored = false;
     try {
       const current = await provider.listRecords({ zone }, ctx);
-      const created = current.filter(
-        (item) => item.editable && requested.some((record) => sameRecord(item, record)),
-      );
-      if (created.length) await provider.deleteRecords({ zone, records: created }, ctx);
-      // Match one for one, exact TTL matches first, so a deleted copy of an identical record is
-      // restored with its own TTL. Ids are not used because whole-zone hosts reissue them.
-      const gone = unmatchedReplaced(current).map(asInput);
+      if (requested.length) {
+        const unexpected = subtract(current.filter(isAffectedEditable), beforeEditable);
+        if (unexpected.length) await provider.deleteRecords({ zone, records: unexpected }, ctx);
+      }
+      // Match one for one, exact TTL matches first, so every pre-write editable record that
+      // disappeared is restored with its own TTL. Ids are not used because whole-zone hosts reissue them.
+      const gone = subtract(beforeEditable, current).map(asInput);
       const records = gone.filter((record) =>
         provider.capabilities.recordTypes.includes(record.type),
       );
       if (records.length) await provider.createRecords({ zone, records }, ctx);
       if (records.length === gone.length) {
         const verified = await provider.listRecords({ zone }, ctx);
-        const stillGone = unmatchedReplaced(verified);
-        const stillCreated = verified.filter(
-          (item) =>
-            item.editable &&
-            requested.some((record) => sameRecord(item, record)) &&
-            !replaced.some((record) => sameRecord(item, asInput(record))),
-        );
-        restored = stillGone.length === 0 && stillCreated.length === 0;
+        const stillGone = subtract(beforeEditable, verified);
+        const stillUnexpected = requested.length
+          ? subtract(verified.filter(isAffectedEditable), beforeEditable)
+          : [];
+        restored = stillGone.length === 0 && stillUnexpected.length === 0;
       }
     } catch {
       restored = false;

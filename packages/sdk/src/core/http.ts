@@ -8,11 +8,11 @@ export const DEFAULT_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 const oversizedResponses = new WeakSet<DomainSdkError>();
 
-function responseTooLarge(response: Response, maxBytes: number): DomainSdkError {
+function responseTooLarge(response: Response, maxBytes: number, provider?: string): DomainSdkError {
   const error = new DomainSdkError(
     "REQUEST_FAILED",
     `The provider response is larger than ${maxBytes} bytes.`,
-    { statusCode: response.status, details: { maxBytes } },
+    { provider, statusCode: response.status, details: { maxBytes } },
   );
   oversizedResponses.add(error);
   return error;
@@ -24,11 +24,11 @@ export function isResponseTooLarge(error: unknown): error is DomainSdkError {
 }
 
 /** Read a response body as text, refusing to buffer more than `maxBytes`. */
-async function readText(response: Response, maxBytes: number): Promise<string> {
+async function readText(response: Response, maxBytes: number, provider?: string): Promise<string> {
   const declared = Number(response.headers.get("content-length"));
   if (Number.isFinite(declared) && declared > maxBytes) {
     void response.body?.cancel().catch(() => {});
-    throw responseTooLarge(response, maxBytes);
+    throw responseTooLarge(response, maxBytes, provider);
   }
   if (!response.body) return "";
   const reader = response.body.getReader();
@@ -42,7 +42,7 @@ async function readText(response: Response, maxBytes: number): Promise<string> {
       length += value.byteLength;
       if (length > maxBytes) {
         void reader.cancel().catch(() => {});
-        throw responseTooLarge(response, maxBytes);
+        throw responseTooLarge(response, maxBytes, provider);
       }
       chunks.push(decoder.decode(value, { stream: true }));
     }
@@ -60,14 +60,16 @@ async function readText(response: Response, maxBytes: number): Promise<string> {
 export async function readJson(
   response: Response,
   maxBytes = DEFAULT_MAX_RESPONSE_BYTES,
+  provider?: string,
 ): Promise<unknown> {
   let rawText: string;
   try {
-    rawText = await readText(response, maxBytes);
+    rawText = await readText(response, maxBytes, provider);
   } catch (error) {
     if (error instanceof DomainSdkError) throw error;
     if (error instanceof Error && error.name === "AbortError") throw error;
     throw new DomainSdkError("PROVIDER_UNAVAILABLE", "The provider response was interrupted.", {
+      provider,
       retryable: true,
       cause: error,
     });
@@ -77,6 +79,7 @@ export async function readJson(
     return JSON.parse(rawText) as unknown;
   } catch {
     throw new DomainSdkError("REQUEST_FAILED", "The provider returned malformed JSON.", {
+      provider,
       statusCode: response.status,
       retryable: response.status >= 500,
       details: { response: rawText.slice(0, 1_000) },

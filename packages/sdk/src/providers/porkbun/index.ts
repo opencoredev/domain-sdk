@@ -99,7 +99,9 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
 
     let body: PorkbunResponse | undefined;
     try {
-      body = (await readJson(response, MAX_RESPONSE_BYTES)) as PorkbunResponse | undefined;
+      body = (await readJson(response, MAX_RESPONSE_BYTES, "porkbun")) as
+        | PorkbunResponse
+        | undefined;
     } catch (error) {
       if (isResponseTooLarge(error)) throw error;
       if (context.signal?.aborted)

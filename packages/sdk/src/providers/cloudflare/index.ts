@@ -103,7 +103,7 @@ export function cloudflareSaaS(options: CloudflareSaaSOptions): CloudflareSaaSPr
         cause: error,
       });
     }
-    const body = await readJson(response);
+    const body = await readJson(response, undefined, "cloudflare");
     if (!response.ok) {
       if (notFoundOkay && response.status === 404) return undefined;
       const envelope = body as CfEnvelope<unknown>;

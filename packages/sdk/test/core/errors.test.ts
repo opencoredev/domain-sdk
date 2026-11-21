@@ -95,4 +95,21 @@ test("recursively redacts nested fetch error causes and handles circular causes"
   expect(scrubbed.message).not.toContain("bunnysecret");
   expect(scrubbed.stack).not.toContain("supersecret");
   expect(scrubbed.stack).not.toContain("bunnysecret");
+
+  const quotedJson = JSON.stringify({
+    apiKey: "pk_live_123",
+    secretapikey: "sk_live_456",
+    access_token: 'tok_"escaped"_789',
+    authorization: "Basic dXNlcjpwYXNz",
+  });
+  const wrappedJson = new DomainSdkError("REQUEST_FAILED", quotedJson, {
+    cause: new Error(quotedJson),
+    details: { response: quotedJson },
+  });
+  for (const secret of ["pk_live_123", "sk_live_456", "tok_", "dXNlcjpwYXNz"]) {
+    expect(wrappedJson.message).not.toContain(secret);
+    expect((wrappedJson.cause as Error).message).not.toContain(secret);
+    expect((wrappedJson.cause as Error).stack).not.toContain(secret);
+    expect(JSON.stringify(wrappedJson.details)).not.toContain(secret);
+  }
 });

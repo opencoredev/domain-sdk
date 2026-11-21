@@ -239,6 +239,10 @@ describe("domain-sdk CLI commands", () => {
 
     expect(await cli.run("get", "app.example.com", "--provider", "vercel", "--json")).toBe(2);
     expect(JSON.parse(cli.stderr())).toMatchObject({ error: { code: "USAGE" } });
+    cli.clear();
+
+    expect(await cli.run("--json")).toBe(2);
+    expect(JSON.parse(cli.stderr())).toMatchObject({ error: { code: "USAGE" } });
   });
 });
 

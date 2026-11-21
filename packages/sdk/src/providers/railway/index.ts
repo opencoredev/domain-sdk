@@ -102,7 +102,7 @@ export function railway(options: RailwayOptions): RailwayProvider {
         cause: error,
       });
     }
-    const body = await readJson(response);
+    const body = await readJson(response, undefined, "railway");
     if (!response.ok) throw httpError("railway", response, body, "Railway rejected the request.");
     const envelope = body as GraphqlEnvelope<T>;
     if (envelope.errors?.length) {

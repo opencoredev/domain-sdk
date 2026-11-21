@@ -178,7 +178,7 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
     }
     let body: unknown;
     try {
-      body = await readJson(response, MAX_RESPONSE_BYTES);
+      body = await readJson(response, MAX_RESPONSE_BYTES, "spaceship");
     } catch (error) {
       if (isResponseTooLarge(error)) throw error;
       if (context.signal?.aborted || (error instanceof Error && error.name === "AbortError"))
