@@ -2,6 +2,7 @@ User-agent: *
 Content-Signal: search=yes, ai-input=yes, ai-train=yes
 Allow: /
 Disallow: /api/
+Disallow: /blume-nav/
 Disallow: /ingest/
 
 Sitemap: https://www.domain-sdk.dev/sitemap.xml

@@ -162,7 +162,10 @@ export default function DnsRecordsPreview() {
   }
 
   return (
-    <section className="dns-records-preview my-8 min-w-0 text-foreground" style={dnsStatusStyle}>
+    <section
+      className="dns-records-preview not-prose my-8 min-w-0 text-foreground"
+      style={dnsStatusStyle}
+    >
       <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <h2 className="text-sm font-semibold">DNS records</h2>

@@ -186,6 +186,17 @@ article.prose .dns-records-preview code {
   white-space: normal;
 }
 
+@media (min-width: 1024px) {
+  [data-blume-doc-grid] > aside:first-of-type {
+    background: var(--blume-muted);
+    border-inline-end: 1px solid var(--blume-border);
+  }
+}
+
+[data-blume-header] {
+  border-block-end: 1px solid var(--blume-border);
+}
+
 /* Preview borders follow the theme's lines, as shadcn's base layer sets them,
    while utilities like border-transparent still win. */
 @layer base {

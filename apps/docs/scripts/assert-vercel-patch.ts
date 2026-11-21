@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 
 import { ENTRY_PATCH_MARKER } from "./patch-vercel-routes";
 
@@ -9,10 +9,21 @@ const entryPath = resolve(
   docsDir,
   ".vercel/output/functions/_render.func/apps/docs/dist/server/entry.mjs",
 );
-const sitemapPath = resolve(docsDir, ".vercel/output/static/sitemap.xml");
+const staticDir = resolve(docsDir, ".vercel/output/static");
+const sitemapPath = join(staticDir, "sitemap.xml");
+const pagesIndexPath = join(staticDir, "api/docs/pages.json");
+const chunksDir = resolve(
+  docsDir,
+  ".vercel/output/functions/_render.func/apps/docs/dist/server/chunks",
+);
 
 const config = JSON.parse(readFileSync(configPath, "utf8")) as {
-  routes?: Array<{ src?: string; dest?: string; status?: number }>;
+  routes?: Array<{
+    src?: string;
+    dest?: string;
+    status?: number;
+    headers?: Record<string, string>;
+  }>;
 };
 const routes = config.routes ?? [];
 
@@ -30,6 +41,15 @@ for (const expectedSrc of ["^/ingest(?:/.*)?/$", "^/ingest(?:/(.*))?$"]) {
   }
 }
 
+const llmsNoindex = routes.some(
+  (r) => r.src === "^/llms(?:-full)?\\.txt$" && r.headers?.["x-robots-tag"] === "noindex",
+);
+if (!llmsNoindex) {
+  throw new Error(
+    "Missing X-Robots-Tag: noindex header route for /llms.txt in Vercel config.json.",
+  );
+}
+
 const entry = readFileSync(entryPath, "utf8");
 if (!entry.includes(ENTRY_PATCH_MARKER)) {
   throw new Error(
@@ -42,6 +62,50 @@ if (!/<url><loc>/.test(sitemap)) {
   throw new Error("Built sitemap.xml is missing <url><loc> entries.");
 }
 
+const sitemapDates = new Map<string, string>();
+for (const match of sitemap.matchAll(
+  /<url><loc>([^<]+)<\/loc>(?:<lastmod>([^<]+)<\/lastmod>)?<\/url>/g,
+)) {
+  const pathname = new URL(match[1]!).pathname;
+  if (match[2]) sitemapDates.set(pathname, match[2]);
+}
+
+const pagesIndex = JSON.parse(readFileSync(pagesIndexPath, "utf8")) as {
+  pages?: Array<{ route?: string; lastModified?: string }>;
+};
+for (const page of pagesIndex.pages ?? []) {
+  if (!page.route) continue;
+  const expected = sitemapDates.get(page.route);
+  const actual = page.lastModified?.slice(0, 10);
+  if (expected !== actual) {
+    throw new Error(
+      `pages.json lastModified mismatch for ${page.route}: expected ${expected ?? "omitted"}, got ${actual ?? "omitted"}.`,
+    );
+  }
+}
+
+const mcpChunks = readdirSync(chunksDir).filter(
+  (file) => file.startsWith("_blume_mcp-data_") && file.endsWith(".mjs"),
+);
+if (mcpChunks.length === 0) {
+  throw new Error("Expected built _blume_mcp-data_*.mjs chunk in server bundle.");
+}
+for (const file of mcpChunks) {
+  const chunk = readFileSync(join(chunksDir, file), "utf8");
+  for (const match of chunk.matchAll(
+    /\\"lastModified\\":\\"([^"]+)\\",\\"locale\\":\\"[^"]*\\",\\"route\\":\\"([^"]+)\\"/g,
+  )) {
+    const actual = match[1]!.slice(0, 10);
+    const route = match[2]!;
+    const expected = sitemapDates.get(route);
+    if (expected !== actual) {
+      throw new Error(
+        `${file} lastModified mismatch for ${route}: expected ${expected ?? "omitted"}, got ${actual}.`,
+      );
+    }
+  }
+}
+
 console.log(
-  `Verified Vercel post-build patch: both /ingest routes precede ^/(.*)/$, server entry contains ${ENTRY_PATCH_MARKER}, and sitemap.xml is populated.`,
+  `Verified Vercel post-build patch: /ingest routes, /llms.txt noindex, ${ENTRY_PATCH_MARKER}, and synced sitemap/agent JSON/MCP dates.`,
 );

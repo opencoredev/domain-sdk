@@ -25,7 +25,7 @@ export default function OneClickDnsPreview() {
   const connecting = state === "connecting";
 
   return (
-    <section className="dns-records-preview my-8 min-w-0 overflow-hidden rounded-lg border bg-background text-foreground">
+    <section className="dns-records-preview not-prose my-8 min-w-0 overflow-hidden rounded-lg border bg-background text-foreground">
       <div className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 gap-3">
           <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/30">

@@ -98,6 +98,13 @@ export const breadcrumbItemsFor = ({
   const segments = clean.split("/").filter(Boolean);
   if (segments.length === 0) return [];
 
+  if (segments[0] === "blog" && segments.length === 1) {
+    return [
+      { "@type": "ListItem", position: 1, name: "Home", item: new URL("/", site).href },
+      { "@type": "ListItem", position: 2, name: "Blog", item: new URL("/blog", site).href },
+    ];
+  }
+
   if (segments[0] === "blog" && segments.length === 2) {
     const slug = segments[1] ?? "";
     const label = extractTitle(markdown) ?? slug.replace(/-/g, " ");
@@ -243,18 +250,28 @@ export const onRequest = (async (
   let breadcrumbItems: ReturnType<typeof breadcrumbItemsFor> = [];
   if (pathname === "/") {
     tags = `${homeFontTags()}${ogVideoTags(new URL(VIDEO_PATH, context.site).href)}`;
+  } else if (pathname === "/blog" || pathname === "/blog/") {
+    tags =
+      '<link rel="alternate" type="application/rss+xml" title="Domain SDK blog" href="/blog/rss.xml">';
+    breadcrumbItems = breadcrumbItemsFor({ pathname, markdown: "", site: context.site });
   } else {
+    // Prerendered docs/blog pages read content/ at build time; on-demand routes skip gracefully.
     const file = contentFileFor({ pathname, contentRoot: join(process.cwd(), "content") });
     if (file !== undefined) {
       const markdown = readFileSync(file, "utf8");
       const url = new URL(pathname.replace(/\/+$/, ""), context.site).href;
       tags = faqJsonLd({ markdown, url });
       breadcrumbItems = breadcrumbItemsFor({ pathname, markdown, site: context.site });
+    } else {
+      breadcrumbItems = breadcrumbItemsFor({ pathname, markdown: "", site: context.site });
     }
   }
   if (tags === "" && breadcrumbItems.length === 0) return response;
 
-  const html = await response.text();
+  let html = await response.text();
+  if (pathname === "/blog" || pathname === "/blog/") {
+    html = html.replace(/"@type":"TechArticle"/g, '"@type":"Blog"');
+  }
   const nextHtml = applyBreadcrumbsToHtml({ html, items: breadcrumbItems, extraTags: tags });
   return new Response(nextHtml, {
     headers: response.headers,

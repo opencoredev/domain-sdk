@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "blume dev",
     "build": "blume build && bun scripts/patch-vercel-routes.ts",
-    "check-types": "tsc --noEmit && blume check",
+    "check-types": "tsc --noEmit && blume check --isolated",
     "check:snippets": "bun scripts/check-snippets.ts",
     "validate": "blume validate --strict",
     "audit": "blume audit",

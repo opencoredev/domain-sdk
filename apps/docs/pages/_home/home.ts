@@ -51,7 +51,11 @@ function setUpCopy(root: HTMLElement): void {
   let timer: number | undefined;
   button.addEventListener("click", async () => {
     const command = button.dataset.copy ?? "";
-    await navigator.clipboard.writeText(command);
+    try {
+      await navigator.clipboard.writeText(command);
+    } catch {
+      return;
+    }
     track("install_command_copied", { command, location: "home_hero" });
     if (idle) idle.hidden = true;
     if (done) done.hidden = false;

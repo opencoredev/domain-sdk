@@ -16,6 +16,7 @@ import {
 } from "./middleware";
 import {
   createGitDateResolver,
+  patchMcpDataChunk,
   patchServerEntry,
   patchSitemapXml,
   patchVercelRoutes,
@@ -444,5 +445,23 @@ describe("head injection helpers and Vercel route patching", () => {
       rmSync(origin, { recursive: true, force: true });
       rmSync(shallow, { recursive: true, force: true });
     }
+  });
+
+  test("patchMcpDataChunk syncs or strips lastModified and blog index emits BreadcrumbList", () => {
+    const sample =
+      'const d = "{\\"lastModified\\":\\"2026-11-21T02:28:14-05:00\\",\\"locale\\":\\"\\",\\"route\\":\\"/docs/installation\\"}";';
+    expect(patchMcpDataChunk(sample, () => "2026-07-12")).toContain(
+      '\\"lastModified\\":\\"2026-07-12T00:00:00.000Z\\"',
+    );
+    const stripped = patchMcpDataChunk(sample, () => undefined);
+    expect(stripped).not.toContain("lastModified");
+    expect(stripped).toContain('\\"route\\":\\"/docs/installation\\"');
+
+    const blogIndexItems = breadcrumbItemsFor({
+      pathname: "/blog",
+      markdown: "",
+      site: new URL("https://www.domain-sdk.dev"),
+    });
+    expect(blogIndexItems.map((item) => item.name)).toEqual(["Home", "Blog"]);
   });
 });

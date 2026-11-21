@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 interface VercelRoute {
@@ -21,6 +21,12 @@ const INGEST_ROUTES: VercelRoute[] = [
   { src: "^/ingest(?:/.*)?/$", dest: "_render" },
   { src: "^/ingest(?:/(.*))?$", dest: "_render" },
 ];
+
+const LLMS_NOINDEX_ROUTE: VercelRoute = {
+  src: "^/llms(?:-full)?\\.txt$",
+  headers: { "x-robots-tag": "noindex" },
+  continue: true,
+};
 
 // Pages whose body content was substantively updated during the Blume migration,
 // so their sitemap dates should reflect the migration commit rather than the
@@ -44,7 +50,7 @@ export function patchVercelRoutes(config: VercelOutputConfig): VercelOutputConfi
 
   const deduped = config.routes.filter((route) => {
     const src = route.src ?? "";
-    return !src.startsWith("^/ingest");
+    return !src.startsWith("^/ingest") && src !== LLMS_NOINDEX_ROUTE.src;
   });
 
   const trailingSlashIndex = deduped.findIndex(
@@ -56,8 +62,8 @@ export function patchVercelRoutes(config: VercelOutputConfig): VercelOutputConfi
     );
   }
 
-  const nextRoutes = [...deduped];
-  nextRoutes.splice(trailingSlashIndex, 0, ...INGEST_ROUTES);
+  const nextRoutes = [LLMS_NOINDEX_ROUTE, ...deduped];
+  nextRoutes.splice(trailingSlashIndex + 1, 0, ...INGEST_ROUTES);
   return { ...config, routes: nextRoutes };
 }
 
@@ -312,6 +318,80 @@ function patchStaticDateModified(
   }
 }
 
+function walkJsonFiles(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  const results: string[] = [];
+  for (const entry of readdirSync(dir)) {
+    const full = join(dir, entry);
+    const stat = statSync(full);
+    if (stat.isDirectory()) results.push(...walkJsonFiles(full));
+    else if (entry.endsWith(".json")) results.push(full);
+  }
+  return results;
+}
+
+export function patchMcpDataChunk(
+  source: string,
+  resolveDate: (pathname: string) => string | undefined,
+): string {
+  return source.replace(
+    /\\"lastModified\\":\\"[^"]*\\",(\\"locale\\":\\"[^"]*\\",\\"route\\":\\"([^"]+)\\")/g,
+    (_match, rest: string, route: string) => {
+      const date = resolveDate(route);
+      if (!date) return rest;
+      return `\\"lastModified\\":\\"${date}T00:00:00.000Z\\",${rest}`;
+    },
+  );
+}
+
+function patchAgentJsonAndMcpDates(
+  docsDir: string,
+  staticDir: string,
+  resolveDate: (pathname: string) => string | undefined,
+): void {
+  const indexPath = join(staticDir, "api/docs/pages.json");
+  if (existsSync(indexPath)) {
+    const parsed = JSON.parse(readFileSync(indexPath, "utf8")) as {
+      pages?: Array<{ route?: string; lastModified?: string }>;
+    };
+    if (Array.isArray(parsed.pages)) {
+      for (const page of parsed.pages) {
+        if (!page.route) continue;
+        const date = resolveDate(page.route);
+        if (date) page.lastModified = `${date}T00:00:00.000Z`;
+        else delete page.lastModified;
+      }
+      writeFileSync(indexPath, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+    }
+  }
+
+  for (const file of walkJsonFiles(join(staticDir, "api/docs/pages"))) {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as {
+      route?: string;
+      lastModified?: string;
+    };
+    if (!parsed.route) continue;
+    const date = resolveDate(parsed.route);
+    if (date) parsed.lastModified = `${date}T00:00:00.000Z`;
+    else delete parsed.lastModified;
+    writeFileSync(file, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+  }
+
+  const chunksDir = resolve(
+    docsDir,
+    ".vercel/output/functions/_render.func/apps/docs/dist/server/chunks",
+  );
+  if (existsSync(chunksDir)) {
+    for (const file of readdirSync(chunksDir)) {
+      if (!file.startsWith("_blume_mcp-data_") || !file.endsWith(".mjs")) continue;
+      const chunkPath = join(chunksDir, file);
+      const source = readFileSync(chunkPath, "utf8");
+      const next = patchMcpDataChunk(source, resolveDate);
+      if (next !== source) writeFileSync(chunkPath, next, "utf8");
+    }
+  }
+}
+
 if (import.meta.main) {
   const docsDir = process.cwd();
   const repoRoot =
@@ -351,4 +431,14 @@ if (import.meta.main) {
     return date;
   });
   if (nextXml !== xml) writeFileSync(sitemapPath, nextXml, "utf8");
+
+  patchAgentJsonAndMcpDates(docsDir, staticDir, resolveDate);
+
+  const robotsPath = join(staticDir, "robots.txt");
+  if (existsSync(robotsPath)) {
+    const site = `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim() || "www.domain-sdk.dev"}`;
+    const robots = readFileSync(robotsPath, "utf8");
+    const nextRobots = robots.replace(/^Sitemap:\s*.+$/m, `Sitemap: ${site}/sitemap.xml`);
+    if (nextRobots !== robots) writeFileSync(robotsPath, nextRobots, "utf8");
+  }
 }

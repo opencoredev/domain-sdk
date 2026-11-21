@@ -56,7 +56,7 @@ const legacyMarkdownRedirects: Redirect[] = [
 // The production origin. Vercel sets VERCEL_PROJECT_PRODUCTION_URL to the
 // project's production domain, so llms.txt, the sitemap, canonicals, and the
 // MCP server follow it without a code change.
-const site = `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL ?? "www.domain-sdk.dev"}`;
+const site = `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim() || "www.domain-sdk.dev"}`;
 
 // PostHog's public project key. Analytics loads only in production builds that
 // set it; requests go through the first-party /ingest proxy in
