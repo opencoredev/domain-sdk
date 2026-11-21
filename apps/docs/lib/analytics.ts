@@ -1,7 +1,7 @@
-// Custom PostHog events, kept to the names the Fumadocs site sent so existing
-// insights keep working. Blume's posthog() adapter loads posthog-js and
-// records pageviews; these calls do nothing when analytics is off (dev builds,
-// or no PUBLIC_POSTHOG_KEY).
+// Custom homepage PostHog events, kept to the names the Fumadocs landing page
+// sent so existing homepage funnel insights keep working. Blume's posthog()
+// adapter loads posthog-js and records pageviews/autocapture; these calls are
+// no-ops when analytics is off (dev builds, or no PUBLIC_POSTHOG_KEY).
 
 type EventProperties = Record<string, string | number | boolean | null | undefined>;
 

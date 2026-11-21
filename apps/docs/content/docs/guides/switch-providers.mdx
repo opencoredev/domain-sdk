@@ -1,7 +1,6 @@
 ---
 title: Switch providers safely
 description: Build a deliberate migration without pretending Domain SDK moves live traffic.
-lastModified: "2026-07-12"
 ---
 
 Create a separately authorized migration workflow: add the hostname to the destination, complete destination ownership/certificate pre-validation when supported, schedule DNS cutover, monitor destination state, then remove the source only after validation and rollback windows.

@@ -1,6 +1,7 @@
 /* Landing page styles, ported from the Fumadocs site's global.css. Scoped to
    .domain-home so they never reach the docs. Fonts: Geist comes from
-   blume.config.ts; Outfit (nav and brand) loads in pages/index.astro. */
+   blume.config.ts; Outfit (nav and brand) is injected into <head> by
+   integrations/middleware.ts. */
 
 /* The landing page has its own navigation, so Blume's header and footer
    stay off this page. */
@@ -491,7 +492,7 @@ html:has([data-domain-home]) {
   justify-content: flex-start;
   padding: 0 24px;
   border-bottom: 1px solid var(--home-border);
-  color: #6f6e68;
+  color: var(--home-muted);
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -602,7 +603,7 @@ html:has([data-domain-home]) {
 }
 
 .status-check span {
-  color: #77766f;
+  color: var(--home-muted);
   font-size: 12px;
 }
 
@@ -674,7 +675,7 @@ html:has([data-domain-home]) {
   text-overflow: ellipsis;
 }
 .dns-row span {
-  color: #75746d;
+  color: var(--home-muted);
   font-size: 11px;
 }
 
@@ -721,7 +722,7 @@ html:has([data-domain-home]) {
 .architecture-node small {
   display: block;
   margin-top: 7px;
-  color: #77766f;
+  color: var(--home-muted);
   font-size: 11px;
 }
 .architecture-sdk {
@@ -818,7 +819,7 @@ html:has([data-domain-home]) {
   background: var(--home-surface-strong);
 }
 .lifecycle-accordion article > span {
-  color: #77766f;
+  color: var(--home-muted);
   font-size: 12px;
 }
 .lifecycle-preview {
@@ -863,7 +864,7 @@ html:has([data-domain-home]) {
   min-height: 42px;
   justify-content: space-between;
   border-top: 0;
-  color: #74736d;
+  color: var(--home-muted);
   font-size: 10px;
 }
 
@@ -936,7 +937,7 @@ html:has([data-domain-home]) {
 .preview-statuses {
   display: flex;
   justify-content: space-between;
-  color: #74736d;
+  color: var(--home-muted);
   font-size: 9px;
 }
 
@@ -949,7 +950,7 @@ html:has([data-domain-home]) {
 }
 
 .preview-remove .preview-field code {
-  color: #77766f;
+  color: var(--home-muted);
   text-decoration: line-through;
 }
 

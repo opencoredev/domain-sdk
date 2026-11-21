@@ -1,7 +1,6 @@
 ---
 title: "Porkbun DNS records: the TypeScript adapter"
 description: "Write Porkbun DNS records (A, AAAA, CNAME, ALIAS, TXT, CAA) from TypeScript: API keys, per-domain API Access, nameserver checks, TTLs from 600 seconds, and errors."
-lastModified: "2026-11-06"
 ---
 
 The Porkbun API can write DNS records for a domain in your account once you create an API key pair and turn on **API Access** for that domain. The records only take effect while the domain uses Porkbun's nameservers: Porkbun keeps a zone even when a domain is delegated elsewhere, so a write there succeeds and public DNS doesn't change. The `porkbun` adapter checks delegation with `getZone()`, reads records with `/dns/retrieve`, creates them with `/dns/create`, and deletes only the record IDs it selected.

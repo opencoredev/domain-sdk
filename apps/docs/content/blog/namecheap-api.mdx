@@ -3,7 +3,6 @@ title: "Namecheap API: manage DNS records from TypeScript"
 description: How to turn on Namecheap API access, whitelist your server's IP, test in the sandbox, and read and write DNS host records with getHosts and setHosts from TypeScript.
 date: 2026-10-30
 type: blog
-lastModified: "2026-10-31"
 ---
 
 The Namecheap API is an XML API at `https://api.namecheap.com/xml.response`. Every call is one URL with your API user, API key, username, the whitelisted IPv4 address of the caller, and a `Command` such as `namecheap.domains.dns.getHosts`. DNS records are read with `getHosts` and written with `setHosts`, and `setHosts` replaces the domain's whole host list, so a careless write deletes every record you didn't send.

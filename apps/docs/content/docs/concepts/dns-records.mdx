@@ -1,7 +1,6 @@
 ---
 title: "DNS records in the SDK: types, status, and zone writes"
 description: "The DNS records Domain SDK returns for a custom domain: type, full name, value, purpose, and status. Show them to customers, or write them to a DNS zone with createDnsClient."
-lastModified: "2026-11-03"
 ---
 
 When you add a custom domain, the hosting provider says which DNS records the customer needs. Domain SDK returns them as one normalized list on [`domain.records`](../api-reference/domain.mdx), in the same shape for every platform. You can show that list to the customer, or write it into a DNS zone yourself with `createDnsClient` and a DNS adapter.

@@ -1,7 +1,6 @@
 ---
 title: Security model
 description: Keep provider credentials server-side and tenant ownership in your application.
-lastModified: "2026-07-12"
 ---
 
 Domain SDK accepts provider credentials only in adapter configuration and sends them only to fixed HTTPS provider API origins. It does not log tokens, disable TLS, follow provider-returned URLs, execute commands, store domains, or emit telemetry.

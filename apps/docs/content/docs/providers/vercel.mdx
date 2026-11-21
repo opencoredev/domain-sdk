@@ -1,7 +1,6 @@
 ---
 title: "Vercel custom domains: DNS records, limits, and the API"
 description: "Add a custom domain to Vercel: an A record for the apex (76.76.21.21 or your project's value), a CNAME for subdomains, the _vercel TXT check, limits, and the API."
-lastModified: "2026-11-17"
 ---
 
 To add a custom domain to a Vercel project by hand, open the project's **Settings**, then **Domains**, click **Add Existing** and enter the hostname. An apex domain like `customer.com` uses an **A** record, and a subdomain like `app.customer.com` uses a **CNAME** to the project's own target. If the domain is already used by another Vercel account or team, Vercel also asks for a **TXT** record at `_vercel.<apex domain>` to prove access. From code, `POST` the hostname to `/v10/projects/{projectId}/domains`, read the recommended records from `/v6/domains/{domain}/config`, and call `/v9/projects/{projectId}/domains/{domain}/verify` once DNS is in place. This adapter wraps those calls and returns the exact records your customer needs.

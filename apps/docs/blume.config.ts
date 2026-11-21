@@ -10,6 +10,8 @@ import { domainSite } from "./integrations/site";
 type Redirect = NonNullable<Parameters<typeof defineConfig>[0]["redirects"]>[number];
 
 const legacyDocRedirects: Redirect[] = [
+  { from: "/opengraph-image", to: "/opengraph-image.png", status: 308 },
+  { from: "/twitter-image", to: "/opengraph-image.png", status: 308 },
   { from: "/docs/quickstart", to: "/docs/installation", status: 308 },
   { from: "/docs/how-it-works", to: "/docs/providers", status: 308 },
   { from: "/docs/providers/compatibility", to: "/docs/providers", status: 308 },
@@ -39,14 +41,16 @@ const legacyMarkdownRedirects: Redirect[] = [
         status: 308,
       };
     }),
-  ...legacyDocRedirects.map((entry): Redirect => {
-    const fromSlug = entry.from.replace(/^\/docs\//, "");
-    return {
-      from: `/llms.mdx/docs/${fromSlug}/content.md`,
-      to: `${entry.to}.md`,
-      status: 308,
-    };
-  }),
+  ...legacyDocRedirects
+    .filter((entry) => entry.from.startsWith("/docs/"))
+    .map((entry): Redirect => {
+      const fromSlug = entry.from.replace(/^\/docs\//, "");
+      return {
+        from: `/llms.mdx/docs/${fromSlug}/content.md`,
+        to: `${entry.to}.md`,
+        status: 308,
+      };
+    }),
 ];
 
 // The production origin. Vercel sets VERCEL_PROJECT_PRODUCTION_URL to the

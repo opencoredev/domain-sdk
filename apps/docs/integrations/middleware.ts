@@ -69,9 +69,85 @@ const extractTitle = (source: string): string | undefined => {
   return match?.[1]?.trim();
 };
 
+const SECTION_LABELS: Record<string, string> = {
+  "api-reference": "API reference",
+  components: "Components",
+  concepts: "Concepts",
+  guides: "Guides",
+  project: "Project",
+  providers: "Providers",
+};
+
 /**
- * Emits a `BreadcrumbList` JSON-LD script for top-level and depth-2 docs routes
- * where Blume omits breadcrumb JSON-LD (it only generates them at depth >= 3).
+ * Builds a complete `BreadcrumbList` item array for docs and blog routes:
+ * - `/docs` -> Home > Docs
+ * - `/docs/<slug>` -> Home > Docs > <title>
+ * - `/docs/<section>/<slug>` -> Home > Docs > <Section> > <title>
+ * - `/blog/<slug>` -> Home > Blog > <title>
+ */
+export const breadcrumbItemsFor = ({
+  pathname,
+  markdown,
+  site,
+}: {
+  pathname: string;
+  markdown: string;
+  site: URL;
+}): Array<{ "@type": "ListItem"; position: number; name: string; item: string }> => {
+  const clean = pathname.replace(/\/+$/, "");
+  const segments = clean.split("/").filter(Boolean);
+  if (segments.length === 0) return [];
+
+  if (segments[0] === "blog" && segments.length === 2) {
+    const slug = segments[1] ?? "";
+    const label = extractTitle(markdown) ?? slug.replace(/-/g, " ");
+    return [
+      { "@type": "ListItem", position: 1, name: "Home", item: new URL("/", site).href },
+      { "@type": "ListItem", position: 2, name: "Blog", item: new URL("/blog", site).href },
+      { "@type": "ListItem", position: 3, name: label, item: new URL(clean, site).href },
+    ];
+  }
+
+  if (segments[0] !== "docs") return [];
+
+  const items: Array<{ "@type": "ListItem"; position: number; name: string; item: string }> = [
+    { "@type": "ListItem", position: 1, name: "Home", item: new URL("/", site).href },
+    { "@type": "ListItem", position: 2, name: "Docs", item: new URL("/docs", site).href },
+  ];
+
+  if (segments.length === 2) {
+    const slug = segments[1] ?? "";
+    const label = extractTitle(markdown) ?? SECTION_LABELS[slug] ?? slug.replace(/-/g, " ");
+    items.push({
+      "@type": "ListItem",
+      position: 3,
+      name: label,
+      item: new URL(clean, site).href,
+    });
+  } else if (segments.length >= 3) {
+    const section = segments[1] ?? "";
+    const slug = segments.at(-1) ?? "";
+    const sectionLabel = SECTION_LABELS[section] ?? section.replace(/-/g, " ");
+    const pageLabel = extractTitle(markdown) ?? slug.replace(/-/g, " ");
+    items.push({
+      "@type": "ListItem",
+      position: 3,
+      name: sectionLabel,
+      item: new URL(`/docs/${section}`, site).href,
+    });
+    items.push({
+      "@type": "ListItem",
+      position: 4,
+      name: pageLabel,
+      item: new URL(clean, site).href,
+    });
+  }
+
+  return items;
+};
+
+/**
+ * Emits a `BreadcrumbList` JSON-LD script for docs and blog routes.
  */
 export const docsBreadcrumbJsonLd = ({
   pathname,
@@ -82,24 +158,8 @@ export const docsBreadcrumbJsonLd = ({
   markdown: string;
   site: URL;
 }): string => {
-  const clean = pathname.replace(/\/+$/, "");
-  if (clean !== "/docs" && !/^\/docs\/[^/]+$/.test(clean)) return "";
-
-  const items: Array<{ "@type": "ListItem"; position: number; name: string; item: string }> = [
-    { "@type": "ListItem", position: 1, name: "Home", item: new URL("/", site).href },
-    { "@type": "ListItem", position: 2, name: "Docs", item: new URL("/docs", site).href },
-  ];
-
-  if (clean !== "/docs") {
-    const slug = clean.slice("/docs/".length);
-    const label = extractTitle(markdown) ?? slug.replace(/-/g, " ");
-    items.push({
-      "@type": "ListItem",
-      position: 3,
-      name: label,
-      item: new URL(clean, site).href,
-    });
-  }
+  const items = breadcrumbItemsFor({ pathname, markdown, site });
+  if (items.length === 0) return "";
 
   const json = JSON.stringify({
     "@context": "https://schema.org",
@@ -107,6 +167,67 @@ export const docsBreadcrumbJsonLd = ({
     itemListElement: items,
   }).replace(/</g, "\\u003c");
   return `<script type="application/ld+json">${json}</script>`;
+};
+
+/**
+ * Replaces Blume's truncated 2-item `BreadcrumbList` inside `@graph` JSON-LD
+ * with the full hierarchy when present, or appends a standalone script otherwise.
+ */
+export const applyBreadcrumbsToHtml = ({
+  html,
+  items,
+  extraTags,
+}: {
+  html: string;
+  items: ReturnType<typeof breadcrumbItemsFor>;
+  extraTags: string;
+}): string => {
+  if (items.length === 0) {
+    return extraTags === "" ? html : html.replace("</head>", `${extraTags}</head>`);
+  }
+
+  let replaced = false;
+  const updated = html.replace(
+    /<script type="application\/ld\+json">([\s\S]*?)<\/script>/g,
+    (match, rawJson: string) => {
+      if (!rawJson.includes('"BreadcrumbList"')) return match;
+      try {
+        const parsed = JSON.parse(rawJson) as Record<string, unknown>;
+        if (Array.isArray(parsed["@graph"])) {
+          let mutated = false;
+          parsed["@graph"] = parsed["@graph"].map((node: unknown) => {
+            if (
+              typeof node === "object" &&
+              node !== null &&
+              (node as Record<string, unknown>)["@type"] === "BreadcrumbList"
+            ) {
+              mutated = true;
+              return { "@type": "BreadcrumbList", itemListElement: items };
+            }
+            return node;
+          });
+          if (mutated) {
+            replaced = true;
+            return `<script type="application/ld+json">${JSON.stringify(parsed).replace(/</g, "\\u003c")}</script>`;
+          }
+        }
+      } catch {
+        // Leave malformed or unexpected JSON-LD blocks untouched.
+      }
+      return match;
+    },
+  );
+
+  const fallbackBreadcrumb = replaced
+    ? ""
+    : `<script type="application/ld+json">${JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        itemListElement: items,
+      }).replace(/</g, "\\u003c")}</script>`;
+
+  const toInject = `${extraTags}${fallbackBreadcrumb}`;
+  return toInject === "" ? updated : updated.replace("</head>", `${toInject}</head>`);
 };
 
 export const onRequest = (async (
@@ -119,7 +240,7 @@ export const onRequest = (async (
 
   const { pathname } = context.url;
   let tags = "";
-  let breadcrumbTag = "";
+  let breadcrumbItems: ReturnType<typeof breadcrumbItemsFor> = [];
   if (pathname === "/") {
     tags = `${homeFontTags()}${ogVideoTags(new URL(VIDEO_PATH, context.site).href)}`;
   } else {
@@ -128,26 +249,14 @@ export const onRequest = (async (
       const markdown = readFileSync(file, "utf8");
       const url = new URL(pathname.replace(/\/+$/, ""), context.site).href;
       tags = faqJsonLd({ markdown, url });
-      breadcrumbTag = docsBreadcrumbJsonLd({ pathname, markdown, site: context.site });
+      breadcrumbItems = breadcrumbItemsFor({ pathname, markdown, site: context.site });
     }
   }
-  if (tags === "" && breadcrumbTag === "") return response;
+  if (tags === "" && breadcrumbItems.length === 0) return response;
 
   const html = await response.text();
-  const combined =
-    breadcrumbTag !== "" &&
-    !html.includes('"@type":"BreadcrumbList"') &&
-    !html.includes('"@type": "BreadcrumbList"')
-      ? `${tags}${breadcrumbTag}`
-      : tags;
-  if (combined === "")
-    return new Response(html, {
-      headers: response.headers,
-      status: response.status,
-      statusText: response.statusText,
-    });
-
-  return new Response(html.replace("</head>", `${combined}</head>`), {
+  const nextHtml = applyBreadcrumbsToHtml({ html, items: breadcrumbItems, extraTags: tags });
+  return new Response(nextHtml, {
     headers: response.headers,
     status: response.status,
     statusText: response.statusText,

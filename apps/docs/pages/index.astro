@@ -92,7 +92,7 @@ const heroLines = heroExample.split("\n").map((line) => highlight(line) || " ");
     description: config.description,
   }}
 >
-  <main class="domain-home" data-domain-home>
+  <div class="domain-home" data-domain-home>
     <nav class="home-nav" aria-label="Main navigation">
       <a class="home-brand" href="/">
         <span class="brand-mark">
@@ -193,7 +193,7 @@ const heroLines = heroExample.split("\n").map((line) => highlight(line) || " ");
           <div class="code-window-bar">
             <span>domains.ts</span>
           </div>
-          <pre aria-label="TypeScript Domain SDK example"><code>{heroLines.map((line) => <span class="code-line" set:html={line} />)}</code></pre>
+          <pre tabindex={0} aria-label="TypeScript Domain SDK example"><code>{heroLines.map((line) => <span class="code-line" set:html={line} />)}</code></pre>
         </article>
         <article class="capability-card status-card">
           <div class="status-ledger" aria-hidden="true">
@@ -460,7 +460,7 @@ const heroLines = heroExample.split("\n").map((line) => highlight(line) || " ");
         </ul>
       </nav>
     </footer>
-  </main>
+  </div>
 </PageLayout>
 
 <script>

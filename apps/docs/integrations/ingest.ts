@@ -11,23 +11,50 @@ export const prerender = false;
 const API_HOST = "https://us.i.posthog.com";
 const ASSET_HOST = "https://us-assets.i.posthog.com";
 
-// Hop-by-hop, host-specific, and credential headers that must not be forwarded.
-const DROPPED_REQUEST_HEADERS = ["host", "connection", "cookie", "authorization", "content-length"];
+// Internal query flag added by the trailing-slash rewrite so Astro's
+// `trailingSlash: "never"` does not redirect `/ingest/*/` before reaching this
+// handler. Stripped before forwarding to PostHog.
+export const TRAILING_SLASH_PARAM = "__ts";
+
+// Only forward headers PostHog needs; drop credentials, host/hop-by-hop, and
+// platform internals (`x-vercel-*`, `x-astro-*`, `x-forwarded-*`).
+const ALLOWED_REQUEST_HEADERS = new Set([
+  "accept",
+  "accept-encoding",
+  "accept-language",
+  "content-encoding",
+  "content-type",
+  "origin",
+  "referer",
+  "user-agent",
+]);
 
 /** The PostHog URL an /ingest request maps to. */
 export const upstreamUrl = (url: URL): URL => {
+  const params = new URLSearchParams(url.search);
+  const hadTrailingSlash = params.has(TRAILING_SLASH_PARAM);
+  params.delete(TRAILING_SLASH_PARAM);
+
   const rawPath = url.pathname.replace(/^\/ingest/, "") || "/";
-  const path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
+  let path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
+  if (hadTrailingSlash && !path.endsWith("/")) {
+    path = `${path}/`;
+  }
   const host = path.startsWith("/static/") ? ASSET_HOST : API_HOST;
   const target = new URL(host);
   target.pathname = path;
-  target.search = url.search;
+  const nextSearch = params.toString();
+  target.search = nextSearch ? `?${nextSearch}` : "";
   return target;
 };
 
 export const ALL: APIRoute = async ({ request, url }) => {
-  const headers = new Headers(request.headers);
-  for (const name of DROPPED_REQUEST_HEADERS) headers.delete(name);
+  const headers = new Headers();
+  for (const [name, value] of request.headers.entries()) {
+    if (ALLOWED_REQUEST_HEADERS.has(name.toLowerCase())) {
+      headers.set(name, value);
+    }
+  }
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const upstream = await fetch(upstreamUrl(url), {
     method: request.method,

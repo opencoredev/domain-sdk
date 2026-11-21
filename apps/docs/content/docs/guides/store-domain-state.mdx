@@ -1,7 +1,6 @@
 ---
 title: Store domain state in your database
 description: Persist tenant ownership and cached UI state while keeping the provider authoritative.
-lastModified: "2026-07-12"
 ---
 
 Store the normalized hostname as a unique value together with tenant ID, provider ID, provider-domain ID, cached status, and timestamps. Optionally cache records for UI display, but replace them on every refresh.

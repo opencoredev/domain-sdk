@@ -60,7 +60,7 @@ const formatDate = (date: Date): string =>
   page={{ title: pageTitle, description, route: "/blog" }}
   lastModified={posts[0]?.date}
 >
-  <main class="mx-auto w-full max-w-3xl px-5 py-14 sm:px-8 sm:py-20">
+  <div class="mx-auto w-full max-w-3xl px-5 py-14 sm:px-8 sm:py-20">
     <header class="mb-12">
       <h1 class="blog-index-title text-5xl sm:text-7xl">Blog</h1>
       <p class="mt-4 text-lg leading-8 text-muted-foreground">{description}</p>
@@ -93,7 +93,7 @@ const formatDate = (date: Date): string =>
       or read the{" "}
       <a class="underline underline-offset-4 hover:text-foreground" href="/docs">documentation</a>.
     </p>
-  </main>
+  </div>
 </PageLayout>
 
 <style>

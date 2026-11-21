@@ -3,13 +3,19 @@ import { join } from "node:path";
 
 import { ALL, upstreamUrl } from "./ingest";
 import {
+  applyBreadcrumbsToHtml,
+  breadcrumbItemsFor,
   contentFileFor,
   docsBreadcrumbJsonLd,
   faqJsonLd,
   homeFontTags,
   ogVideoTags,
 } from "./middleware";
-import { patchVercelRoutes } from "../scripts/patch-vercel-routes";
+import {
+  patchServerEntry,
+  patchSitemapXml,
+  patchVercelRoutes,
+} from "../scripts/patch-vercel-routes";
 
 const contentRoot = join(import.meta.dir, "..", "content");
 
@@ -82,6 +88,18 @@ describe("upstreamUrl", () => {
     );
   });
 
+  test("restores the trailing slash and strips the internal __ts flag", () => {
+    expect(upstreamUrl(new URL("https://www.domain-sdk.dev/ingest/e?__ts=1&ip=1&ver=1")).href).toBe(
+      "https://us.i.posthog.com/e/?ip=1&ver=1",
+    );
+    expect(upstreamUrl(new URL("https://www.domain-sdk.dev/ingest/batch?__ts=1")).href).toBe(
+      "https://us.i.posthog.com/batch/",
+    );
+    expect(upstreamUrl(new URL("https://www.domain-sdk.dev/ingest?__ts=1")).href).toBe(
+      "https://us.i.posthog.com/",
+    );
+  });
+
   test("preserves the PostHog origin for double-slash paths", () => {
     const target = upstreamUrl(new URL("https://www.domain-sdk.dev/ingest//example.com/probe?x=1"));
     expect(target.origin).toBe("https://us.i.posthog.com");
@@ -91,7 +109,7 @@ describe("upstreamUrl", () => {
 });
 
 describe("ingest proxy handler", () => {
-  test("strips sensitive request headers and upstream set-cookie headers", async () => {
+  test("forwards only allowlisted request headers and strips upstream set-cookie headers", async () => {
     const originalFetch = globalThis.fetch;
     let capturedUrl: URL | undefined;
     let capturedHeaders: Headers | undefined;
@@ -109,14 +127,17 @@ describe("ingest proxy handler", () => {
     }) as typeof fetch;
 
     try {
-      const url = new URL("https://www.domain-sdk.dev/ingest/e/?v=2");
+      const url = new URL("https://www.domain-sdk.dev/ingest/e?__ts=1&v=2");
       const request = new Request(url, {
         method: "POST",
         headers: {
           cookie: "session=secret",
           authorization: "Bearer secret",
           "content-type": "application/json",
-          "x-custom": "keep",
+          "user-agent": "domain-sdk-test",
+          "x-vercel-id": "iad1::abc",
+          "x-astro-path": "/ingest/e",
+          "x-custom": "drop-me",
         },
         body: '{"event":"pageview"}',
       });
@@ -125,7 +146,11 @@ describe("ingest proxy handler", () => {
       expect(capturedHeaders?.get("cookie")).toBeNull();
       expect(capturedHeaders?.get("authorization")).toBeNull();
       expect(capturedHeaders?.get("host")).toBeNull();
-      expect(capturedHeaders?.get("x-custom")).toBe("keep");
+      expect(capturedHeaders?.get("x-vercel-id")).toBeNull();
+      expect(capturedHeaders?.get("x-astro-path")).toBeNull();
+      expect(capturedHeaders?.get("x-custom")).toBeNull();
+      expect(capturedHeaders?.get("content-type")).toBe("application/json");
+      expect(capturedHeaders?.get("user-agent")).toBe("domain-sdk-test");
       expect(response.headers.get("set-cookie")).toBeNull();
       expect(response.headers.get("content-encoding")).toBeNull();
       expect(await response.text()).toBe('{"status":"ok"}');
@@ -142,7 +167,7 @@ describe("head injection helpers and Vercel route patching", () => {
     expect(tags).toContain("family=Outfit:wght@400..700");
   });
 
-  test("docsBreadcrumbJsonLd emits BreadcrumbList for depth-1 and depth-2 docs routes only", () => {
+  test("docsBreadcrumbJsonLd emits full chains for docs (depths 1-3) and blog posts", () => {
     const site = new URL("https://www.domain-sdk.dev");
     const rootTag = docsBreadcrumbJsonLd({
       pathname: "/docs",
@@ -156,16 +181,34 @@ describe("head injection helpers and Vercel route patching", () => {
       site,
     });
     expect(depth2Tag).toContain('"name":"Installation"');
-    expect(
-      docsBreadcrumbJsonLd({
-        pathname: "/docs/providers/vercel",
-        markdown: "---\ntitle: Vercel\n---\n",
-        site,
-      }),
-    ).toBe("");
+    const depth3Items = breadcrumbItemsFor({
+      pathname: "/docs/providers/vercel",
+      markdown: "---\ntitle: Vercel\n---\n",
+      site,
+    });
+    expect(depth3Items.map((item) => item.name)).toEqual(["Home", "Docs", "Providers", "Vercel"]);
+    const blogItems = breadcrumbItemsFor({
+      pathname: "/blog/apex-domain",
+      markdown: "---\ntitle: Apex domains\n---\n",
+      site,
+    });
+    expect(blogItems.map((item) => item.name)).toEqual(["Home", "Blog", "Apex domains"]);
+
+    // Replaces Blume's truncated 2-item BreadcrumbList inside @graph instead of duplicating it.
+    const blumeHtml =
+      '<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"BreadcrumbList","itemListElement":[{"@type":"ListItem","position":1,"name":"Providers","item":"https://www.domain-sdk.dev/docs/providers"}]}]}</script></head></html>';
+    const patchedHtml = applyBreadcrumbsToHtml({
+      html: blumeHtml,
+      items: depth3Items,
+      extraTags: "",
+    });
+    expect(patchedHtml.match(/BreadcrumbList/g)).toHaveLength(1);
+    expect(patchedHtml).toContain('"name":"Home"');
+    expect(patchedHtml).toContain('"name":"Docs"');
+    expect(patchedHtml).toContain('"name":"Vercel"');
   });
 
-  test("patchVercelRoutes places /ingest ahead of the trailing-slash 308 rule", () => {
+  test("patchVercelRoutes deduplicates /ingest and rewrites trailing slashes ahead of the 308 rule", () => {
     const patched = patchVercelRoutes({
       version: 3,
       routes: [
@@ -174,9 +217,32 @@ describe("head injection helpers and Vercel route patching", () => {
         { src: "^/ingest(?:/(.*?))?$", dest: "_render" },
       ],
     });
-    const ingestIdx = patched.routes?.findIndex((route) => route.dest === "_render") ?? -1;
-    const slashIdx = patched.routes?.findIndex((route) => route.src === "^/(.*)/$") ?? -1;
-    expect(ingestIdx).toBeGreaterThan(-1);
-    expect(ingestIdx).toBeLessThan(slashIdx);
+    const routes = patched.routes ?? [];
+    const slashIdx = routes.findIndex((route) => route.src === "^/(.*)/$");
+    const ingestRewrites = routes.filter((route) => route.src?.startsWith("^/ingest"));
+    expect(ingestRewrites).toHaveLength(3);
+    expect(routes.findIndex((route) => route.src === "^/ingest/(.+)/$")).toBeLessThan(slashIdx);
+    expect(routes.findIndex((route) => route.dest === "_render")).toBeLessThan(slashIdx);
+  });
+
+  test("patchServerEntry rewrites /ingest/*/ before app.match and is idempotent", () => {
+    const sample = "const routeData = app.match(request);";
+    const once = patchServerEntry(sample);
+    expect(once).toContain('__ingestUrl.searchParams.set("__ts", "1")');
+    expect(patchServerEntry(once)).toBe(once);
+  });
+
+  test("patchSitemapXml populates lastmod for custom and content routes", () => {
+    const xml =
+      '<?xml version="1.0"?><urlset><url><loc>https://www.domain-sdk.dev/</loc></url><url><loc>https://www.domain-sdk.dev/blog/cloudflare-for-saas</loc><lastmod>2026-11-21</lastmod></url></urlset>';
+    const patched = patchSitemapXml(xml, (path) =>
+      path === "/" ? "2026-11-04" : path === "/blog/cloudflare-for-saas" ? "2026-11-09" : undefined,
+    );
+    expect(patched).toContain(
+      "<loc>https://www.domain-sdk.dev/</loc><lastmod>2026-11-04</lastmod>",
+    );
+    expect(patched).toContain(
+      "<loc>https://www.domain-sdk.dev/blog/cloudflare-for-saas</loc><lastmod>2026-11-09</lastmod>",
+    );
   });
 });
