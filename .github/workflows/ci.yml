@@ -34,4 +34,5 @@ jobs:
       - run: bun run --filter @domain-sdk/docs check:snippets
       - run: bun run --filter @domain-sdk/docs validate
       - run: bun run --filter @domain-sdk/docs build
+      - run: bun -e 'import { readFileSync } from "node:fs"; const cfg = JSON.parse(readFileSync("apps/docs/.vercel/output/config.json", "utf8")); const routes = cfg.routes.map((r) => r.src); const ingest = routes.indexOf("^/ingest(?:/(.*))?$"); const slash = routes.indexOf("^/(.*)/$"); if (ingest < 0 || slash < 0 || ingest > slash) throw new Error("Missing or misordered /ingest route in Vercel config"); const entry = readFileSync("apps/docs/.vercel/output/functions/_render.func/apps/docs/dist/server/entry.mjs", "utf8"); if (!entry.includes("/* patch-vercel-routes:ingest-trailing-slash */")) throw new Error("Missing ingest trailing-slash patch in server entry");'
       - run: bun run --filter @domain-sdk/docs audit

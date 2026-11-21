@@ -4,6 +4,7 @@
 // integrations/site.ts.
 //   /ingest/static/* -> https://us-assets.i.posthog.com/static/*
 //   /ingest/*        -> https://us.i.posthog.com/*
+import { isIP } from "node:net";
 import type { APIRoute } from "astro";
 
 export const prerender = false;
@@ -48,14 +49,19 @@ export const upstreamUrl = (url: URL): URL => {
   return target;
 };
 
+function validIp(raw: string | null | undefined): string | undefined {
+  const firstHop = raw?.split(",")[0]?.trim();
+  if (!firstHop || isIP(firstHop) === 0) return undefined;
+  return firstHop;
+}
+
 function resolveClientIp(context: Parameters<APIRoute>[0]): string | undefined {
   for (const header of ["x-vercel-forwarded-for", "x-real-ip", "x-forwarded-for"]) {
-    const value = context.request.headers.get(header)?.trim();
-    if (value) return value;
+    const ip = validIp(context.request.headers.get(header));
+    if (ip) return ip;
   }
   try {
-    const addr = context.clientAddress?.trim();
-    if (addr) return addr;
+    return validIp(context.clientAddress);
   } catch {
     // @astrojs/vercel's clientAddress getter throws when x-forwarded-for is absent.
   }
@@ -75,12 +81,17 @@ export const ALL: APIRoute = async (context) => {
     headers.set("x-forwarded-for", clientIp);
   }
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
-  const upstream = await fetch(upstreamUrl(url), {
-    method: request.method,
-    headers,
-    body: hasBody ? await request.arrayBuffer() : undefined,
-    redirect: "manual",
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(upstreamUrl(url), {
+      method: request.method,
+      headers,
+      body: hasBody ? await request.arrayBuffer() : undefined,
+      redirect: "manual",
+    });
+  } catch {
+    return new Response(null, { status: 502 });
+  }
   const responseHeaders = new Headers(upstream.headers);
   // fetch already decoded the body, so the original encoding no longer applies,
   // and upstream analytics responses must not set cookies on this domain.

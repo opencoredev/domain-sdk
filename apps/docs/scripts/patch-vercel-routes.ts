@@ -115,7 +115,7 @@ export function patchSitemapXml(
       try {
         const pathname = new URL(loc).pathname;
         const date = resolveDate(pathname);
-        if (!date) return match;
+        if (!date) return `<url><loc>${loc}</loc></url>`;
         return `<url><loc>${loc}</loc><lastmod>${date}</lastmod></url>`;
       } catch {
         return match;
@@ -219,7 +219,9 @@ export function createGitDateResolver(docsDir: string): (pathname: string) => st
       return gitDate(currentPath, "AM");
     }
     return (
-      postMigrationDate(currentPath) ?? gitDate(legacyPath, "AM") ?? gitDate(currentPath, "AM")
+      postMigrationDate(currentPath) ??
+      gitDate(legacyPath, "AM") ??
+      (!isShallow && !migrationBoundary ? gitDate(currentPath, "AM") : undefined)
     );
   };
 
@@ -239,7 +241,7 @@ export function createGitDateResolver(docsDir: string): (pathname: string) => st
       return (
         postMigrationDate(current) ??
         gitDate("apps/fumadocs/src/app/(home)/page.tsx", "AM") ??
-        gitDate(current, "AM")
+        (!isShallow && !migrationBoundary ? gitDate(current, "AM") : undefined)
       );
     }
     if (clean === "/blog") {
@@ -247,7 +249,7 @@ export function createGitDateResolver(docsDir: string): (pathname: string) => st
       return (
         postMigrationDate(current) ??
         gitDate("apps/fumadocs/content/blog", "AM") ??
-        gitDate(current, "AM")
+        (!isShallow && !migrationBoundary ? gitDate(current, "AM") : undefined)
       );
     }
     if (clean === "/sitemap") {
@@ -255,7 +257,7 @@ export function createGitDateResolver(docsDir: string): (pathname: string) => st
       return (
         postMigrationDate(current) ??
         gitDate("apps/fumadocs/content", "AM") ??
-        gitDate(current, "AM")
+        (!isShallow && !migrationBoundary ? gitDate(current, "AM") : undefined)
       );
     }
     const rel = contentRelForRoute(clean);
@@ -264,7 +266,14 @@ export function createGitDateResolver(docsDir: string): (pathname: string) => st
   };
 }
 
-export function rewriteHtmlModifiedDates(html: string, date: string): string {
+export function rewriteHtmlModifiedDates(html: string, date: string | undefined): string {
+  if (!date) {
+    return html
+      .replace(/,"dateModified":"\d{4}-\d{2}-\d{2}T[^"]*"/g, "")
+      .replace(/"dateModified":"\d{4}-\d{2}-\d{2}T[^"]*",/g, "")
+      .replace(/<meta\b[^>]*\bproperty="article:modified_time"[^>]*>/g, "")
+      .replace(/<p\b[^>]*>Last updated on <time\b[^>]*>[^<]*<\/time><\/p>/g, "");
+  }
   const iso = `${date}T00:00:00.000Z`;
   const label = new Date(iso).toLocaleDateString("en-US", {
     month: "long",
@@ -285,7 +294,11 @@ export function rewriteHtmlModifiedDates(html: string, date: string): string {
     .replace(/(Last updated on <time datetime=")[^"]*(">)[^<]*(<\/time>)/g, `$1${iso}$2${label}$3`);
 }
 
-function patchStaticDateModified(staticDir: string, pathname: string, date: string): void {
+function patchStaticDateModified(
+  staticDir: string,
+  pathname: string,
+  date: string | undefined,
+): void {
   const clean = pathname === "/" ? "" : pathname.replace(/^\/+|\/+$/g, "");
   const candidates =
     clean === ""
@@ -334,7 +347,7 @@ if (import.meta.main) {
   const xml = readFileSync(sitemapPath, "utf8");
   const nextXml = patchSitemapXml(xml, (pathname) => {
     const date = resolveDate(pathname);
-    if (date) patchStaticDateModified(staticDir, pathname, date);
+    patchStaticDateModified(staticDir, pathname, date);
     return date;
   });
   if (nextXml !== xml) writeFileSync(sitemapPath, nextXml, "utf8");

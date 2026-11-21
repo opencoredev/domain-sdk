@@ -163,7 +163,8 @@ export default defineConfig({
 
   // Sitemap <lastmod> and "Last updated" stamps come from each page's last
   // commit. Vercel clones shallowly by default, so the project needs
-  // VERCEL_DEEP_CLONE=true; without it most pages build with no date.
+  // VERCEL_DEEP_CLONE=true; without it, pages whose history is truncated omit
+  // dates rather than stamping the migration commit date.
   lastModified: "git",
 
   seo: {
