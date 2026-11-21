@@ -29,7 +29,7 @@ const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)[ \t]+/gi;
 const EXEMPT_AUTH_WORDS =
   /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should)$/i;
 const URL_USERINFO =
-  /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:(?:\\\/|\/){2})((?:[^/?#\s"'<>\\]|\\\/)+)@/gi;
+  /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:[^/?#\s"'<>\\]|\\+[/\\"'])+)@/gi;
 const INLINE_SECRET_PREFIX =
   /(?<![A-Za-z0-9])(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))\\*["']?\s*(?:=|:)\s*/gi;
 
@@ -168,7 +168,14 @@ function scrubInlineSecrets(value: string): string {
       includeSemicolons: isCookieHeader,
     });
     if (valueEnd === valueStart) continue;
-    out += value.slice(cursor, valueStart) + "[REDACTED]";
+    const quote = value[valueStart];
+    const quotedJsonValue =
+      (quote === '"' || quote === "'") &&
+      value[valueEnd - 1] === quote &&
+      /["']\s*(?:=|:)\s*$/.test(match[0]);
+    out += quotedJsonValue
+      ? `${value.slice(cursor, valueStart + 1)}[REDACTED]${quote}`
+      : `${value.slice(cursor, valueStart)}[REDACTED]`;
     cursor = valueEnd;
     INLINE_SECRET_PREFIX.lastIndex = valueEnd;
   }
@@ -176,18 +183,23 @@ function scrubInlineSecrets(value: string): string {
 }
 
 function scrubString(value: string): string {
-  const withoutUserinfo =
-    (value.includes("://") || value.includes(":\\/\\/")) && value.includes("@")
-      ? value.replace(URL_USERINFO, (_match, scheme: string, userinfo: string) => {
-          if (userinfo === "[REDACTED]" || userinfo === "[REDACTED]:[REDACTED]") {
-            return `${scheme}${userinfo}@`;
-          }
-          return userinfo.includes(":")
-            ? `${scheme}[REDACTED]:[REDACTED]@`
-            : `${scheme}[REDACTED]@`;
-        })
-      : value;
+  const withoutUserinfo = value.includes("@")
+    ? value.replace(URL_USERINFO, (_match, scheme: string, userinfo: string) => {
+        if (userinfo === "[REDACTED]" || userinfo === "[REDACTED]:[REDACTED]") {
+          return `${scheme}${userinfo}@`;
+        }
+        return userinfo.includes(":") ? `${scheme}[REDACTED]:[REDACTED]@` : `${scheme}[REDACTED]@`;
+      })
+    : value;
   return scrubInlineSecrets(scrubAuthSchemes(withoutUserinfo));
+}
+
+function safeRead(target: object, key: string): unknown {
+  try {
+    return Reflect.get(target, key);
+  } catch {
+    return undefined;
+  }
 }
 
 export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
@@ -196,10 +208,33 @@ export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0):
   if (depth > MAX_REDACT_DEPTH) return "[Truncated]";
   if (seen.has(value)) return "[Circular]";
   seen.add(value);
-  if (Array.isArray(value)) return value.slice(0, 50).map((item) => redact(item, seen, depth + 1));
+  if (Array.isArray(value)) {
+    try {
+      return value.slice(0, 50).map((item) => redact(item, seen, depth + 1));
+    } catch {
+      return "[Unreadable]";
+    }
+  }
+  let keys: string[];
+  try {
+    keys = Object.keys(value).slice(0, 50);
+  } catch {
+    return "[Unreadable]";
+  }
   const safe: Record<string, unknown> = {};
-  for (const [key, child] of Object.entries(value).slice(0, 50)) {
-    safe[key] = SECRET_KEYS.test(key) ? "[REDACTED]" : redact(child, seen, depth + 1);
+  for (const key of keys) {
+    if (SECRET_KEYS.test(key)) {
+      safe[key] = "[REDACTED]";
+      continue;
+    }
+    let child: unknown;
+    try {
+      child = Reflect.get(value, key);
+    } catch {
+      safe[key] = "[Unreadable]";
+      continue;
+    }
+    safe[key] = redact(child, seen, depth + 1);
   }
   return safe;
 }
@@ -210,24 +245,35 @@ export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0):
  */
 function redactedCause(cause: Error, seen = new WeakSet<object>(), depth = 0): Error {
   seen.add(cause);
-  const message = String(redact(cause.message));
+  const rawMessage = safeRead(cause, "message");
+  const rawName = safeRead(cause, "name");
+  const rawStack = safeRead(cause, "stack");
+  const rawNested = safeRead(cause, "cause");
+  const messageText = typeof rawMessage === "string" ? rawMessage : String(rawMessage ?? "");
+  const nameText = typeof rawName === "string" ? rawName : "Error";
+  const message = String(redact(messageText));
   let nested: unknown;
-  if (cause.cause !== undefined) {
+  if (rawNested !== undefined) {
     if (depth >= MAX_REDACT_DEPTH) nested = "[Truncated]";
-    else if (cause.cause instanceof DomainSdkError) nested = cause.cause;
-    else if (cause.cause instanceof Error)
-      nested = seen.has(cause.cause) ? "[Circular]" : redactedCause(cause.cause, seen, depth + 1);
-    else nested = redact(cause.cause, seen, depth + 1);
+    else if (rawNested instanceof DomainSdkError) nested = rawNested;
+    else if (rawNested instanceof Error)
+      nested = seen.has(rawNested) ? "[Circular]" : redactedCause(rawNested, seen, depth + 1);
+    else nested = redact(rawNested, seen, depth + 1);
   }
   const safe = nested !== undefined ? new Error(message, { cause: nested }) : new Error(message);
-  safe.name = cause.name;
-  const header = `${cause.name}: ${cause.message}`;
-  const stack = cause.stack?.startsWith(header)
-    ? `${cause.name}: ${message}${cause.stack.slice(header.length)}`
-    : cause.stack;
-  safe.stack = stack ? scrubString(stack) : stack;
-  const code: unknown = Reflect.get(cause, "code");
-  if (typeof code === "string" || typeof code === "number") Reflect.set(safe, "code", code);
+  safe.name = scrubString(nameText);
+  if (typeof rawStack === "string") {
+    const header = `${nameText}: ${messageText}`;
+    const stack = rawStack.startsWith(header)
+      ? `${safe.name}: ${message}${rawStack.slice(header.length)}`
+      : rawStack;
+    safe.stack = scrubString(stack);
+  } else {
+    safe.stack = undefined;
+  }
+  const code = safeRead(cause, "code");
+  if (typeof code === "string") Reflect.set(safe, "code", scrubString(code));
+  else if (typeof code === "number") Reflect.set(safe, "code", code);
   return safe;
 }
 

@@ -310,8 +310,9 @@ export function railway(options: RailwayOptions): RailwayProvider {
       return getById(existing.id, context);
     },
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
-      const offset = input.cursor ? Number.parseInt(input.cursor, 10) : 0;
-      if (!Number.isInteger(offset) || offset < 0)
+      const cursor = input.cursor;
+      const offset = cursor === undefined ? 0 : Number(cursor);
+      if (cursor !== undefined && (!/^\d+$/.test(cursor) || !Number.isSafeInteger(offset)))
         throw new DomainSdkError("REQUEST_FAILED", "Invalid Railway list cursor.", {
           provider: "railway",
         });

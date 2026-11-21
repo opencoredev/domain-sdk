@@ -50,9 +50,6 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
   const { provider } = options;
   const logger = options.logger ?? silentLogger;
   const clock = options.clock ?? defaultClock;
-  const context = (signal?: AbortSignal): ProviderContext => ({ signal, logger });
-  const normalizeInput = (hostname: string) =>
-    normalizeHostname(hostname, { allowWildcard: provider.capabilities.wildcardDomains });
   const safeLog = (
     level: "debug" | "info" | "warn" | "error",
     message: string,
@@ -64,6 +61,15 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       // Logger failures must never turn committed domain operations into errors.
     }
   };
+  const safeLogger: DomainLogger = {
+    debug: (message, meta) => safeLog("debug", message, meta),
+    info: (message, meta) => safeLog("info", message, meta),
+    warn: (message, meta) => safeLog("warn", message, meta),
+    error: (message, meta) => safeLog("error", message, meta),
+  };
+  const context = (signal?: AbortSignal): ProviderContext => ({ signal, logger: safeLogger });
+  const normalizeInput = (hostname: string) =>
+    normalizeHostname(hostname, { allowWildcard: provider.capabilities.wildcardDomains });
   const report = (event: DomainOperationEvent) => {
     try {
       options.onOperation?.(event);

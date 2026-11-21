@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { runCli } from "../src/cli/run";
+import { createDomainClient } from "../src/core/client";
 import { createDnsClient, type DnsProvider, type ZoneRecord } from "../src/core/dns";
 import { DomainSdkError, redact } from "../src/core/errors";
 import { sleep, withRetry, type Fetch } from "../src/core/http";
@@ -13,7 +14,7 @@ import { railway } from "../src/providers/railway";
 import { render } from "../src/providers/render";
 import { spaceship } from "../src/providers/spaceship";
 import { vercel } from "../src/providers/vercel";
-import { memoryDnsProvider } from "../src/testing";
+import { memoryDnsProvider, memoryProvider } from "../src/testing";
 
 const noopLogger = { debug() {}, info() {}, warn() {}, error() {} };
 
@@ -753,5 +754,290 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       { type: "A", name: "app.example.com", value: "192.0.2.1" },
     ]);
     expect(res).toHaveLength(1);
+  });
+
+  test("whole-zone rollback preserves foreign records and external wanted deletions, flags locked replacement records, guards provider ctx.logger, handles hostile errors, double-escaped URLs, valid JSON redaction, CAA error code, Namecheap HostId churn, and strict cursors", async () => {
+    const { parseCaaValue } = await import("../src/core/dns");
+    const { cloudflareSaaS } = await import("../src/providers/cloudflare/index");
+    const { railway } = await import("../src/providers/railway/index");
+    const { namecheap } = await import("../src/providers/namecheap/index");
+
+    // 1. Whole-zone rollback keeps foreign concurrent record, flags externalChange, and vetoes retry
+    const wzBase = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "a1", type: "A", name: "example.com", value: "192.0.2.1", editable: true },
+        ],
+      },
+    });
+    const origWzCreate = wzBase.createRecords.bind(wzBase);
+    let wzCalls = 0;
+    const wzForeignProvider: DnsProvider = {
+      ...wzBase,
+      capabilities: { ...wzBase.capabilities, wholeZoneWrites: true },
+      async createRecords(input, ctx) {
+        wzCalls += 1;
+        await origWzCreate(
+          {
+            zone: input.zone,
+            records: [{ type: "TXT", name: "_ext.example.com", value: "foreign" }],
+          },
+          ctx,
+        );
+        throw new DomainSdkError("PROVIDER_UNAVAILABLE", "verify 503", {
+          provider: wzBase.id,
+          statusCode: 503,
+          retryable: true,
+        });
+      },
+    };
+    const wzDns = createDnsClient({
+      provider: wzForeignProvider,
+      retry: { maxAttempts: 3, baseDelayMs: 0 },
+    });
+    await expect(
+      wzDns.ensureRecords([{ type: "TXT", name: "_mine.example.com", value: "mine" }]),
+    ).rejects.toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true, externalChange: true },
+    });
+    expect(wzCalls).toBe(1);
+    expect(
+      wzBase
+        .records("example.com")
+        .map((r) => r.name)
+        .sort(),
+    ).toEqual(["_ext.example.com", "example.com"]);
+
+    // 2. Whole-zone add-only rollback does not resurrect an externally deleted pre-existing wanted record
+    const wzDelBase = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "w1", type: "TXT", name: "_a.example.com", value: "pre", editable: true },
+        ],
+      },
+    });
+    const origWzDel = wzDelBase.deleteRecords.bind(wzDelBase);
+    let wzDelCalls = 0;
+    const wzDelProvider: DnsProvider = {
+      ...wzDelBase,
+      capabilities: { ...wzDelBase.capabilities, wholeZoneWrites: true },
+      async createRecords(input, ctx) {
+        wzDelCalls += 1;
+        const pre = wzDelBase.records("example.com").filter((r) => r.id === "w1");
+        if (pre.length) await origWzDel({ zone: input.zone, records: pre }, ctx);
+        throw new DomainSdkError("PROVIDER_UNAVAILABLE", "transient 503", {
+          provider: wzDelBase.id,
+          statusCode: 503,
+          retryable: true,
+        });
+      },
+    };
+    const wzDelDns = createDnsClient({
+      provider: wzDelProvider,
+      retry: { maxAttempts: 3, baseDelayMs: 0 },
+    });
+    await expect(
+      wzDelDns.ensureRecords([
+        { type: "TXT", name: "_a.example.com", value: "pre" },
+        { type: "TXT", name: "_b.example.com", value: "new" },
+      ]),
+    ).rejects.toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: false, externalChange: true },
+    });
+    expect(wzDelCalls).toBe(1);
+    expect(wzDelBase.records("example.com")).toEqual([]);
+
+    // 3. Locked replacement record left behind reports restored: false and details.unexpected
+    const lockedBase = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "a1", type: "A", name: "app.example.com", value: "1.1.1.1", editable: true },
+        ],
+      },
+    });
+    let lockedAdded = false;
+    let lockedCreateCalls = 0;
+    const origLockedCreate = lockedBase.createRecords.bind(lockedBase);
+    const lockedProvider: DnsProvider = {
+      ...lockedBase,
+      async listRecords(input, ctx) {
+        const list = await lockedBase.listRecords(input, ctx);
+        if (!lockedAdded) return list;
+        return [
+          ...list,
+          {
+            id: "locked-new",
+            type: "A",
+            name: "app.example.com",
+            value: "2.2.2.2",
+            editable: false,
+          },
+        ];
+      },
+      async createRecords(input, ctx) {
+        lockedCreateCalls += 1;
+        if (lockedCreateCalls === 1) {
+          lockedAdded = true;
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "create failed", {
+            provider: lockedBase.id,
+            statusCode: 503,
+            retryable: true,
+          });
+        }
+        return origLockedCreate(input, ctx);
+      },
+    };
+    const lockedDns = createDnsClient({ provider: lockedProvider });
+    await expect(
+      lockedDns.ensureRecords([{ type: "A", name: "app.example.com", value: "2.2.2.2" }], {
+        onConflict: "replace",
+      }),
+    ).rejects.toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: {
+        restored: false,
+        unexpected: [{ type: "A", name: "app.example.com", value: "2.2.2.2" }],
+      },
+    });
+
+    // 4. Provider ctx.logger is guarded by safeLogger in both DomainClient and DnsClient
+    const boomLogger = {
+      debug() {
+        throw new Error("debug boom");
+      },
+      info() {
+        throw new Error("info boom");
+      },
+      warn() {
+        throw new Error("warn boom");
+      },
+      error() {
+        throw new Error("error boom");
+      },
+    };
+    const memDom = memoryProvider();
+    const guardedDom = createDomainClient({
+      provider: {
+        ...memDom,
+        async add(input, ctx) {
+          const added = await memDom.add(input, ctx);
+          ctx.logger.info?.("committed");
+          return added;
+        },
+      },
+      logger: boomLogger,
+    });
+    expect((await guardedDom.add("safe-log.example.com")).hostname).toBe("safe-log.example.com");
+
+    // 5. Hostile Error/Proxy objects never escape as non-DomainSdkError
+    const hostileCause = new Error("bad");
+    Object.defineProperty(hostileCause, "code", {
+      get() {
+        throw new Error("code getter boom");
+      },
+    });
+    const ownKeysProxy = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error("ownKeys boom");
+        },
+      },
+    );
+    const wrapped = new DomainSdkError("REQUEST_FAILED", "top", {
+      cause: hostileCause,
+      details: { evil: ownKeysProxy },
+    });
+    expect(wrapped.details?.evil).toBe("[Unreadable]");
+
+    // 6. Double-escaped URL userinfo, \\/\" passwords, cause.code scrubbing, and valid JSON redaction
+    expect(
+      redact(JSON.stringify({ message: String.raw`https:\/\/u:LEAK_7\/w@h.com` })),
+    ).not.toContain("LEAK_7");
+    expect(redact('{"url":"https://u:p\\\\w@h.com"}')).not.toContain("p\\\\w");
+    expect(redact('{"url":"https://u:p\\"w@h.com"}')).not.toContain('p\\"w');
+    expect(JSON.parse(String(redact('{"token":"abc"}')))).toEqual({ token: "[REDACTED]" });
+    const codeCause = Object.assign(new Error("boom"), { code: "Bearer secret_in_code" });
+    const codeErr = new DomainSdkError("REQUEST_FAILED", "top", { cause: codeCause });
+    expect((codeErr.cause as Error & { code?: string }).code).toBe("Bearer [REDACTED]");
+
+    // 7. parseCaaValue throws INVALID_CONFIGURATION
+    expect(() => parseCaaValue("garbage")).toThrow(DomainSdkError);
+    try {
+      parseCaaValue("garbage");
+    } catch (caught) {
+      expect((caught as DomainSdkError).code).toBe("INVALID_CONFIGURATION");
+    }
+
+    // 8. Cloudflare and Railway reject malformed list cursors
+    const cf = createDomainClient({
+      provider: cloudflareSaaS({
+        apiToken: "t",
+        zoneId: "z",
+        cnameTarget: "c.com",
+        fetch: async () => Response.json({ success: true, result: [] }),
+      }),
+    });
+    await expect(cf.list({ cursor: "1junk" })).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+    await expect(cf.list({ cursor: "" })).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+
+    const rw = createDomainClient({
+      provider: railway({
+        token: "t",
+        projectId: "p",
+        environmentId: "e",
+        serviceId: "s",
+        fetch: async () => Response.json({ data: { domains: { customDomains: [] } } }),
+      }),
+    });
+    await expect(rw.list({ cursor: "1junk" })).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+    await expect(rw.list({ cursor: "" })).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+
+    // 9. Namecheap removeRecords still removes the record after HostIds are reissued
+    let hostIdVersion = 0;
+    let currentHosts = [{ name: "@", type: "A", address: "192.0.2.1", ttl: "300" }];
+    const ncProvider = namecheap({
+      apiUser: "u",
+      apiKey: "k",
+      userName: "u",
+      clientIp: "192.0.2.10",
+      fetch: async (_input, init) => {
+        const params = new URLSearchParams(String(init?.body ?? ""));
+        const cmd = params.get("Command");
+        if (cmd === "namecheap.domains.dns.getHosts") {
+          hostIdVersion += 1;
+          const items = currentHosts
+            .map(
+              (h, idx) =>
+                `<host HostId="${hostIdVersion * 10 + idx}" Name="${h.name}" Type="${h.type}" Address="${h.address}" TTL="${h.ttl}" />`,
+            )
+            .join("");
+          return new Response(
+            `<?xml version="1.0"?><ApiResponse Status="OK"><CommandResponse><DomainDNSGetHostsResult IsUsingOurDNS="true">${items}</DomainDNSGetHostsResult></CommandResponse></ApiResponse>`,
+          );
+        }
+        if (cmd === "namecheap.domains.dns.setHosts") {
+          const next: typeof currentHosts = [];
+          for (let i = 1; params.has(`HostName${i}`); i++) {
+            next.push({
+              name: params.get(`HostName${i}`)!,
+              type: params.get(`RecordType${i}`)!,
+              address: params.get(`Address${i}`)!,
+              ttl: params.get(`TTL${i}`) ?? "1800",
+            });
+          }
+          currentHosts = next;
+          return new Response(
+            `<?xml version="1.0"?><ApiResponse Status="OK"><CommandResponse><DomainDNSSetHostsResult IsSuccess="true" /></CommandResponse></ApiResponse>`,
+          );
+        }
+        throw new Error(`unexpected cmd ${cmd}`);
+      },
+    });
+    const ncDns = createDnsClient({ provider: ncProvider });
+    await ncDns.removeRecords([{ type: "A", name: "example.com", value: "192.0.2.1" }]);
+    expect(currentHosts).toEqual([]);
   });
 });

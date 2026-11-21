@@ -355,7 +355,6 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
           const current = zoneRecord(host, zone);
           const index = pending.findIndex(
             (record) =>
-              record.id === current.id &&
               record.type === current.type &&
               record.name === current.name &&
               record.value === current.value &&

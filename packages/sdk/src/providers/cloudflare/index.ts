@@ -315,8 +315,12 @@ export function cloudflareSaaS(options: CloudflareSaaSOptions): CloudflareSaaSPr
     },
     get,
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
-      const page = input.cursor ? Number.parseInt(input.cursor, 10) : 1;
-      if (!Number.isInteger(page) || page < 1)
+      const cursor = input.cursor;
+      const page = cursor === undefined ? 1 : Number(cursor);
+      if (
+        cursor !== undefined &&
+        (!/^\d+$/.test(cursor) || !Number.isSafeInteger(page) || page < 1)
+      )
         throw new DomainSdkError("REQUEST_FAILED", "Invalid Cloudflare page cursor.", {
           provider: "cloudflare",
         });

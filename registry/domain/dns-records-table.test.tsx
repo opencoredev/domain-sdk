@@ -100,7 +100,7 @@ describe("DnsRecordsTable", () => {
     for (const label of ["Valid", "Pending"]) {
       for (const badge of screen.getAllByText(label)) {
         const classes = badge.className.split(/\s+/);
-        expect(classes.filter((name) => /^bg-/.test(name))).toHaveLength(1);
+        expect(classes.filter((name) => name.startsWith("bg-"))).toHaveLength(1);
         expect(classes.filter((name) => /^text-(?!xs|sm|base|lg)/.test(name))).toHaveLength(1);
       }
     }

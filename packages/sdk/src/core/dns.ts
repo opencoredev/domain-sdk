@@ -173,6 +173,10 @@ function invalidRecord(message: string, details: Record<string, unknown>): never
   throw new DomainSdkError("INVALID_HOSTNAME", message, { details });
 }
 
+function invalidRecordValue(message: string, details: Record<string, unknown>): never {
+  throw new DomainSdkError("INVALID_CONFIGURATION", message, { details });
+}
+
 /** Convert one internationalized label to its punycode form. */
 function asciiLabel(label: string, name: string, zone: string): string {
   try {
@@ -228,7 +232,7 @@ export function parseCaaValue(value: string): { flag: number; tag: string; value
   const match = /^\s*(\d{1,3})\s+([a-z0-9]+)\s+(?:"((?:[^"\\]|\\.)*)"|(\S+))\s*$/i.exec(value);
   const flag = Number(match?.[1]);
   if (!match || flag > 255)
-    invalidRecord(`CAA value ${value} must look like 0 issue "letsencrypt.org".`, { value });
+    invalidRecordValue(`CAA value ${value} must look like 0 issue "letsencrypt.org".`, { value });
   return { flag, tag: match[2]!.toLowerCase(), value: match[3] ?? match[4]! };
 }
 
@@ -306,7 +310,24 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     throw new DomainSdkError("INVALID_CONFIGURATION", "A DNS provider is required.");
   const { provider } = options;
   const logger = options.logger ?? {};
-  const context = (signal?: AbortSignal): DnsProviderContext => ({ signal, logger });
+  const safeLog = (
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    meta?: Record<string, unknown>,
+  ) => {
+    try {
+      logger[level]?.(message, meta);
+    } catch {
+      // Logger failures must never turn committed DNS operations into errors.
+    }
+  };
+  const safeLogger = {
+    debug: (message: string, meta?: Record<string, unknown>) => safeLog("debug", message, meta),
+    info: (message: string, meta?: Record<string, unknown>) => safeLog("info", message, meta),
+    warn: (message: string, meta?: Record<string, unknown>) => safeLog("warn", message, meta),
+    error: (message: string, meta?: Record<string, unknown>) => safeLog("error", message, meta),
+  };
+  const context = (signal?: AbortSignal): DnsProviderContext => ({ signal, logger: safeLogger });
   const queues = new Map<string, Promise<unknown>>();
 
   /** Run read-then-write operations on one zone one at a time, so each sees the last write. */
@@ -321,18 +342,6 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     return pending;
   };
   const lock = options.lock ?? memoryLock;
-
-  const safeLog = (
-    level: "debug" | "info" | "warn" | "error",
-    message: string,
-    meta?: Record<string, unknown>,
-  ) => {
-    try {
-      logger[level]?.(message, meta);
-    } catch {
-      // Logger failures must never turn committed DNS operations into errors.
-    }
-  };
 
   const report = (event: DnsOperationEvent) => {
     try {
@@ -714,21 +723,27 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
   ): Promise<never> => {
     const cause = normalizeUnknownError(error, provider.id);
     // Roll back even when the caller's signal aborted the replacement.
-    const ctx: DnsProviderContext = { logger };
+    const ctx: DnsProviderContext = { logger: safeLogger };
     const asInput = ({ type, name, value, ttl }: ZoneRecord): DnsRecordInput => ({
       type: type.toUpperCase() as DnsRecordType,
       name: normalizeOwnerName(name),
       value,
       ttl,
     });
+    const recordKey = (record: { name: string; type: string }) =>
+      `${normalizeOwnerName(record.name)}\0${record.type.toUpperCase()}`;
     const replacedSet = new Set(replaced);
     const preWantedSet = new Set(preExistingWanted);
-    const requestedKeys = new Set(
-      requested.map((record) => `${normalizeOwnerName(record.name)}\0${record.type.toUpperCase()}`),
-    );
+    const requestedKeys = new Set(requested.map(recordKey));
     const beforeEditable = provider.capabilities.wholeZoneWrites
-      ? before.filter((record) => record.editable)
+      ? before.filter((record) => record.editable && !preWantedSet.has(record))
       : before.filter((record) => record.editable && replacedSet.has(record));
+    const ownedKeys = new Set([
+      ...requestedKeys,
+      ...beforeEditable.map(recordKey),
+      ...preExistingWanted.map(recordKey),
+    ]);
+    const isOwned = (record: ZoneRecord) => ownedKeys.has(recordKey(record));
     const touchedBystanders = provider.capabilities.wholeZoneWrites
       ? []
       : before.filter(
@@ -736,18 +751,14 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             record.editable &&
             !replacedSet.has(record) &&
             !preWantedSet.has(record) &&
-            requestedKeys.has(`${normalizeOwnerName(record.name)}\0${record.type.toUpperCase()}`),
+            requestedKeys.has(recordKey(record)),
         );
     const beforeForUnexpected = provider.capabilities.wholeZoneWrites
-      ? beforeEditable
-      : before.filter(
-          (record) =>
-            record.editable &&
-            requestedKeys.has(`${normalizeOwnerName(record.name)}\0${record.type.toUpperCase()}`),
-        );
+      ? before
+      : before.filter((record) => requestedKeys.has(recordKey(record)));
     const deletableUnexpectedCandidates = (records: ZoneRecord[]) =>
       provider.capabilities.wholeZoneWrites
-        ? records.filter((record) => record.editable)
+        ? records.filter((record) => record.editable && isOwned(record))
         : requested.length
           ? records.filter(
               (record) => record.editable && requested.some((wanted) => sameRecord(record, wanted)),
@@ -755,15 +766,9 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           : [];
     const sameKeyUnexpectedCandidates = (records: ZoneRecord[]) =>
       provider.capabilities.wholeZoneWrites
-        ? records.filter((record) => record.editable)
+        ? records.filter(isOwned)
         : requested.length
-          ? records.filter(
-              (record) =>
-                record.editable &&
-                requestedKeys.has(
-                  `${normalizeOwnerName(record.name)}\0${record.type.toUpperCase()}`,
-                ),
-            )
+          ? records.filter((record) => requestedKeys.has(recordKey(record)))
           : [];
     const subtract = (expected: ZoneRecord[], actual: ZoneRecord[], exactTtlOnly = false) => {
       const pool = [...actual];
@@ -785,6 +790,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     let remainingUnexpected: ZoneRecord[] = [];
     try {
       const current = await provider.listRecords({ zone }, ctx);
+      externalChange = subtract(preExistingWanted, current).length > 0;
       const unexpected = subtract(deletableUnexpectedCandidates(current), beforeForUnexpected);
       if (unexpected.length) await provider.deleteRecords({ zone, records: unexpected }, ctx);
       // Match one for one, exact TTL matches first, so every pre-write editable record that
@@ -798,10 +804,17 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         const verified = await provider.listRecords({ zone }, ctx);
         const stillGone = subtract(beforeEditable, verified, true);
         const bystandersLost = subtract(touchedBystanders, verified);
-        externalChange = subtract(preExistingWanted, verified).length > 0;
+        const preWantedLost = subtract(preExistingWanted, verified).length > 0;
+        const foreignAdded = provider.capabilities.wholeZoneWrites
+          ? verified.filter((record) => record.editable && !isOwned(record))
+          : [];
+        externalChange ||= preWantedLost || foreignAdded.length > 0;
         remainingUnexpected = subtract(sameKeyUnexpectedCandidates(verified), beforeForUnexpected);
         restored =
-          stillGone.length === 0 && bystandersLost.length === 0 && remainingUnexpected.length === 0;
+          stillGone.length === 0 &&
+          bystandersLost.length === 0 &&
+          remainingUnexpected.length === 0 &&
+          (!provider.capabilities.wholeZoneWrites || !preWantedLost);
       }
     } catch {
       restored = false;
@@ -809,7 +822,9 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     throw new DomainSdkError(
       cause.code,
       restored
-        ? `${cause.message} The zone was rolled back to its previous records.`
+        ? externalChange
+          ? `${cause.message} The zone was rolled back, but records outside the SDK's own writes changed concurrently.`
+          : `${cause.message} The zone was rolled back to its previous records.`
         : `${cause.message} The zone could not be fully rolled back.`,
       {
         provider: provider.id,
