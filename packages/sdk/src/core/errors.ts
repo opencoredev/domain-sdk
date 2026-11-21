@@ -24,7 +24,7 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|basic[_-]?auth|auth|credentials|bearer|jwt|x-amz-signature|signature|secret|password|passwd|pwd|pass|passphrase|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Bearer|Jwt))$/i;
+  /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key(?:[_-]?id)?|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|basic[_-]?auth|auth|credentials|bearer|jwt|x-amz-signature|signature|secret|password|passwd|pwd|pass|passphrase|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey(?:Id)?|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Bearer|Jwt))$/i;
 const AUTH_SCHEME_PREFIX =
   /\b(Bearer|ApiKey|Basic|Digest|Token)(\s+|\+|%20|%09|[:=](?:[ \t]|%20|%09)*|%3A(?:[ \t]|%20|%09)*|%3D(?:[ \t]|%20|%09)*)/gi;
 const AUTH_PARAM_PREFIX =
@@ -38,7 +38,7 @@ const URL_USERINFO_DOUBLE_QUOTED =
 const URL_USERINFO_SINGLE_QUOTED =
   /(?<=')([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/']|(?![/\\']))|[^/?#\s\\'<>]|'(?=[^}\]:\s])(?!,\s*'))+)@/gi;
 const INLINE_SECRET_PREFIX =
-  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[ \t]+key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|basic|digest|auth|bearer|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|passphrase|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?::=|=|:|%3D|%3A)(?:\s|%20|%09)*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|password|passwd|pwd|passphrase|private[_-]?key|secret)[ \t]+|(?:password|passphrase|secret)[ \t]+is[ \t]+))/gi;
+  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key(?:[_-]?id)?|api[_-]?token|api[_-]?key|api[ \t]+key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|basic|digest|auth|bearer|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|passphrase|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey(?:Id)?|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?::=|=|:|%3D|%3A)(?:\s|%20|%09)*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key(?:[_-]?id)?|api[_-]?token|api[_-]?key|api[ \t]+key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|password|passwd|pwd|passphrase|private[_-]?key|secret)[ \t]+|(?:password|passphrase|secret)[ \t]+is[ \t]+))/gi;
 
 function isShortBasicCredential(token: string): boolean {
   if (token.length < 4 || token.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(token)) {
@@ -270,11 +270,25 @@ function scrubAuthSchemes(value: string): string {
       );
       if (
         digestLead &&
+        !/^[A-Z]{4,}$/.test(digestLead[1]!) &&
         EXEMPT_AUTH_WORDS.test(digestLead[1]!) &&
         !/^(?:[ \t]|%20|%09)*(?:=|%3D)/i.test(
           value.slice(valueStart + digestLead[1]!.length, valueStart + digestLead[1]!.length + 16),
         )
       ) {
+        const leadEnd = valueStart + digestLead[1]!.length;
+        const trailing = scanTrailingCredential(
+          value,
+          leadEnd,
+          getLineEnd(leadEnd),
+          "generic",
+          (from) => scanSecretValueEnd(value, from),
+        );
+        if (trailing) {
+          out += `${value.slice(cursor, trailing.start)}[REDACTED]`;
+          cursor = trailing.end;
+          AUTH_SCHEME_PREFIX.lastIndex = trailing.end;
+        }
         continue;
       }
       let inQuote: '"' | "'" | null = null;
@@ -436,7 +450,15 @@ function scrubAuthSchemes(value: string): string {
       }
       const token = value.slice(valueStart, valueEnd);
       const word = token.replace(/[.!?:]+$/, "");
-      if (/^(?:bearer|basic|digest|apikey|token)$/i.test(word)) continue;
+      const isAllCaps = /^[A-Z]{4,}$/.test(word);
+      const restAfterWord = value.slice(valueEnd, Math.min(getLineEnd(valueEnd), valueEnd + 32));
+      if (
+        !isAllCaps &&
+        /^(?:bearer|basic|digest|apikey|token)$/i.test(word) &&
+        /^(?:[ \t]*[=:]|[ \t]+[a-z])/.test(restAfterWord)
+      ) {
+        continue;
+      }
       const basicWord = word.startsWith("<") && word.endsWith(">") ? word.slice(1, -1) : word;
       if (
         (lower === "basic" &&
@@ -444,7 +466,9 @@ function scrubAuthSchemes(value: string): string {
             (!isShortBasicCredential(basicWord) &&
               (!/^(?:(?:[A-Za-z0-9+/=_~-]|%[0-9A-Fa-f]{2}){8,}|[^:\s=]*:[^\s]+)$/.test(basicWord) ||
                 /^[A-Za-z]?[a-z]+$/.test(basicWord))))) ||
-        ((lower === "bearer" || lower === "token") && EXEMPT_AUTH_WORDS.test(word))
+        ((lower === "bearer" || lower === "token" || lower === "apikey") &&
+          !isAllCaps &&
+          EXEMPT_AUTH_WORDS.test(word))
       ) {
         const trailing = scanTrailingCredential(
           value,
@@ -522,8 +546,17 @@ function scrubInlineSecrets(value: string): string {
     const rawVal = value.slice(valueStart, valueEnd);
     const quote = value[valueStart];
     const cleanVal = rawVal.replace(/[.!?:]+$/, "");
-    const isBareSecretOrPassword = /^(?:secret|password)[ \t]+$|^basic\s*:\s*$/i.test(match[0]);
-    if (quote !== '"' && quote !== "'" && quote !== "\\" && EXEMPT_AUTH_WORDS.test(cleanVal)) {
+    const isBareSecretOrPassword = /^(?:secret|password|passphrase)[ \t]+$|^basic\s*:\s*$/i.test(
+      match[0],
+    );
+    const isAllCapsVal = /^[A-Z]{4,}$/.test(cleanVal);
+    if (
+      quote !== '"' &&
+      quote !== "'" &&
+      quote !== "\\" &&
+      !isAllCapsVal &&
+      EXEMPT_AUTH_WORDS.test(cleanVal)
+    ) {
       const trailing = scanTrailingCredential(
         value,
         valueEnd,
@@ -542,7 +575,8 @@ function scrubInlineSecrets(value: string): string {
       quote !== '"' &&
       quote !== "'" &&
       quote !== "\\" &&
-      /^(?:token|authorization|auth|basic|digest|api[ \t]+key|pass|password|passwd|pwd|signature|credentials|jwt|secret)\s*(?:=|:|is\s+|\s+)\s*$/i.test(
+      !isAllCapsVal &&
+      /^(?:(?:x-)?(?:token|authorization|auth|bearer|basic(?:[_-]?auth)?|digest|apikey|api[_-]?key|api[ \t]+key|access[_-]?token|access[_-]?key(?:[_-]?id)?|secret[_-]?key|private[_-]?key|pass|password|passwd|pwd|passphrase|x-amz-signature|signature|credentials|jwt|secret))\s*(?:=|:|is\s+|\s+)\s*$/i.test(
         match[0],
       ) &&
       (EXEMPT_AUTH_WORDS.test(cleanVal) ||
@@ -742,7 +776,7 @@ function redactedCause(cause: Error, seen = new WeakSet<object>(), depth = 0): E
   if (typeof code === "string")
     Reflect.set(safe, "code", scrubString(code.slice(0, MAX_STRING * 8)).slice(0, MAX_STRING));
   else if (typeof code === "number") Reflect.set(safe, "code", code);
-  return safe;
+  return Object.freeze(safe);
 }
 
 function deepFreeze(value: unknown, seen = new WeakSet<object>()): void {

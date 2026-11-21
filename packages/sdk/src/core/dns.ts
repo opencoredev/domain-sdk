@@ -504,6 +504,18 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     optional: readonly DnsRecordInput[],
     options: EnsureRecordsOptions,
   ): Promise<ZoneRecord[]> => {
+    const rawOnConflict = Object.hasOwn(options, "onConflict")
+      ? (options.onConflict ?? "error")
+      : "error";
+    if (rawOnConflict !== "error" && rawOnConflict !== "replace") {
+      failEarly(
+        "ensureRecords",
+        options.zone ?? "",
+        new DomainSdkError("INVALID_CONFIGURATION", 'onConflict must be "error" or "replace".', {
+          provider: provider.id,
+        }),
+      );
+    }
     if (!records.length && !optional.length) {
       report({
         operation: "ensureRecords",
@@ -995,7 +1007,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       {
         provider: provider.id,
         statusCode: cause.statusCode,
-        retryable: cause.retryable,
+        retryable: restored && !externalChange ? cause.retryable : false,
         retryAfter: cause.retryAfter,
         cause,
         details: {

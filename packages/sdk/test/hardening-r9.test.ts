@@ -3039,5 +3039,62 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       .catch((e: unknown) => e);
     expect(pbErr).toBeInstanceOf(DomainSdkError);
     expect(pbDeleteCalled).toBe(false);
+
+    // 6. Unspaced ApiKey/Digest trailing redaction, Bearer TOKEN, bare diagnostics, API key / accessKeyId,
+    // frozen cause, onConflict runtime validation, and rollback retryable flag.
+    for (const [raw, leak] of [
+      ['ApiKey: invalid "supersecret"', "supersecret"],
+      ['ApiKey invalid "supersecret"', "supersecret"],
+      ['ApiKey=invalid "supersecret"', "supersecret"],
+      ["ApiKey: invalid secret_token_999", "secret_token_999"],
+      ["ApiKey invalid secret_token_999", "secret_token_999"],
+      ['Digest invalid "supersecret"', "supersecret"],
+      ["Bearer TOKEN", "TOKEN"],
+      ["Bearer+TOKEN", "TOKEN"],
+      ["API key sk_live_abc12345 was rejected", "sk_live_abc12345"],
+      ["accessKeyId: AKIAIOSFODNN7EXAMPLE", "AKIAIOSFODNN7EXAMPLE"],
+    ] as const) {
+      const scrubbed = String(redact(raw));
+      expect(scrubbed).not.toContain(leak);
+      expect(scrubbed).toContain("[REDACTED]");
+    }
+    expect(String(redact("api_key: expired"))).toBe("api_key: expired");
+    expect(String(redact("ApiKey : invalid"))).toBe("ApiKey : invalid");
+    expect(String(redact("passphrase: missing"))).toBe("passphrase: missing");
+    expect(String(redact("The passphrase is invalid."))).toBe("The passphrase is invalid.");
+    expect(String(redact("Bearer token expired"))).toBe("Bearer token expired");
+
+    // Cause copy is frozen against hook mutation.
+    const wrappedCauseErr = new DomainSdkError("REQUEST_FAILED", "failed", {
+      cause: new Error("upstream boom"),
+    });
+    expect(Object.isFrozen(wrappedCauseErr.cause)).toBe(true);
+
+    // Invalid onConflict rejects with INVALID_CONFIGURATION before touching the zone.
+    const badConflictErr = await createDnsClient({
+      provider: {
+        id: "conflict-val",
+        capabilities: {
+          wholeZoneWrites: false,
+          recordTypes: ["A"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          throw new Error("should not list");
+        },
+        async createRecords() {},
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+        onConflict: "bogus" as "error",
+      })
+      .catch((e) => e);
+    expect(badConflictErr).toMatchObject({ code: "INVALID_CONFIGURATION" });
+
+    // Rolled-back replacements and external changes clear retryable.
+    expect(prReplaceErr.retryable).toBe(false);
   });
 });

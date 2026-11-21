@@ -1,3 +1,4 @@
+import { assertServerEnvironment } from "./client";
 import { DomainSdkError, normalizeUnknownError, safeInstanceOf } from "./errors";
 import { normalizeHostname } from "./hostname";
 import type { DomainClient } from "./provider";
@@ -83,6 +84,7 @@ function invalidLabel(input: string, baseDomain: string, reason: string): never 
  * parent domain. Tenant ownership and uniqueness remain application concerns.
  */
 export function createSubdomainClient(options: SubdomainClientOptions): SubdomainClient {
+  assertServerEnvironment();
   if (!options?.domainClient)
     throw new DomainSdkError("INVALID_CONFIGURATION", "A domain client is required.");
   if (typeof options.baseDomain !== "string" || !options.baseDomain.trim())
