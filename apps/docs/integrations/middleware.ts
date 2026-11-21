@@ -55,14 +55,6 @@ export const faqJsonLd = ({ markdown, url }: { markdown: string; url: string }):
   return `<script type="application/ld+json">${json}</script>`;
 };
 
-/** The Google Fonts links for the homepage display typeface, placed in `<head>`. */
-export const homeFontTags = (): string =>
-  [
-    '<link rel="preconnect" href="https://fonts.googleapis.com">',
-    '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>',
-    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400..700&display=swap">',
-  ].join("");
-
 /** Extracts the `title` field from MDX frontmatter when present. */
 const extractTitle = (source: string): string | undefined => {
   const match = /^---\n[\s\S]*?^title:\s*["']?([^\n"']+)["']?\s*$/m.exec(source);
@@ -249,7 +241,7 @@ export const onRequest = (async (
   let tags = "";
   let breadcrumbItems: ReturnType<typeof breadcrumbItemsFor> = [];
   if (pathname === "/") {
-    tags = `${homeFontTags()}${ogVideoTags(new URL(VIDEO_PATH, context.site).href)}`;
+    tags = ogVideoTags(new URL(VIDEO_PATH, context.site).href);
   } else if (pathname === "/blog" || pathname === "/blog/") {
     tags =
       '<link rel="alternate" type="application/rss+xml" title="Domain SDK blog" href="/blog/rss.xml">';
@@ -266,7 +258,8 @@ export const onRequest = (async (
       breadcrumbItems = breadcrumbItemsFor({ pathname, markdown: "", site: context.site });
     }
   }
-  if (tags === "" && breadcrumbItems.length === 0) return response;
+  const isSitemap = pathname === "/sitemap" || pathname === "/sitemap/";
+  if (tags === "" && breadcrumbItems.length === 0 && !isSitemap) return response;
 
   let html = await response.text();
   if (pathname === "/blog" || pathname === "/blog/") {

@@ -136,6 +136,28 @@ for (const file of mcpChunks) {
   }
 }
 
+const homeHtml = readFileSync(join(staticDir, "index.html"), "utf8");
+if (homeHtml.includes("fonts.googleapis.com")) {
+  throw new Error(
+    "Home page index.html should self-host Outfit instead of loading fonts.googleapis.com.",
+  );
+}
+
+const blogHtml = readFileSync(join(staticDir, "blog/index.html"), "utf8");
+if (!blogHtml.includes('"@type":"Blog"')) {
+  throw new Error('Expected blog/index.html JSON-LD to emit "@type":"Blog".');
+}
+
+const sitemapHtml = readFileSync(join(staticDir, "sitemap/index.html"), "utf8");
+if (
+  !sitemapHtml.includes('"@type":"CollectionPage"') ||
+  sitemapHtml.includes('"@type":"TechArticle"')
+) {
+  throw new Error(
+    'Expected sitemap/index.html JSON-LD to emit "@type":"CollectionPage" instead of TechArticle.',
+  );
+}
+
 console.log(
-  `Verified Vercel post-build patch: /ingest routes, /llms.txt noindex, ${ENTRY_PATCH_MARKER}, and synced sitemap/agent JSON/MCP dates.`,
+  `Verified Vercel post-build patch: /ingest routes, /llms.txt noindex, ${ENTRY_PATCH_MARKER}, /blog & /sitemap JSON-LD, self-hosted Outfit, and synced sitemap/agent JSON/MCP dates.`,
 );

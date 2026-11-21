@@ -47,10 +47,16 @@ body {
 [data-blume-doc-grid] h1,
 article.prose h1 {
   font-family: var(--domain-serif);
-  font-size: clamp(2.6rem, 4.6vw, 4.4rem);
+  font-size: clamp(2.9rem, 5.4vw, 5.4rem);
   font-weight: 400;
-  letter-spacing: -0.05em;
-  line-height: 0.98;
+  letter-spacing: -0.057em;
+  line-height: 0.94;
+}
+
+[data-blume-doc-grid]:has(.dns-records-preview) article.prose h1,
+[data-blume-doc-grid]:has(.dns-records-preview) h1 {
+  font-size: clamp(2.65rem, 3.4vw, 3.5rem);
+  letter-spacing: -0.045em;
 }
 
 [data-blume-doc-grid] :not(pre) > code,
@@ -119,9 +125,19 @@ article.prose :not(pre) > code {
 /* Component previews ------------------------------------------------------- */
 
 /* The DNS records and one-click setup previews (islands/) are the shadcn
-   registry components, styled with shadcn's color names. They read these
-   variables inside .dns-records-preview only, so Blume's own utilities keep
-   their meaning everywhere else. */
+   registry components, styled with shadcn's color names. Fallback defaults live
+   on :root so Tailwind's primary/secondary/input/ring utilities always resolve
+   to the site palette, with .dns-records-preview refining surface tokens. */
+:root {
+  --preview-primary: #8aabff;
+  --preview-primary-foreground: #090908;
+  --preview-secondary: #171715;
+  --preview-secondary-foreground: #f1efe8;
+  --preview-destructive: #ef4444;
+  --preview-input: #2b2b27;
+  --preview-ring: #8aabff;
+}
+
 @theme inline {
   --color-primary: var(--preview-primary);
   --color-primary-foreground: var(--preview-primary-foreground);

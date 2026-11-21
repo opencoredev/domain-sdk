@@ -42,10 +42,17 @@
       const copy = event.target.closest("[data-blume-copy]");
       if (copy) {
         const block =
-          copy.closest("[data-language]") ?? copy.parentElement?.querySelector("[data-language]");
+          copy.closest("[data-language]") ??
+          copy
+            .closest("blume-tabs")
+            ?.querySelector("[data-blume-tab-panel]:not([hidden]) [data-language]") ??
+          copy.parentElement?.querySelector("[data-language]");
         const codeClass = block?.querySelector("code")?.className ?? "";
         const classLang = codeClass.match(/\blanguage-([\w-]+)/)?.[1]?.toLowerCase() ?? null;
-        const rawLang = block?.getAttribute("data-language") ?? null;
+        const rawLang =
+          block?.getAttribute("data-blume-language") ??
+          block?.getAttribute("data-language") ??
+          null;
         const langMap = {
           typescript: "ts",
           javascript: "js",
@@ -59,8 +66,8 @@
           yaml: "yaml",
           markdown: "md",
         };
-        const normalizedLang =
-          classLang ?? (rawLang ? (langMap[rawLang.toLowerCase()] ?? rawLang.toLowerCase()) : null);
+        const candidateLang = (classLang ?? rawLang)?.toLowerCase() ?? null;
+        const normalizedLang = candidateLang ? (langMap[candidateLang] ?? candidateLang) : null;
         capture("docs_code_copied", {
           path: window.location.pathname,
           language: normalizedLang,
@@ -69,7 +76,12 @@
       }
 
       if (event.target.closest("[data-blume-copy-page]")) {
-        capture("docs_markdown_copied", { path: window.location.pathname });
+        const page = window.location.pathname;
+        capture("docs_markdown_copied", {
+          page,
+          path: page,
+          markdown_url: `${page.replace(/\/+$/, "") || "/index"}.md`,
+        });
         return;
       }
 

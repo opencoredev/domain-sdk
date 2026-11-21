@@ -11,8 +11,8 @@ import {
   contentFileFor,
   docsBreadcrumbJsonLd,
   faqJsonLd,
-  homeFontTags,
   ogVideoTags,
+  onRequest,
 } from "./middleware";
 import {
   createGitDateResolver,
@@ -228,10 +228,29 @@ describe("ingest proxy handler", () => {
 });
 
 describe("head injection helpers and Vercel route patching", () => {
-  test("homeFontTags emits preconnect and Outfit stylesheet links for head", () => {
-    const tags = homeFontTags();
-    expect(tags).toContain('rel="preconnect" href="https://fonts.googleapis.com"');
-    expect(tags).toContain("family=Outfit:wght@400..700");
+  test("onRequest rewrites /sitemap to CollectionPage, /blog to Blog, and omits runtime Google Fonts on /", async () => {
+    const site = new URL("https://www.domain-sdk.dev");
+    const sampleHtml =
+      '<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"TechArticle","headline":"Page"}]}</script></head><body></body></html>';
+    const run = async (pathname: string) => {
+      const response = await onRequest(
+        { site, url: new URL(pathname, site) },
+        async () => new Response(sampleHtml, { headers: { "content-type": "text/html" } }),
+      );
+      return response.text();
+    };
+
+    const sitemapHtml = await run("/sitemap");
+    expect(sitemapHtml).toContain('"@type":"CollectionPage"');
+    expect(sitemapHtml).not.toContain('"@type":"TechArticle"');
+
+    const blogHtml = await run("/blog");
+    expect(blogHtml).toContain('"@type":"Blog"');
+    expect(blogHtml).toContain('href="/blog/rss.xml"');
+
+    const homeHtml = await run("/");
+    expect(homeHtml).toContain('property="og:video"');
+    expect(homeHtml).not.toContain("fonts.googleapis.com");
   });
 
   test("docsBreadcrumbJsonLd emits full chains for docs (depths 1-3) and blog posts", () => {
