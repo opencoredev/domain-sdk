@@ -2225,4 +2225,85 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     });
     expect(commitWantedErr.details?.externalChange).toBeUndefined();
   });
+
+  test("R29: Basic password closing delimiters, multi-param & %3D redaction, trailing credentials after exempt words, and aliased listRecords snapshot", async () => {
+    for (const [input, leaked] of [
+      ["Basic admin:pa}SECRET123", "SECRET123"],
+      ["Basic admin:pa]SECRET123", "SECRET123"],
+      ['Basic admin:pa"SECRET123', "SECRET123"],
+      ["Basic admin:pa'SECRET123", "SECRET123"],
+      ['Basic authentication failed, nonce="NONCE123", response="SECRET123"', "SECRET123"],
+      ['Basic realm="example", nonce="NONCE123", response="SECRET123"', "SECRET123"],
+      ['Basic authentication failed, cnonce="CNONCE123", opaque="OPAQUE123"', "OPAQUE123"],
+      ["Digest authentication failed, response%3DSECRET123", "SECRET123"],
+      ["Basic authentication failed, response%3DSECRET123", "SECRET123"],
+      ["Bearer invalid SECRET123", "SECRET123"],
+      ["Basic required dXNlcjpwYXNz", "dXNlcjpwYXNz"],
+      ["Basic authentication failed dXNlcjpwYXNz", "dXNlcjpwYXNz"],
+      ["Bearer%09SECRET123", "SECRET123"],
+      ["secret SECRET123", "SECRET123"],
+    ] as const) {
+      const msg = new DomainSdkError("REQUEST_FAILED", input).message;
+      expect(msg).not.toContain(leaked);
+      expect(msg).not.toContain("NONCE123");
+      expect(msg).not.toContain("CNONCE123");
+      expect(msg).toContain("[REDACTED]");
+    }
+
+    // JSON wrapper and non-secret prose stay intact.
+    expect(new DomainSdkError("REQUEST_FAILED", '{"header":"Basic admin:pass"}').message).toBe(
+      '{"header":"Basic [REDACTED]"}',
+    );
+    expect(
+      new DomainSdkError("REQUEST_FAILED", "Basic authentication is not supported.").message,
+    ).toBe("Basic authentication is not supported.");
+    expect(new DomainSdkError("REQUEST_FAILED", "Bearer token is invalid.").message).toBe(
+      "Bearer token is invalid.",
+    );
+    expect(new DomainSdkError("REQUEST_FAILED", "secret is missing").message).toBe(
+      "secret is missing",
+    );
+
+    // Provider returning and mutating its internal records array in place does not corrupt rollback baseline.
+    const internalZone: ZoneRecord[] = [
+      { id: "a1", type: "A", name: "example.com", value: "1.2.3.4", ttl: 300, editable: true },
+    ];
+    let createCalls = 0;
+    const aliasedErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "aliased-list",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["A", "TXT"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return internalZone;
+        },
+        async createRecords({ records }) {
+          createCalls += 1;
+          if (createCalls === 1) {
+            internalZone.length = 0;
+            throw new DomainSdkError("REQUEST_FAILED", "wiped in place", {
+              provider: "aliased-list",
+              details: { committed: true },
+            });
+          }
+          for (const r of records) {
+            internalZone.push({ id: `restored-${createCalls}`, editable: true, ttl: 300, ...r });
+          }
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "TXT", name: "example.com", value: "v=1" }], { zone: "example.com" })
+      .catch((e) => e);
+    expect(internalZone.some((r) => r.type === "A" && r.value === "1.2.3.4")).toBe(true);
+    expect(aliasedErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { restored: true, committed: true },
+    });
+  });
 });

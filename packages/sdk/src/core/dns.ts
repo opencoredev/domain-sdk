@@ -532,12 +532,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           if (!wanted.length && !alternatives.length) return [];
           const ctx = context(options.signal);
           const existing = await provider.listRecords({ zone }, ctx);
-          // Each attempt acquires the lock afresh, so its own read is the only safe baseline.
-          const snapshot = existing;
+          // Each attempt acquires the lock afresh, so its own detached copy is the only safe baseline.
+          const snapshot = existing.map((record) => ({ ...record }));
           // Optional records are often alternatives. Prefer ones already in the zone, then keep only
           // those that fit the records chosen so far.
           const present = (record: DnsRecordInput) =>
-            existing.some((item) => sameRecord(item, record));
+            snapshot.some((item) => sameRecord(item, record));
           for (const record of [
             ...alternatives.filter(present),
             ...alternatives.filter((record) => !present(record)),
@@ -546,13 +546,19 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               wanted.push(record);
           const isWanted = (item: ZoneRecord) => wanted.some((record) => sameRecord(item, record));
           const missing = wanted.filter(
-            (record) => !existing.some((item) => sameRecord(item, record)),
+            (record) => !snapshot.some((item) => sameRecord(item, record)),
           );
           // Records that are already part of the requested set are never conflicts. Every requested
           // record is checked, so a stale address beside a requested one is still reported.
+          // Keep original `existing` entries for provider.deleteRecords (adapters like Spaceship
+          // track provider-issued record identities), while rollback compares detached `snapshot` entries.
           const conflicts = existing.filter(
             (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
           );
+          const snapshotConflicts = snapshot.filter(
+            (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
+          );
+          const preExistingWanted = snapshot.filter(isWanted);
           const expectedKept = provider.capabilities.wholeZoneWrites
             ? snapshot.filter(
                 (item) => !isWanted(item) && !wanted.some((record) => conflictsWith(item, record)),
@@ -657,11 +663,11 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               // Nothing was created when the delete failed, so leave every requested record alone.
               return restore(
                 zone,
-                conflicts,
+                snapshotConflicts,
                 creating ? missing : [],
                 error,
                 snapshot,
-                existing.filter(isWanted),
+                preExistingWanted,
                 writeCommitted || committedWrite(error),
               );
             }
@@ -669,17 +675,17 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             if (verificationError)
               return restore(
                 zone,
-                conflicts,
+                snapshotConflicts,
                 missing,
                 verificationError,
                 snapshot,
-                existing.filter(isWanted),
+                preExistingWanted,
                 true,
               );
             return after.filter(isWanted);
           }
 
-          if (!missing.length) return existing.filter(isWanted);
+          if (!missing.length) return snapshot.filter(isWanted);
           const committedWrite = (err: unknown): boolean =>
             safeInstanceOf(err, DomainSdkError) && err.details?.committed === true;
           let writeCommitted = false;
@@ -696,7 +702,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               missing,
               error,
               snapshot,
-              existing.filter(isWanted),
+              preExistingWanted,
               writeCommitted || committedWrite(error),
             );
           }
@@ -709,7 +715,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 missing,
                 verificationError,
                 snapshot,
-                existing.filter(isWanted),
+                preExistingWanted,
                 true,
               );
             throw verificationError;

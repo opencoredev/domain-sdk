@@ -26,7 +26,9 @@ export interface DomainSdkErrorOptions {
 const SECRET_KEYS =
   /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|basic[_-]?auth|auth|credentials|bearer|jwt|x-amz-signature|signature|secret|password|passwd|pwd|pass|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Bearer|Jwt))$/i;
 const AUTH_SCHEME_PREFIX =
-  /\b(Bearer|ApiKey|Basic|Digest|Token)(\s+|%20|[:=](?:[ \t]|%20)*|%3A(?:[ \t]|%20)*|%3D(?:[ \t]|%20)*)/gi;
+  /\b(Bearer|ApiKey|Basic|Digest|Token)(\s+|%20|%09|[:=](?:[ \t]|%20|%09)*|%3A(?:[ \t]|%20|%09)*|%3D(?:[ \t]|%20|%09)*)/gi;
+const TRAILING_AUTH_PARAM =
+  /\b(?:response|nonce|cnonce|opaque)(?:[ \t]*=[ \t]*|%3D(?:[ \t]|%20|%09)*)/gi;
 const EXEMPT_AUTH_WORDS =
   /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your|ok|passed|true|false)$/i;
 const URL_USERINFO_BARE =
@@ -36,7 +38,7 @@ const URL_USERINFO_DOUBLE_QUOTED =
 const URL_USERINFO_SINGLE_QUOTED =
   /(?<=')([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/']|(?![/\\']))|[^/?#\s\\'<>]|'(?=[^}\]:\s])(?!,\s*'))+)@/gi;
 const INLINE_SECRET_PREFIX =
-  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?:=|:|%3D|%3A)(?:\s|%20)*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|passwd|pwd|private[_-]?key)[ \t]+|password[ \t]+is[ \t]+))/gi;
+  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?:=|:|%3D|%3A)(?:\s|%20|%09)*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|passwd|pwd|private[_-]?key|secret)[ \t]+|password[ \t]+is[ \t]+))/gi;
 
 function isShortBasicCredential(token: string): boolean {
   if (token.length < 4 || token.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(token)) {
@@ -165,10 +167,10 @@ function scrubAuthSchemes(value: string): string {
       if (
         digestLead &&
         EXEMPT_AUTH_WORDS.test(digestLead[1]!) &&
-        !/^[ \t]*=/.test(value.slice(valueStart + digestLead[1]!.length))
+        !/^(?:[ \t]*=|%3D)/i.test(value.slice(valueStart + digestLead[1]!.length))
       ) {
         const restLine = value.slice(valueStart).split(/[\r\n]/, 1)[0] ?? "";
-        if (!/\b(?:response|nonce|cnonce|opaque|username)[ \t]*=/i.test(restLine)) {
+        if (!/\b(?:response|nonce|cnonce|opaque|username)(?:[ \t]*=|%3D)/i.test(restLine)) {
           continue;
         }
       }
@@ -226,10 +228,10 @@ function scrubAuthSchemes(value: string): string {
         const ch = value[idx]!;
         if (
           lower === "basic" &&
-          (ch === ";" || ch === ")" || ch === "," || ch === "\\") &&
+          /[;,)}\]"'\\]/.test(ch) &&
           value.slice(from, idx).includes(":") &&
           idx + 1 < value.length &&
-          !/[\s"'<]/.test(value[idx + 1]!)
+          !/^(?:[\s<]|[,}\])]+(?=$|[\s<]))/.test(value.slice(idx + 1))
         ) {
           return false;
         }
@@ -294,18 +296,55 @@ function scrubAuthSchemes(value: string): string {
                 /^[A-Za-z]?[a-z]+$/.test(basicWord))))) ||
         ((lower === "bearer" || lower === "token") && EXEMPT_AUTH_WORDS.test(word))
       ) {
+        const lineEndRaw = value.slice(valueEnd).search(/[\r\n]/);
+        const lineEnd = lineEndRaw === -1 ? value.length : valueEnd + lineEndRaw;
         if (lower === "basic") {
-          const restLine = value.slice(valueEnd).split(/[\r\n]/, 1)[0] ?? "";
-          const paramHit = /\b(?:response|nonce|cnonce|opaque)[ \t]*=[ \t]*/i.exec(restLine);
-          if (paramHit) {
+          const restLine = value.slice(valueEnd, lineEnd);
+          TRAILING_AUTH_PARAM.lastIndex = 0;
+          let paramHit: RegExpExecArray | null;
+          let matchedAny = false;
+          while ((paramHit = TRAILING_AUTH_PARAM.exec(restLine)) !== null) {
             const paramValStart = valueEnd + paramHit.index + paramHit[0].length;
             const paramValEnd = scanSecretValueEnd(value, paramValStart);
             if (paramValEnd > paramValStart) {
               out += `${value.slice(cursor, paramValStart)}[REDACTED]`;
               cursor = paramValEnd;
-              AUTH_SCHEME_PREFIX.lastIndex = paramValEnd;
+              matchedAny = true;
+              TRAILING_AUTH_PARAM.lastIndex = paramValEnd - valueEnd;
             }
           }
+          if (matchedAny) {
+            AUTH_SCHEME_PREFIX.lastIndex = cursor;
+            continue;
+          }
+        }
+        let scan = valueEnd;
+        while (scan < lineEnd) {
+          const gap = /^(?:[,:;]?[ \t]+)/.exec(value.slice(scan, lineEnd));
+          if (!gap) break;
+          const tokStart = scan + gap[0].length;
+          const tokEnd = scanAuthParam(tokStart);
+          if (tokEnd <= tokStart) break;
+          const rawTok = value.slice(tokStart, tokEnd);
+          const cleanTok = rawTok.replace(/[.!?:]+$/, "");
+          if (EXEMPT_AUTH_WORDS.test(cleanTok)) {
+            scan = tokEnd;
+            continue;
+          }
+          const looksCredential =
+            lower === "basic"
+              ? isShortBasicCredential(cleanTok) ||
+                (/^(?:(?:[A-Za-z0-9+/=_~-]|%[0-9A-Fa-f]{2}){8,}|[^:\s=]*:[^\s]+)$/.test(cleanTok) &&
+                  !/^[A-Za-z]?[a-z]+$/.test(cleanTok))
+              : cleanTok.length >= 6 &&
+                !/^[A-Za-z]?[a-z]+$/.test(cleanTok) &&
+                /(?:[0-9_/:+=-]|^[A-Z]{2,}|[a-z][A-Z])/.test(cleanTok);
+          if (looksCredential) {
+            out += `${value.slice(cursor, tokStart)}[REDACTED]`;
+            cursor = tokEnd;
+            AUTH_SCHEME_PREFIX.lastIndex = tokEnd;
+          }
+          break;
         }
         continue;
       }
@@ -340,11 +379,13 @@ function scrubInlineSecrets(value: string): string {
       quote !== '"' &&
       quote !== "'" &&
       quote !== "\\" &&
-      /^(?:token|authorization|pass|password|passwd|pwd|signature|credentials|jwt)\s*(?:=|:|is\s+|\s+)\s*$/i.test(
+      /^(?:token|authorization|pass|password|passwd|pwd|signature|credentials|jwt|secret)\s*(?:=|:|is\s+|\s+)\s*$/i.test(
         match[0],
       ) &&
       (EXEMPT_AUTH_WORDS.test(rawVal.replace(/[.!?:]+$/, "")) ||
-        /^(?:bearer|basic|digest|apikey|token)$/i.test(rawVal.replace(/[.!?:]+$/, "")))
+        /^(?:bearer|basic|digest|apikey|token|key|keys|access)$/i.test(
+          rawVal.replace(/[.!?:]+$/, ""),
+        ))
     ) {
       continue;
     }
