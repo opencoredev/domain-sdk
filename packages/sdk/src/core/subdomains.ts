@@ -103,7 +103,7 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
     try {
       hostname = normalizeHostname(`${candidate}${suffix}`);
     } catch (error) {
-      if (error instanceof DomainSdkError && error.code === "INVALID_HOSTNAME")
+      if (safeInstanceOf(error, DomainSdkError) && error.code === "INVALID_HOSTNAME")
         invalidLabel(input, baseDomain, "the DNS label is malformed");
       throw error;
     }
@@ -200,7 +200,7 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
       for (const domain of domains) {
         let label: string;
         try {
-          if (!domain || typeof domain !== "object" || typeof domain.hostname !== "string") {
+          if (!domain || typeof domain !== "object") {
             throw new DomainSdkError(
               "REQUEST_FAILED",
               "Provider returned an invalid domain page.",
@@ -209,7 +209,17 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
               },
             );
           }
-          label = fromHostname(domain.hostname);
+          const hostname = domain.hostname;
+          if (typeof hostname !== "string") {
+            throw new DomainSdkError(
+              "REQUEST_FAILED",
+              "Provider returned an invalid domain page.",
+              {
+                provider: domainClient.provider,
+              },
+            );
+          }
+          label = fromHostname(hostname);
         } catch (error) {
           if (safeInstanceOf(error, DomainSdkError) && error.code === "INVALID_HOSTNAME") continue;
           if (safeInstanceOf(error, DomainSdkError)) throw error;

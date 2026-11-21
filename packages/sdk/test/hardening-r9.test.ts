@@ -1830,4 +1830,136 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     expect(listErr).toBeInstanceOf(DomainSdkError);
     expect((listErr as DomainSdkError).code).toBe("REQUEST_FAILED");
   });
+
+  test("R24: redacts quoted Digest delimiters, plaintext Basic punctuation, scheme:/=, bare-newline Token params; preserves pre-commit concurrent deletions and Namecheap collateralMissing", async () => {
+    const scrub = (msg: string) => new DomainSdkError("REQUEST_FAILED", msg).message;
+
+    // Quote-aware Digest & comma + space + newline continuation
+    expect(scrub('Digest username="a;b", response="0123456789abcdef"')).toBe("Digest [REDACTED]");
+    expect(scrub('Digest username="a}b", response="SECRET123"')).toBe("Digest [REDACTED]");
+    expect(scrub('Digest username="a]b", response="SECRET123"')).toBe("Digest [REDACTED]");
+    expect(scrub('Digest username="a", \r\nresponse="SECRET123"')).toBe("Digest [REDACTED]");
+
+    // Plaintext Basic passwords with punctuation & leading punctuation tokens
+    expect(scrub("Basic admin:p@ssw0rd")).toBe("Basic [REDACTED]");
+    expect(scrub("Basic :@mysecretpassword")).toBe("Basic [REDACTED]");
+    expect(scrub("Basic :my$ecretpw")).toBe("Basic [REDACTED]");
+    expect(scrub("Basic user:hunter2#x")).toBe("Basic [REDACTED]");
+    expect(scrub("Bearer abc$SECRET123")).toBe("Bearer [REDACTED]");
+    expect(scrub("Bearer @SECRET123")).toBe("Bearer [REDACTED]");
+    expect(scrub("Bearer #SECRET123")).toBe("Bearer [REDACTED]");
+
+    // Scheme followed by : or = and bare-newline Token params
+    expect(scrub("Bearer: SECRET123abc")).toBe("Bearer: [REDACTED]");
+    expect(scrub("Bearer=SECRET123abc")).toBe("Bearer=[REDACTED]");
+    expect(scrub('Token id="pub"\nsig="SECRET123"')).toBe("Token [REDACTED]");
+    expect(scrub("Basic: instructions")).toBe("Basic: instructions");
+
+    // Pre-commit whole-zone write failure must NOT resurrect unrelated concurrent deletion and must flag externalChange
+    let preCommitZone: ZoneRecord[] = [
+      { id: "old", type: "TXT", name: "_old.example.com", value: "old", ttl: 300, editable: true },
+    ];
+    let preCommitCreates = 0;
+    const preCommitErr = await createDnsClient({
+      retry: { maxAttempts: 2, baseDelayMs: 1, maxDelayMs: 5 },
+      provider: {
+        id: "wz-precommit",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["A", "TXT"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return [...preCommitZone];
+        },
+        async createRecords() {
+          preCommitCreates += 1;
+          // Another writer deletes _old concurrently while our write fails before committing (503)
+          preCommitZone = [];
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "503 before commit", {
+            provider: "wz-precommit",
+            statusCode: 503,
+            retryable: true,
+          });
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(preCommitCreates).toBe(1);
+    expect(preCommitZone).toEqual([]);
+    expect(preCommitErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true, externalChange: true },
+    });
+
+    // Namecheap post-setHosts collateral loss populates details.collateralMissing
+    let ncHosts = [{ name: "_keep", type: "TXT", address: "keep-me", ttl: "300" }];
+    let ncSetCalls = 0;
+    const ncXml = (hosts: typeof ncHosts) =>
+      `<?xml version="1.0" encoding="utf-8"?><ApiResponse Status="OK"><CommandResponse Type="namecheap.domains.dns.getHosts"><DomainDNSGetHostsResult Domain="example.com" EmailType="NONE" IsUsingOurDNS="true">${hosts
+        .map(
+          (h, i) =>
+            `<host HostId="${i + 1}" Name="${h.name}" Type="${h.type}" Address="${h.address}" MXPref="10" TTL="${h.ttl}" IsActive="true" />`,
+        )
+        .join("")}</DomainDNSGetHostsResult></CommandResponse></ApiResponse>`;
+    const ncClient = createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: namecheap({
+        apiUser: "u",
+        apiKey: "k",
+        userName: "u",
+        clientIp: "1.2.3.4",
+        fetch: async (url, init) => {
+          const params = new URLSearchParams(
+            init?.method === "POST" ? String(init.body ?? "") : new URL(String(url)).search,
+          );
+          const cmd = params.get("Command");
+          if (cmd === "namecheap.domains.dns.getHosts") {
+            return new Response(ncXml(ncHosts), { status: 200 });
+          }
+          if (cmd === "namecheap.domains.dns.setHosts") {
+            ncSetCalls += 1;
+            if (ncSetCalls === 1) {
+              // Simulate Namecheap accepting setHosts but silently dropping _keep
+              ncHosts = [{ name: "app", type: "A", address: "1.2.3.4", ttl: "1800" }];
+            } else {
+              // Rollback restores _keep
+              ncHosts = [];
+              for (let i = 1; params.has(`HostName${i}`); i += 1) {
+                ncHosts.push({
+                  name: params.get(`HostName${i}`)!,
+                  type: params.get(`RecordType${i}`)!,
+                  address: params.get(`Address${i}`)!,
+                  ttl: params.get(`TTL${i}`)!,
+                });
+              }
+            }
+            return new Response(
+              '<?xml version="1.0" encoding="utf-8"?><ApiResponse Status="OK"><CommandResponse Type="namecheap.domains.dns.setHosts"><DomainDNSSetHostsResult Domain="example.com" IsSuccess="true" /></CommandResponse></ApiResponse>',
+              { status: 200 },
+            );
+          }
+          throw new Error(`unexpected cmd ${cmd}`);
+        },
+      }),
+    });
+    const ncErr = await ncClient
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(ncErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        committed: true,
+        restored: true,
+        collateralMissing: [{ type: "TXT", name: "_keep.example.com", value: "keep-me" }],
+      },
+    });
+  });
 });

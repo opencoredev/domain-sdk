@@ -753,7 +753,11 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     const preWantedSet = new Set(preExistingWanted);
     const requestedKeys = new Set(requested.map(recordKey));
     const beforeEditable = provider.capabilities.wholeZoneWrites
-      ? before.filter((record) => record.editable && !preWantedSet.has(record))
+      ? before.filter(
+          (record) =>
+            record.editable &&
+            (afterAcceptedWrite ? !preWantedSet.has(record) : replacedSet.has(record)),
+        )
       : before.filter((record) => record.editable && replacedSet.has(record));
     const beforeLocked = provider.capabilities.wholeZoneWrites
       ? before.filter((record) => !record.editable && !preWantedSet.has(record))
@@ -846,7 +850,14 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               before,
             )
           : [];
-        externalChange ||= preWantedLost || foreignAdded.length > 0;
+        const unrelatedRemoved =
+          provider.capabilities.wholeZoneWrites && !afterAcceptedWrite
+            ? subtract(
+                before.filter((record) => record.editable && !isOwned(record)),
+                verified,
+              )
+            : [];
+        externalChange ||= preWantedLost || foreignAdded.length > 0 || unrelatedRemoved.length > 0;
         // A kept unrequested same-key record means rollback is incomplete when the write was
         // accepted or committed (it may be the host's rewrite of our value). When the write threw
         // before committing, the record is purely another writer's and our own writes are clean.

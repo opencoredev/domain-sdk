@@ -332,12 +332,39 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
         if (
           JSON.stringify(expected) !== JSON.stringify(actual) ||
           (snapshot.emailType !== undefined && snapshot.emailType !== after.emailType)
-        )
+        ) {
+          const expectedPool = hosts.map((host) => hostKey(host, zone));
+          const keptBefore: Host[] = [];
+          for (const host of snapshot.hosts) {
+            const idx = expectedPool.indexOf(hostKey(host, zone));
+            if (idx >= 0) {
+              expectedPool.splice(idx, 1);
+              keptBefore.push(host);
+            }
+          }
+          const actualPool = after.hosts.map((host) => hostKey(host, zone));
+          const collateralMissing: Array<{ type: string; name: string; value: string }> = [];
+          for (const host of keptBefore) {
+            const idx = actualPool.indexOf(hostKey(host, zone));
+            if (idx >= 0) {
+              actualPool.splice(idx, 1);
+            } else {
+              const rec = zoneRecord(host, zone);
+              collateralMissing.push({ type: rec.type, name: rec.name, value: rec.value });
+            }
+          }
           throw new DomainSdkError(
             "REQUEST_FAILED",
             "Namecheap did not retain the expected DNS records. Re-read the zone before retrying.",
-            { provider: "namecheap", details: { committed: true } },
+            {
+              provider: "namecheap",
+              details: {
+                committed: true,
+                ...(collateralMissing.length ? { collateralMissing } : {}),
+              },
+            },
           );
+        }
       });
     queues.set(zone, pending);
     void pending

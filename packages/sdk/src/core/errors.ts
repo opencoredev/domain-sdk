@@ -25,7 +25,7 @@ export interface DomainSdkErrorOptions {
 
 const SECRET_KEYS =
   /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|secret|password|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))$/i;
-const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)\s+/gi;
+const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)(\s+|[:=][ \t]*)/gi;
 const EXEMPT_AUTH_WORDS =
   /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your)$/i;
 const URL_USERINFO_BARE =
@@ -159,19 +159,38 @@ function scrubAuthSchemes(value: string): string {
     ) {
       valueEnd = scanSecretValueEnd(value, valueStart);
     } else if (lower === "digest") {
-      while (valueEnd < value.length && !/[;}\]]/.test(value[valueEnd]!)) {
-        if (value[valueEnd] === "\r" || value[valueEnd] === "\n") {
+      let inQuote: '"' | "'" | null = null;
+      while (valueEnd < value.length) {
+        const ch = value[valueEnd]!;
+        if (inQuote !== null) {
+          if (ch === "\\" && valueEnd + 1 < value.length) {
+            valueEnd += 2;
+            continue;
+          }
+          if (ch === inQuote) inQuote = null;
+          valueEnd += 1;
+          continue;
+        }
+        if (ch === '"' || ch === "'") {
+          inQuote = ch;
+          valueEnd += 1;
+          continue;
+        }
+        if (ch === ";" || ch === "}" || ch === "]") break;
+        if (ch === "\r" || ch === "\n") {
           const cont = /^\r?\n[ \t]+/.exec(value.slice(valueEnd));
           if (cont) {
             valueEnd += cont[0].length;
             continue;
           }
+          let prev = valueEnd - 1;
+          while (prev >= valueStart && (value[prev] === " " || value[prev] === "\t")) prev -= 1;
           const commaCont =
-            valueEnd > valueStart &&
-            value[valueEnd - 1] === "," &&
+            prev >= valueStart &&
+            value[prev] === "," &&
             /^\r?\n\s*[A-Za-z_][A-Za-z0-9_-]*[ \t]*=/.test(value.slice(valueEnd));
           if (commaCont) {
-            valueEnd += value[valueEnd] === "\r" && value[valueEnd + 1] === "\n" ? 2 : 1;
+            valueEnd += ch === "\r" && value[valueEnd + 1] === "\n" ? 2 : 1;
             continue;
           }
           break;
@@ -180,6 +199,17 @@ function scrubAuthSchemes(value: string): string {
       }
     } else {
       const allowParams = lower === "token" || lower === "apikey";
+      const isValueStop = (idx: number): boolean => {
+        const ch = value[idx]!;
+        if (/[\s"',;)}\]\\]/.test(ch)) return true;
+        if ((ch === "&" || ch === "?") && /^[&?][A-Za-z_][A-Za-z0-9_-]*=/.test(value.slice(idx))) {
+          return true;
+        }
+        if (ch === "<" && /^<\/?[A-Za-z]/.test(value.slice(idx))) {
+          return true;
+        }
+        return false;
+      };
       const scanAuthParam = (from: number): number => {
         if (allowParams || lower === "basic") {
           const paramPrefix = /^([A-Za-z_][A-Za-z0-9_-]*)[ \t]*=(?!=)[ \t]*/.exec(
@@ -196,14 +226,14 @@ function scrubAuthSchemes(value: string): string {
               return scanSecretValueEnd(value, valStart);
             }
             let unqEnd = valStart;
-            while (unqEnd < value.length && !/[\s"',;)}\]\\&?#<>|*`^$@]/.test(value[unqEnd]!)) {
+            while (unqEnd < value.length && !isValueStop(unqEnd)) {
               unqEnd += 1;
             }
             return unqEnd;
           }
         }
         let end = from;
-        while (end < value.length && !/[\s"',;)}\]\\&?#<>|*`^$@]/.test(value[end]!)) end += 1;
+        while (end < value.length && !isValueStop(end)) end += 1;
         return end;
       };
       valueEnd = scanAuthParam(valueStart);
@@ -211,7 +241,7 @@ function scrubAuthSchemes(value: string): string {
         while (valueEnd < value.length) {
           const rest = value.slice(valueEnd);
           const sep =
-            /^(?:[ \t]*[,;]\s*|\r?\n[ \t]+|[ \t]+)(?=[A-Za-z_][A-Za-z0-9_-]*[ \t]*=(?!=))/.exec(
+            /^(?:[ \t]*[,;]\s*|\r?\n[ \t]*|[ \t]+)(?=[A-Za-z_][A-Za-z0-9_-]*[ \t]*=(?!=))/.exec(
               rest,
             );
           if (!sep) break;
@@ -235,7 +265,9 @@ function scrubAuthSchemes(value: string): string {
       }
     }
     if (valueEnd === valueStart) continue;
-    out += value.slice(cursor, match.index) + `${scheme} [REDACTED]`;
+    const rawSep = match[2]!;
+    const outSep = /^\s+$/.test(rawSep) ? " " : rawSep;
+    out += value.slice(cursor, match.index) + `${scheme}${outSep}[REDACTED]`;
     cursor = valueEnd;
     AUTH_SCHEME_PREFIX.lastIndex = valueEnd;
   }
