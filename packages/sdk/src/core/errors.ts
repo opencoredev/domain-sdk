@@ -24,25 +24,82 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(?:[\w-]*[_-])?(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key)$/i;
-const BEARER = /\b(Bearer|Basic|Token|ApiKey)\s+[A-Za-z0-9._~+/=-]+/gi;
-const INLINE_SECRET =
-  /(\b(?:[\w-]*[_-])?(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|token|secret)\\?["']?\s*(?:=|:)\s*)(?:\\"(?:\\.|[^"\\])*\\"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s&,;)}\]]+)/gi;
+  /^(?:[a-z0-9]+[_-]){0,4}(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key)$/i;
+const BEARER = /\b(Bearer|Basic|Token|ApiKey)\s+[A-Za-z0-9._~+/=:-]+/gi;
+const INLINE_SECRET_PREFIX =
+  /(?<![A-Za-z0-9])(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|token|secret)\\*["']?\s*(?:=|:)\s*/gi;
 const MAX_STRING = 1_000;
+const MAX_REDACT_DEPTH = 32;
 
-function scrubString(value: string): string {
-  return value.replace(BEARER, "$1 [REDACTED]").replace(INLINE_SECRET, "$1[REDACTED]");
+function scanSecretValueEnd(value: string, start: number): number {
+  if (start >= value.length) return start;
+  if (value.startsWith("[REDACTED]", start)) return start + "[REDACTED]".length;
+  const first = value[start];
+  if (first === '"' || first === "'") {
+    let index = start + 1;
+    while (index < value.length) {
+      if (value[index] === "\\") {
+        index += 2;
+        continue;
+      }
+      if (value[index] === first) return index + 1;
+      index += 1;
+    }
+    return value.length;
+  }
+  if (first === "\\") {
+    let slashes = 0;
+    while (value[start + slashes] === "\\") slashes += 1;
+    if (value[start + slashes] === '"') {
+      let index = start + slashes + 1;
+      while (index < value.length) {
+        if (value[index] === "\\") {
+          let run = 0;
+          while (value[index + run] === "\\") run += 1;
+          if (value[index + run] === '"' && run <= slashes) return index + run + 1;
+          index += run + (value[index + run] === '"' ? 1 : 0);
+          continue;
+        }
+        index += 1;
+      }
+      return value.length;
+    }
+  }
+  let index = start;
+  while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
+  return index;
 }
 
-export function redact(value: unknown, seen = new WeakSet<object>()): unknown {
+function scrubInlineSecrets(value: string): string {
+  INLINE_SECRET_PREFIX.lastIndex = 0;
+  let out = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = INLINE_SECRET_PREFIX.exec(value)) !== null) {
+    const valueStart = match.index + match[0].length;
+    const valueEnd = scanSecretValueEnd(value, valueStart);
+    if (valueEnd === valueStart) continue;
+    out += value.slice(cursor, valueStart) + "[REDACTED]";
+    cursor = valueEnd;
+    INLINE_SECRET_PREFIX.lastIndex = valueEnd;
+  }
+  return cursor === 0 ? value : out + value.slice(cursor);
+}
+
+function scrubString(value: string): string {
+  return scrubInlineSecrets(value.replace(BEARER, "$1 [REDACTED]"));
+}
+
+export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
   if (typeof value === "string") return scrubString(value).slice(0, MAX_STRING);
   if (value === null || typeof value !== "object") return value;
+  if (depth > MAX_REDACT_DEPTH) return "[Truncated]";
   if (seen.has(value)) return "[Circular]";
   seen.add(value);
-  if (Array.isArray(value)) return value.slice(0, 50).map((item) => redact(item, seen));
+  if (Array.isArray(value)) return value.slice(0, 50).map((item) => redact(item, seen, depth + 1));
   const safe: Record<string, unknown> = {};
   for (const [key, child] of Object.entries(value).slice(0, 50)) {
-    safe[key] = SECRET_KEYS.test(key) ? "[REDACTED]" : redact(child, seen);
+    safe[key] = SECRET_KEYS.test(key) ? "[REDACTED]" : redact(child, seen, depth + 1);
   }
   return safe;
 }
@@ -51,15 +108,16 @@ export function redact(value: unknown, seen = new WeakSet<object>()): unknown {
  * Copy a non-SDK error with its message and nested causes redacted, keeping its name, stack
  * frames, and a string or numeric `code` such as `ECONNRESET` so provider failures stay traceable.
  */
-function redactedCause(cause: Error, seen = new WeakSet<object>()): Error {
+function redactedCause(cause: Error, seen = new WeakSet<object>(), depth = 0): Error {
   seen.add(cause);
   const message = String(redact(cause.message));
   let nested: unknown;
   if (cause.cause !== undefined) {
-    if (cause.cause instanceof DomainSdkError) nested = cause.cause;
+    if (depth >= MAX_REDACT_DEPTH) nested = "[Truncated]";
+    else if (cause.cause instanceof DomainSdkError) nested = cause.cause;
     else if (cause.cause instanceof Error)
-      nested = seen.has(cause.cause) ? "[Circular]" : redactedCause(cause.cause, seen);
-    else nested = redact(cause.cause, seen);
+      nested = seen.has(cause.cause) ? "[Circular]" : redactedCause(cause.cause, seen, depth + 1);
+    else nested = redact(cause.cause, seen, depth + 1);
   }
   const safe = nested !== undefined ? new Error(message, { cause: nested }) : new Error(message);
   safe.name = cause.name;

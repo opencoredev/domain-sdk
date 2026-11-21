@@ -262,15 +262,20 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       const intervalMs = polling.intervalMs ?? 5_000;
       const backoffFactor = polling.backoffFactor ?? 1.5;
       const maxIntervalMs = polling.maxIntervalMs ?? Math.max(30_000, intervalMs);
+      const maxTimerMs = 2_147_483_647;
       if (
         !(timeoutMs >= 0 && Number.isFinite(timeoutMs)) ||
-        !(intervalMs >= 250 && Number.isFinite(intervalMs)) ||
+        !(intervalMs >= 250 && Number.isFinite(intervalMs) && intervalMs <= maxTimerMs) ||
         !(backoffFactor >= 1 && Number.isFinite(backoffFactor)) ||
-        !(maxIntervalMs >= intervalMs && Number.isFinite(maxIntervalMs))
+        !(
+          maxIntervalMs >= intervalMs &&
+          Number.isFinite(maxIntervalMs) &&
+          maxIntervalMs <= maxTimerMs
+        )
       )
         throw new DomainSdkError(
           "INVALID_CONFIGURATION",
-          "Polling timeout must be non-negative, interval must be at least 250ms, backoffFactor at least 1, and maxIntervalMs at least intervalMs.",
+          "Polling timeout must be non-negative, interval must be between 250ms and 2147483647ms, backoffFactor at least 1, and maxIntervalMs between intervalMs and 2147483647ms.",
           { provider: provider.id },
         );
       const shouldStop = polling.shouldStop ?? stopOnFailed;
@@ -308,7 +313,10 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
             { provider: provider.id, retryable: true },
           );
         }
-        await clock.sleep(Math.min(Math.max(delay, retryAfter), remaining), polling.signal);
+        await clock.sleep(
+          Math.min(Math.max(delay, retryAfter), remaining, maxTimerMs),
+          polling.signal,
+        );
       }
     },
   };

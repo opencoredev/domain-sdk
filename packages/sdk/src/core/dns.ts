@@ -251,13 +251,15 @@ export function canonicalRecordValue(type: string, value: string): string {
   return trimmed.toLowerCase();
 }
 
+const normalizeOwnerName = (name: string): string => name.trim().toLowerCase().replace(/\.$/, "");
+
 /** Whether a zone record and an input record describe the same DNS data, ignoring TTL. */
 export function sameRecord(
   existing: Pick<ZoneRecord, "type" | "name" | "value">,
   wanted: Pick<DnsRecordInput, "type" | "name" | "value">,
 ): boolean {
-  if (existing.type.toUpperCase() !== wanted.type) return false;
-  if (existing.name.toLowerCase() !== wanted.name.toLowerCase()) return false;
+  if (existing.type.toUpperCase() !== wanted.type.toUpperCase()) return false;
+  if (normalizeOwnerName(existing.name) !== normalizeOwnerName(wanted.name)) return false;
   try {
     return (
       canonicalRecordValue(existing.type, existing.value) ===
@@ -278,7 +280,7 @@ function mixedRouting(a: string, b: string): boolean {
 
 /** Whether two requested records can never coexist, such as a CNAME beside any other type. */
 function incompatible(a: DnsRecordInput, b: DnsRecordInput): boolean {
-  if (a.name !== b.name || sameRecord(a, b)) return false;
+  if (normalizeOwnerName(a.name) !== normalizeOwnerName(b.name) || sameRecord(a, b)) return false;
   if (a.type === "CNAME" || b.type === "CNAME") return true;
   if (mixedRouting(a.type, b.type)) return true;
   return SINGLETON_TYPES.has(a.type) && SINGLETON_TYPES.has(b.type);
@@ -286,7 +288,7 @@ function incompatible(a: DnsRecordInput, b: DnsRecordInput): boolean {
 
 function conflictsWith(existing: ZoneRecord, wanted: DnsRecordInput): boolean {
   if (
-    existing.name.trim().toLowerCase().replace(/\.$/, "") !== wanted.name.toLowerCase() ||
+    normalizeOwnerName(existing.name) !== normalizeOwnerName(wanted.name) ||
     sameRecord(existing, wanted)
   )
     return false;
@@ -522,6 +524,9 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           const conflicts = existing.filter(
             (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
           );
+          const expectedKept = existing.filter(
+            (item) => item.editable && !conflicts.includes(item),
+          );
           const verifyAfterWrite = (after: ZoneRecord[]): DomainSdkError | undefined => {
             const dropped = wanted.filter(
               (record) => !after.some((item) => sameRecord(item, record)),
@@ -529,13 +534,25 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             const remaining = after.filter(
               (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
             );
-            if (!dropped.length && !remaining.length) return undefined;
-            const summary =
-              dropped.length && remaining.length
-                ? `${dropped.length} DNS record(s) are missing and ${remaining.length} conflicting record(s) remain in ${zone}`
-                : dropped.length
-                  ? `${dropped.length} DNS record(s) are missing from ${zone}`
-                  : `${remaining.length} conflicting DNS record(s) remain in ${zone}`;
+            const pool = [...after];
+            const collateral = expectedKept.filter((record) => {
+              const index = pool.findIndex((item) =>
+                sameRecord(item, {
+                  type: record.type.toUpperCase() as DnsRecordType,
+                  name: normalizeOwnerName(record.name),
+                  value: record.value,
+                }),
+              );
+              if (index >= 0) pool.splice(index, 1);
+              return index < 0;
+            });
+            if (!dropped.length && !remaining.length && !collateral.length) return undefined;
+            const parts: string[] = [];
+            if (dropped.length) parts.push(`${dropped.length} DNS record(s) are missing`);
+            if (remaining.length) parts.push(`${remaining.length} conflicting record(s) remain`);
+            if (collateral.length)
+              parts.push(`${collateral.length} unrelated existing record(s) disappeared`);
+            const summary = `${parts.join(" and ")} in ${zone}`;
             return new DomainSdkError(
               "REQUEST_FAILED",
               `${provider.id} accepted the write but ${summary}. Re-read the zone before retrying.`,
@@ -548,6 +565,15 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                   ...(remaining.length
                     ? {
                         remaining: remaining.map(({ type, name, value }) => ({
+                          type,
+                          name,
+                          value,
+                        })),
+                      }
+                    : {}),
+                  ...(collateral.length
+                    ? {
+                        collateralMissing: collateral.map(({ type, name, value }) => ({
                           type,
                           name,
                           value,
@@ -607,7 +633,11 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           // A DNS host can accept a write and still drop, rewrite, or leave a conflict, so check the result.
           const after = await provider.listRecords({ zone }, ctx);
           const verificationError = verifyAfterWrite(after);
-          if (verificationError) throw verificationError;
+          if (verificationError) {
+            if (verificationError.details?.collateralMissing)
+              return restore(zone, [], missing, verificationError, existing);
+            throw verificationError;
+          }
           return after.filter(isWanted);
         }),
       options.signal,
@@ -632,29 +662,32 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     const ctx: DnsProviderContext = { logger };
     const asInput = ({ type, name, value, ttl }: ZoneRecord): DnsRecordInput => ({
       type: type.toUpperCase() as DnsRecordType,
-      name,
+      name: normalizeOwnerName(name),
       value,
       ttl,
     });
     const beforeEditable = before.filter((record) => record.editable);
-    const ownerName = (name: string) => name.trim().toLowerCase().replace(/\.$/, "");
     const affectedNames = new Set([
-      ...replaced.map((record) => ownerName(record.name)),
-      ...requested.map((record) => ownerName(record.name)),
+      ...replaced.map((record) => normalizeOwnerName(record.name)),
+      ...requested.map((record) => normalizeOwnerName(record.name)),
     ]);
     const unexpectedCandidates = (records: ZoneRecord[]) =>
       provider.capabilities.wholeZoneWrites
         ? records.filter((record) => record.editable)
         : requested.length
-          ? records.filter((record) => record.editable && affectedNames.has(ownerName(record.name)))
+          ? records.filter(
+              (record) => record.editable && affectedNames.has(normalizeOwnerName(record.name)),
+            )
           : [];
-    const subtract = (expected: ZoneRecord[], actual: ZoneRecord[]) => {
+    const subtract = (expected: ZoneRecord[], actual: ZoneRecord[], exactTtlOnly = false) => {
       const pool = [...actual];
       let pending = expected;
-      for (const exact of [true, false])
+      for (const exact of exactTtlOnly ? [true] : [true, false])
         pending = pending.filter((record) => {
           const index = pool.findIndex(
-            (item) => sameRecord(item, asInput(record)) && (!exact || item.ttl === record.ttl),
+            (item) =>
+              sameRecord(item, asInput(record)) &&
+              (!exact || record.ttl === undefined || item.ttl === record.ttl),
           );
           if (index >= 0) pool.splice(index, 1);
           return index < 0;
@@ -675,7 +708,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       if (records.length) await provider.createRecords({ zone, records }, ctx);
       if (records.length === gone.length) {
         const verified = await provider.listRecords({ zone }, ctx);
-        const stillGone = subtract(beforeEditable, verified);
+        const stillGone = subtract(beforeEditable, verified, true);
         const stillUnexpected = subtract(unexpectedCandidates(verified), beforeEditable);
         restored = stillGone.length === 0 && stillUnexpected.length === 0;
       }

@@ -99,19 +99,16 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
 
     let body: PorkbunResponse | undefined;
     try {
-      body = (await readJson(response, MAX_RESPONSE_BYTES, "porkbun")) as
+      body = (await readJson(response, MAX_RESPONSE_BYTES, "porkbun", context.signal)) as
         | PorkbunResponse
         | undefined;
     } catch (error) {
-      if (
-        isResponseTooLarge(error) ||
-        (error instanceof DomainSdkError && error.code === "PROVIDER_UNAVAILABLE")
-      )
-        throw error;
+      if (isResponseTooLarge(error)) throw error;
       if (context.signal?.aborted)
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {
           provider: "porkbun",
         });
+      if (error instanceof DomainSdkError && error.code === "PROVIDER_UNAVAILABLE") throw error;
       if (!response.ok)
         throw httpError("porkbun", response, undefined, "porkbun rejected the request.");
       throw malformedResponse();

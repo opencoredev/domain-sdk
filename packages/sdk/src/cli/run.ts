@@ -201,7 +201,7 @@ async function execute(args: ParsedArgs, client: DomainClient, io: CliIo): Promi
       let last: string | undefined;
       const domain = await client.waitUntilActive(target, {
         timeoutMs: integerFlag(args.values, "timeout-ms", { min: 0 }),
-        intervalMs: integerFlag(args.values, "interval-ms", { min: 250 }),
+        intervalMs: integerFlag(args.values, "interval-ms", { min: 250, max: 2_147_483_647 }),
         signal: io.signal,
         onStatus: (current) => {
           if (!args.json && current.status !== last) io.stderr(`${target}: ${current.status}\n`);
@@ -253,7 +253,8 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<CliExi
     io.stdout(await execute(args, client, io));
     return 0;
   } catch (error) {
-    const jsonRequested = args?.json === true || argv.includes("--json");
+    const jsonRequested =
+      args?.json === true || argv.some((arg) => arg === "--json" || arg.startsWith("--json="));
     if (error instanceof UsageError) {
       if (jsonRequested) {
         io.stderr(toJson({ error: { code: "USAGE", message: error.message } }));

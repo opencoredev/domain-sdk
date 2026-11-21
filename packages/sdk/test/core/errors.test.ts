@@ -103,12 +103,13 @@ test("recursively redacts nested fetch error causes and handles circular causes"
     authorization: "Basic dXNlcjpwYXNz",
   });
   const doubleEncoded = JSON.stringify(quotedJson);
+  const tripleEncoded = JSON.stringify(doubleEncoded);
   const wrappedJson = new DomainSdkError(
     "REQUEST_FAILED",
-    `${quotedJson} ${doubleEncoded} cf_api_key=cf_secret_999 Authorization: Token tok_header_888`,
+    `${quotedJson} ${doubleEncoded} ${tripleEncoded} cf_api_key=cf_secret_999 secret_key=sk_999 Authorization: Token tok_header_888 ApiKey ak_123:part2`,
     {
-      cause: new Error(`${quotedJson} ${doubleEncoded}`),
-      details: { response: `${quotedJson} ${doubleEncoded}` },
+      cause: new Error(`${quotedJson} ${doubleEncoded} ${tripleEncoded}`),
+      details: { response: `${quotedJson} ${doubleEncoded} ${tripleEncoded}` },
     },
   );
   for (const secret of [
@@ -117,13 +118,32 @@ test("recursively redacts nested fetch error causes and handles circular causes"
     "tok_",
     "dXNlcjpwYXNz",
     "cf_secret_999",
+    "sk_999",
     "tok_header_888",
+    "ak_123",
+    "part2",
   ]) {
     expect(wrappedJson.message).not.toContain(secret);
     expect((wrappedJson.cause as Error).message).not.toContain(secret);
     expect((wrappedJson.cause as Error).stack).not.toContain(secret);
     expect(JSON.stringify(wrappedJson.details)).not.toContain(secret);
   }
+
+  // Linear-time redaction on a 1 MiB hyphenated string (no quadratic ReDoS) and deep-nesting cap.
+  const started = Date.now();
+  const huge = "a-".repeat(500_000);
+  expect(typeof redact(huge)).toBe("string");
+  expect(Date.now() - started).toBeLessThan(500);
+
+  let deep: Record<string, unknown> = { leaf: "ok" };
+  for (let i = 0; i < 5_000; i += 1) deep = { a: deep };
+  expect(() => redact(deep)).not.toThrow();
+
+  // Double-encoded JSON preserves subsequent non-secret fields.
+  const twoFields = JSON.stringify(JSON.stringify({ apiKey: "pk_123", status: "bad_request" }));
+  const scrubbedTwo = String(redact(twoFields));
+  expect(scrubbedTwo).not.toContain("pk_123");
+  expect(scrubbedTwo).toContain("bad_request");
 });
 
 test("readJson redacts malformed JSON before truncating the error preview", async () => {

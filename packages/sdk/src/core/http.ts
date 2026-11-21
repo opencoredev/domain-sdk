@@ -61,12 +61,14 @@ export async function readJson(
   response: Response,
   maxBytes = DEFAULT_MAX_RESPONSE_BYTES,
   provider?: string,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   let rawText: string;
   try {
     rawText = await readText(response, maxBytes, provider);
   } catch (error) {
     if (error instanceof DomainSdkError) throw error;
+    if (signal?.aborted) throw abortedError(provider, signal.reason ?? error);
     if (error instanceof Error && error.name === "AbortError") throw error;
     throw new DomainSdkError("PROVIDER_UNAVAILABLE", "The provider response was interrupted.", {
       provider,
