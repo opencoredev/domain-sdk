@@ -5,8 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "blume dev",
-    "build": "blume build",
-    "preview": "blume preview",
+    "build": "blume build && bun scripts/patch-vercel-routes.ts",
     "check-types": "tsc --noEmit && blume check",
     "check:snippets": "bun scripts/check-snippets.ts",
     "validate": "blume validate --strict",
@@ -33,7 +32,7 @@
     "@types/react-dom": "^19.3.0",
     "astro": "7.4.13",
     "blume": "2.2.7",
-    "oxlint": "^1.73.0",
+    "oxlint": "^1.72.0",
     "typescript": "^6.0.3"
   }
 }

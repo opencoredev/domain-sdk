@@ -1,6 +1,7 @@
 ---
 title: Troubleshoot custom domain SSL certificates
 description: "Check when a custom domain's SSL certificate is ready with domain.certificate.status, and fix certificates stuck pending: routing, ownership, CAA, DNSSEC, and proxies."
+lastModified: "2026-11-03"
 ---
 
 To check whether a customer's SSL certificate is ready, call `refresh()` and read [`domain.certificate.status`](../api-reference/domain.mdx). It is `active` once the provider reports an issued certificate, `pending` while issuance hasn't finished, `failed` when the provider has given up, and `unknown` when the provider confirms the domain but doesn't expose certificate state. Domain SDK does not issue certificates. It reports what the provider says, so use `domain.certificate.status` and `domain.issues` as the source of truth rather than probing HTTPS yourself.

@@ -1,6 +1,7 @@
 ---
 title: "Render custom domain: DNS records, verification, and the API"
 description: "Add a custom domain to Render: CNAME to your onrender.com subdomain, ALIAS or A 216.24.57.1 for a root domain, then Verify. Plan limits, SSL, and the API."
+lastModified: "2026-11-16"
 ---
 
 To add a custom domain to a Render service by hand, open the service's **Settings**, click **+ Add Custom Domain** under **Custom Domains**, add the DNS records Render shows at your DNS provider, then click **Verify**. Render issues and renews the TLS certificate automatically. To do the same from code, `POST` the hostname to the Render API's `/v1/services/{serviceId}/custom-domains` endpoint, then call its `/verify` endpoint once DNS is in place. This adapter wraps both calls and returns the DNS records your customer needs.

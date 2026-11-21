@@ -3,6 +3,7 @@ title: "Domain verification with TXT records: how SaaS apps verify customer doma
 description: "Verify that a customer owns their custom domain with a DNS TXT record: the token, the DNS check, re-verification, and the TXT records Vercel, Cloudflare and Railway need."
 date: 2026-11-08
 type: blog
+lastModified: "2026-11-20"
 ---
 
 **Domain verification** is how an app confirms that the person who typed `app.customer.com` into a settings page actually controls that domain. The usual method is a DNS TXT record: you generate a random token, the customer publishes it at a name under their domain, and your server looks it up. Only someone who can edit the domain's DNS can make the lookup succeed.

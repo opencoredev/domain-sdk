@@ -3,6 +3,7 @@ title: "Apex domains: A records, ALIAS, and CNAME flattening"
 description: "What an apex domain is, why it can't use a CNAME, how ALIAS, ANAME, and CNAME flattening work around that, and the exact records Vercel, Netlify, Render, Railway, bunny.net, and Cloudflare for SaaS ask for."
 date: 2026-11-02
 type: blog
+lastModified: "2026-11-03"
 ---
 
 An **apex domain** is the bare name of a DNS zone, such as `customer.com`, with no subdomain in front. It's also called the root domain, naked domain, or zone apex. The apex is the one name in a zone that can't hold a CNAME record. So when a customer wants `customer.com` (not `app.customer.com`) to point at your app, they need either an **A record** with an IP address your host publishes, or an **ALIAS**, **ANAME**, or **flattened CNAME** record, which their DNS provider resolves to IP addresses for them.

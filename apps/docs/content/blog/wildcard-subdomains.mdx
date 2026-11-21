@@ -3,6 +3,7 @@ title: "Wildcard subdomains for multi-tenant apps: DNS, SSL, and routing"
 description: "How a wildcard subdomain (*.example.com) works, why its SSL certificate needs DNS-01, the records Vercel, Render, Railway, Netlify, and bunny.net need, and tenant routing."
 date: 2026-11-03
 type: blog
+lastModified: "2026-11-15"
 ---
 
 A **wildcard subdomain** is a DNS record named `*.example.com`. It answers for any name under `example.com` that has no record of its own, so `acme.example.com`, `globex.example.com`, and every tenant you sign up next all reach the same app without a new DNS record each time. Multi-tenant SaaS apps use it to give every customer their own subdomain on day one.

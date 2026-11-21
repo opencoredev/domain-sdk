@@ -163,6 +163,9 @@ export default defineConfig({
   lastModified: "git",
 
   seo: {
+    // Shipped via public/robots.txt to preserve Blume's Content-Signal line
+    // alongside Disallow rules for /api/ and /ingest/.
+    robots: false,
     metatags: {
       // Tells Is Agentic (is-agentic.com) to read this as a documentation site.
       "is-agentic-site-type": "content",

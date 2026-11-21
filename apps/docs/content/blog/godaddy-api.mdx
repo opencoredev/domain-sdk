@@ -3,6 +3,7 @@ title: "GoDaddy API: API keys and DNS records from TypeScript"
 description: How the GoDaddy API works in 2026, from Personal Access Tokens and scopes to account rules and the v3 DNS records endpoints, with fetch samples and a Domain SDK adapter you can copy.
 date: 2026-10-31
 type: blog
+lastModified: "2026-10-31"
 ---
 
 The GoDaddy API lives at `https://api.godaddy.com`. For DNS, the current version is Domains API v3: you create a **Personal Access Token** (PAT) on GoDaddy's developer portal, send it as `Authorization: Bearer <token>`, and read and write records at `/v3/domains/zones/{zone}/dns-records`. The old `sso-key` API key still works for the v1 and v2 endpoints, but GoDaddy has scheduled it for deprecation on the Domains APIs, and it doesn't work with v3.

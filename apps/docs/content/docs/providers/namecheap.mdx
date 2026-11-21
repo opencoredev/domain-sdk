@@ -1,6 +1,7 @@
 ---
 title: "Namecheap DNS records: BasicDNS API adapter"
 description: "Set Namecheap DNS records (A, AAAA, CNAME, ALIAS, TXT, CAA) from TypeScript: why the API needs BasicDNS, IP whitelisting, whole-list setHosts writes, and limits."
+lastModified: "2026-11-06"
 ---
 
 Namecheap's API can only change DNS records for a domain that uses Namecheap's free BasicDNS nameservers. If the domain is on PremiumDNS, FreeDNS, Cloudflare, or any other DNS host, the API can't edit its records, and neither can this adapter. Check `dns.getZone()` first: `authoritative` is `true` only when Namecheap reports the domain as using its DNS. On BasicDNS, the adapter reads the host list with `getHosts`, adds the A, AAAA, CNAME, ALIAS, TXT, or CAA records your hosting provider needs, and writes the whole list back with `setHosts`.

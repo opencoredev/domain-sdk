@@ -3,6 +3,7 @@ title: "Porkbun API: create DNS records from TypeScript"
 description: How to get Porkbun API keys, turn on API access for a domain, and create, list, and delete DNS records with fetch or Domain SDK.
 date: 2026-10-29
 type: blog
+lastModified: "2026-10-31"
 ---
 
 The Porkbun API is a JSON-over-HTTPS API at `https://api.porkbun.com/api/json/v3`. You authenticate with an API key and a secret key, and every domain you want to change needs **API Access** switched on in Porkbun's dashboard. DNS writes go to `POST /dns/create/{domain}`, reads to `/dns/retrieve/{domain}`, and deletes to `/dns/delete/{domain}/{id}`.

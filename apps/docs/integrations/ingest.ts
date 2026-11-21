@@ -11,8 +11,8 @@ export const prerender = false;
 const API_HOST = "https://us.i.posthog.com";
 const ASSET_HOST = "https://us-assets.i.posthog.com";
 
-// Hop-by-hop and host-specific headers that must not be forwarded.
-const DROPPED_REQUEST_HEADERS = ["host", "connection", "cookie", "content-length"];
+// Hop-by-hop, host-specific, and credential headers that must not be forwarded.
+const DROPPED_REQUEST_HEADERS = ["host", "connection", "cookie", "authorization", "content-length"];
 
 /** The PostHog URL an /ingest request maps to. */
 export const upstreamUrl = (url: URL): URL => {
@@ -36,9 +36,11 @@ export const ALL: APIRoute = async ({ request, url }) => {
     redirect: "manual",
   });
   const responseHeaders = new Headers(upstream.headers);
-  // fetch already decoded the body, so the original encoding no longer applies.
+  // fetch already decoded the body, so the original encoding no longer applies,
+  // and upstream analytics responses must not set cookies on this domain.
   responseHeaders.delete("content-encoding");
   responseHeaders.delete("content-length");
+  responseHeaders.delete("set-cookie");
   return new Response(upstream.body, {
     status: upstream.status,
     statusText: upstream.statusText,

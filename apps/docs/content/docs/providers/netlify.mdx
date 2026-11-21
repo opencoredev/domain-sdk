@@ -1,6 +1,7 @@
 ---
 title: "Netlify custom domain: DNS records, 75.2.60.5, and the API"
 description: "Point a custom domain at Netlify: a CNAME to your .netlify.app subdomain, or for an apex domain an ALIAS to apex-loadbalancer.netlify.com or an A record to 75.2.60.5. SSL, site ID, and the API."
+lastModified: "2026-11-16"
 ---
 
 To add a custom domain to a Netlify site by hand, open **Domain management > Production domains**, add the domain (a second one becomes a domain alias), then create the DNS record Netlify shows under **Pending DNS verification** at your DNS provider. Netlify provisions a Let's Encrypt certificate once DNS points to it. To do the same from code, this adapter adds each customer hostname as a domain alias through the Netlify API and returns the record to show your customer.
