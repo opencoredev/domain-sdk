@@ -16,9 +16,13 @@ const DROPPED_REQUEST_HEADERS = ["host", "connection", "cookie", "content-length
 
 /** The PostHog URL an /ingest request maps to. */
 export const upstreamUrl = (url: URL): URL => {
-  const path = url.pathname.replace(/^\/ingest/, "") || "/";
+  const rawPath = url.pathname.replace(/^\/ingest/, "") || "/";
+  const path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
   const host = path.startsWith("/static/") ? ASSET_HOST : API_HOST;
-  return new URL(`${path}${url.search}`, host);
+  const target = new URL(host);
+  target.pathname = path;
+  target.search = url.search;
+  return target;
 };
 
 export const ALL: APIRoute = async ({ request, url }) => {

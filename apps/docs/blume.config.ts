@@ -1,8 +1,53 @@
+import { readdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "blume";
 import { posthog, script } from "blume/analytics";
 import { vercel } from "blume/deploy";
 
 import { domainSite } from "./integrations/site";
+
+type Redirect = NonNullable<Parameters<typeof defineConfig>[0]["redirects"]>[number];
+
+const legacyDocRedirects: Redirect[] = [
+  { from: "/docs/quickstart", to: "/docs/installation", status: 308 },
+  { from: "/docs/how-it-works", to: "/docs/providers", status: 308 },
+  { from: "/docs/providers/compatibility", to: "/docs/providers", status: 308 },
+  { from: "/docs/project/provider-adapter-guide", to: "/docs/project/contributing", status: 308 },
+  { from: "/docs/project/sponsorships", to: "/docs/project/contributing", status: 308 },
+];
+
+const docsContentRoot = fileURLToPath(new URL("./content/docs", import.meta.url));
+
+// Preserve the Fumadocs /llms.mdx/docs/**/content.md URLs by redirecting each
+// one to Blume's canonical .md URL.
+const legacyMarkdownRedirects: Redirect[] = [
+  ...readdirSync(docsContentRoot, { recursive: true })
+    .filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".mdx"))
+    .sort()
+    .map((entry): Redirect => {
+      const normalized = entry.replace(/\\/g, "/");
+      if (normalized === "index.mdx") {
+        return { from: "/llms.mdx/docs/content.md", to: "/docs.md", status: 308 };
+      }
+      const slug = normalized.endsWith("/index.mdx")
+        ? normalized.slice(0, -"/index.mdx".length)
+        : normalized.slice(0, -".mdx".length);
+      return {
+        from: `/llms.mdx/docs/${slug}/content.md`,
+        to: `/docs/${slug}.md`,
+        status: 308,
+      };
+    }),
+  ...legacyDocRedirects.map((entry): Redirect => {
+    const fromSlug = entry.from.replace(/^\/docs\//, "");
+    return {
+      from: `/llms.mdx/docs/${fromSlug}/content.md`,
+      to: `${entry.to}.md`,
+      status: 308,
+    };
+  }),
+];
 
 // The production origin. Vercel sets VERCEL_PROJECT_PRODUCTION_URL to the
 // project's production domain, so llms.txt, the sitemap, canonicals, and the
@@ -161,15 +206,9 @@ export default defineConfig({
   // every page answers `Accept: text/markdown` at its own URL.
   deployment: vercel({ site }),
 
-  // URLs from before the docs were consolidated. The Fumadocs site served
-  // these as permanent (308) redirects.
-  redirects: [
-    { from: "/docs/quickstart", to: "/docs/installation", status: 308 },
-    { from: "/docs/how-it-works", to: "/docs/providers", status: 308 },
-    { from: "/docs/providers/compatibility", to: "/docs/providers", status: 308 },
-    { from: "/docs/project/provider-adapter-guide", to: "/docs/project/contributing", status: 308 },
-    { from: "/docs/project/sponsorships", to: "/docs/project/contributing", status: 308 },
-  ],
+  // URLs from before the docs were consolidated and former Fumadocs Markdown
+  // endpoints, served as permanent (308) redirects.
+  redirects: [...legacyDocRedirects, ...legacyMarkdownRedirects],
 
   // No feedback endpoint is configured, so a rating would go nowhere.
   feedback: false,

@@ -74,4 +74,11 @@ describe("upstreamUrl", () => {
       "https://us.i.posthog.com/",
     );
   });
+
+  test("preserves the PostHog origin for double-slash paths", () => {
+    const target = upstreamUrl(new URL("https://www.domain-sdk.dev/ingest//example.com/probe?x=1"));
+    expect(target.origin).toBe("https://us.i.posthog.com");
+    expect(target.pathname).toBe("//example.com/probe");
+    expect(target.search).toBe("?x=1");
+  });
 });
