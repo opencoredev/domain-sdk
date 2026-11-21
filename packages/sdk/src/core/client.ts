@@ -127,12 +127,30 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       throw normalized;
     }
   };
+  function failEarly(name: DomainOperation, hostname: string | undefined, error: unknown): never {
+    const normalized = normalizeUnknownError(error, provider.id);
+    report({
+      operation: name,
+      provider: provider.id,
+      hostname,
+      durationMs: 0,
+      attempts: 0,
+      outcome: "failure",
+      error: normalized,
+    });
+    throw normalized;
+  }
   const normalize = (domain: Domain): Domain => ({
     ...domain,
     hostname: normalizeInput(domain.hostname),
   });
   const get = async (hostname: string, signal?: AbortSignal, retry = options.retry) => {
-    const normalized = normalizeInput(hostname);
+    let normalized: string;
+    try {
+      normalized = normalizeInput(hostname);
+    } catch (error) {
+      failEarly("get", hostname, error);
+    }
     return run(
       "get",
       normalized,
@@ -146,7 +164,13 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
     provider: provider.id,
     capabilities: provider.capabilities,
     async add(input, advanced) {
-      const hostname = normalizeInput(typeof input === "string" ? input : input.hostname);
+      const rawHostname = typeof input === "string" ? input : input.hostname;
+      let hostname: string;
+      try {
+        hostname = normalizeInput(rawHostname);
+      } catch (error) {
+        failEarly("add", rawHostname, error);
+      }
       const signal = (typeof input === "string" ? undefined : input.signal) ?? advanced?.signal;
       return run(
         "add",
@@ -163,18 +187,26 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
     },
     async list(input = {}) {
       if (!provider.list || !provider.capabilities.list) {
-        throw new DomainSdkError(
-          "UNSUPPORTED_OPERATION",
-          `${provider.id} does not support listing domains.`,
-          { provider: provider.id },
+        failEarly(
+          "list",
+          undefined,
+          new DomainSdkError(
+            "UNSUPPORTED_OPERATION",
+            `${provider.id} does not support listing domains.`,
+            { provider: provider.id },
+          ),
         );
       }
       const limit = input.limit ?? 50;
       if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-        throw new DomainSdkError(
-          "INVALID_CONFIGURATION",
-          "List limit must be an integer between 1 and 100.",
-          { provider: provider.id },
+        failEarly(
+          "list",
+          undefined,
+          new DomainSdkError(
+            "INVALID_CONFIGURATION",
+            "List limit must be an integer between 1 and 100.",
+            { provider: provider.id },
+          ),
         );
       const list = provider.list.bind(provider);
       return run(
@@ -186,14 +218,23 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
     },
     async verify(hostname, advanced) {
       if (!provider.verify || !provider.capabilities.explicitVerification) {
-        throw new DomainSdkError(
-          "UNSUPPORTED_OPERATION",
-          `${provider.id} does not support explicit verification.`,
-          { provider: provider.id },
+        failEarly(
+          "verify",
+          hostname,
+          new DomainSdkError(
+            "UNSUPPORTED_OPERATION",
+            `${provider.id} does not support explicit verification.`,
+            { provider: provider.id },
+          ),
         );
       }
       const verify = provider.verify.bind(provider);
-      const normalized = normalizeInput(hostname);
+      let normalized: string;
+      try {
+        normalized = normalizeInput(hostname);
+      } catch (error) {
+        failEarly("verify", hostname, error);
+      }
       return run(
         "verify",
         normalized,
@@ -202,7 +243,12 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       );
     },
     async remove(hostname, advanced) {
-      const normalized = normalizeInput(hostname);
+      let normalized: string;
+      try {
+        normalized = normalizeInput(hostname);
+      } catch (error) {
+        failEarly("remove", hostname, error);
+      }
       return run(
         "remove",
         normalized,

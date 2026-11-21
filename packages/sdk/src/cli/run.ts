@@ -75,7 +75,11 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       const [name = "", inline] = argument.slice(2).split(/=(.*)/s, 2);
       if (!isValueFlag(name)) throw new UsageError(`Unknown option --${name}.`);
       const flagValue = inline ?? argv[++index];
-      if (flagValue === undefined || flagValue.startsWith("--"))
+      if (
+        flagValue === undefined ||
+        flagValue === "" ||
+        (inline === undefined && flagValue.startsWith("--"))
+      )
         throw new UsageError(`--${name} needs a value.`);
       parsed.values[name] = flagValue;
       continue;
@@ -91,11 +95,25 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
   return parsed;
 }
 
-function integerFlag(values: ParsedArgs["values"], name: ValueFlag): number | undefined {
+function integerFlag(
+  values: ParsedArgs["values"],
+  name: ValueFlag,
+  bounds?: { min?: number; max?: number },
+): number | undefined {
   const raw = values[name];
   if (raw === undefined) return undefined;
   if (!/^\d+$/.test(raw)) throw new UsageError(`--${name} must be a whole number.`);
-  return Number(raw);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value)) throw new UsageError(`--${name} is out of range.`);
+  if (bounds?.min !== undefined && value < bounds.min)
+    throw new UsageError(
+      bounds.max !== undefined
+        ? `--${name} must be between ${bounds.min} and ${bounds.max}.`
+        : `--${name} must be at least ${bounds.min}.`,
+    );
+  if (bounds?.max !== undefined && value > bounds.max)
+    throw new UsageError(`--${name} must be between ${bounds.min ?? 0} and ${bounds.max}.`);
+  return value;
 }
 
 function createClient(args: ParsedArgs, io: CliIo): DomainClient {
@@ -172,7 +190,7 @@ async function execute(args: ParsedArgs, client: DomainClient, io: CliIo): Promi
       if (args.positionals.length)
         throw new UsageError(`Unexpected argument ${args.positionals[0]}.`);
       const page = await client.list({
-        limit: integerFlag(args.values, "limit"),
+        limit: integerFlag(args.values, "limit", { min: 1, max: 100 }),
         cursor: args.values.cursor,
         signal: io.signal,
       });
@@ -182,8 +200,8 @@ async function execute(args: ParsedArgs, client: DomainClient, io: CliIo): Promi
       const target = hostname();
       let last: string | undefined;
       const domain = await client.waitUntilActive(target, {
-        timeoutMs: integerFlag(args.values, "timeout-ms"),
-        intervalMs: integerFlag(args.values, "interval-ms"),
+        timeoutMs: integerFlag(args.values, "timeout-ms", { min: 0 }),
+        intervalMs: integerFlag(args.values, "interval-ms", { min: 250 }),
         signal: io.signal,
         onStatus: (current) => {
           if (!args.json && current.status !== last) io.stderr(`${target}: ${current.status}\n`);
@@ -230,11 +248,16 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<CliExi
     io.stdout(await execute(args, client, io));
     return 0;
   } catch (error) {
+    const jsonRequested = args?.json === true || argv.includes("--json");
     if (error instanceof UsageError) {
-      io.stderr(`${error.message}\nRun domain-sdk --help for usage.\n`);
+      if (jsonRequested) {
+        io.stderr(toJson({ error: { code: "USAGE", message: error.message } }));
+      } else {
+        io.stderr(`${error.message}\nRun domain-sdk --help for usage.\n`);
+      }
       return 2;
     }
-    reportError(normalizeUnknownError(error), args?.json === true, io);
+    reportError(normalizeUnknownError(error), jsonRequested, io);
     return 1;
   }
 }

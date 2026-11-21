@@ -158,4 +158,37 @@ describe("subdomain client", () => {
     } while (cursor);
     expect(labels).toEqual(["acme", "beta"]);
   });
+
+  test("list() normalizes case and filters reserved or invalid labels from provider pages", async () => {
+    const memory = memoryProvider();
+    const rawProvider = {
+      ...memory,
+      async list() {
+        return {
+          domains: [
+            "WWW.example.com",
+            "Acme.Example.COM",
+            "_acme-challenge.example.com",
+            "ok.example.com",
+          ].map((hostname) => ({
+            id: hostname,
+            hostname,
+            provider: "memory",
+            status: "active" as const,
+            records: [],
+            verification: { status: "verified" as const, records: [] },
+            certificate: { status: "active" as const },
+            issues: [],
+            raw: {},
+          })),
+        };
+      },
+    };
+    const subdomains = createSubdomainClient({
+      domainClient: createDomainClient({ provider: rawProvider }),
+      baseDomain: "example.com",
+    });
+    const page = await subdomains.list();
+    expect(page.subdomains.map((entry) => entry.label)).toEqual(["acme", "ok"]);
+  });
 });

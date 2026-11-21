@@ -232,7 +232,10 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
   let queue: Promise<unknown> = Promise.resolve();
   const serialize = <T>(task: () => Promise<T>): Promise<T> => {
     const pending = queue.catch(() => {}).then(task);
-    queue = pending;
+    queue = pending.then(
+      () => {},
+      () => {},
+    );
     return pending;
   };
 

@@ -136,6 +136,14 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
     return operation(wildcardHostname);
   };
 
+  const fromHostname = (input: string): string => {
+    const hostname = normalizeHostname(input);
+    if (!hostname.endsWith(suffix))
+      invalidLabel(input, baseDomain, `the hostname must be a child of ${baseDomain}`);
+    const label = hostname.slice(0, -suffix.length);
+    return allowedLabel(label);
+  };
+
   return {
     baseDomain,
     wildcardHostname,
@@ -143,13 +151,7 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
       return domainClient.capabilities.wildcardDomains;
     },
     toHostname,
-    fromHostname(input) {
-      const hostname = normalizeHostname(input);
-      if (!hostname.endsWith(suffix))
-        invalidLabel(input, baseDomain, `the hostname must be a child of ${baseDomain}`);
-      const label = hostname.slice(0, -suffix.length);
-      return allowedLabel(label);
-    },
+    fromHostname,
     async add(label, advanced) {
       return domainClient.add(toHostname(label), advanced);
     },
@@ -172,9 +174,13 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
       const page = await domainClient.list(listOptions);
       const subdomains: TenantSubdomain[] = [];
       for (const domain of page.domains) {
-        if (!domain.hostname.endsWith(suffix)) continue;
-        const label = domain.hostname.slice(0, -suffix.length);
-        if (!label || label.includes(".") || label === "*" || reserved.has(label)) continue;
+        let label: string;
+        try {
+          label = fromHostname(domain.hostname);
+        } catch (error) {
+          if (error instanceof DomainSdkError && error.code === "INVALID_HOSTNAME") continue;
+          throw error;
+        }
         subdomains.push({ label, domain });
       }
       return { subdomains, nextCursor: page.nextCursor };

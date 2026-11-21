@@ -211,6 +211,35 @@ describe("domain-sdk CLI commands", () => {
     expect(await cli.run("get", "app.customer.com", "--provider", "memory")).toBe(0);
     expect(cli.stdout().match(/vc-domain-verify=123/g)).toHaveLength(1);
   });
+
+  test("validates numeric CLI flag ranges as exit 2 and formats usage errors as JSON with --json", async () => {
+    const cli = harness();
+    expect(await cli.run("list", "--provider", "memory", "--limit", "0", "--json")).toBe(2);
+    expect(JSON.parse(cli.stderr())).toMatchObject({ error: { code: "USAGE" } });
+    cli.clear();
+
+    let seenCursor: string | undefined;
+    const base = memoryProvider();
+    const cursorCli = harness({
+      providers: {
+        memory: {
+          required: [],
+          create: () => ({
+            ...base,
+            list: async (input) => {
+              seenCursor = input.cursor;
+              return { domains: [] };
+            },
+          }),
+        },
+      },
+    });
+    expect(await cursorCli.run("list", "--provider", "memory", "--cursor=--opaque")).toBe(0);
+    expect(seenCursor).toBe("--opaque");
+
+    expect(await cli.run("get", "app.example.com", "--provider", "vercel", "--json")).toBe(2);
+    expect(JSON.parse(cli.stderr())).toMatchObject({ error: { code: "USAGE" } });
+  });
 });
 
 describe("built domain-sdk bin", () => {

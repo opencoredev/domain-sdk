@@ -91,6 +91,28 @@ describe("DomainClient onOperation", () => {
     expect((await client.add("app.customer.com")).hostname).toBe("app.customer.com");
     expect(warnings).toEqual(["Domain onOperation hook threw."]);
   });
+
+  test("reports pre-dispatch validation and unsupported failures with zero attempts", async () => {
+    const events: DomainOperationEvent[] = [];
+    const memory = memoryProvider();
+    const noList = {
+      ...memory,
+      list: undefined,
+      capabilities: { ...memory.capabilities, list: false },
+    };
+    const client = createDomainClient({
+      provider: noList,
+      onOperation: (event) => events.push(event),
+    });
+    await expect(client.get("not a hostname")).rejects.toMatchObject({ code: "INVALID_HOSTNAME" });
+    await expect(client.list()).rejects.toMatchObject({ code: "UNSUPPORTED_OPERATION" });
+    expect(
+      events.map(({ operation, outcome, attempts }) => ({ operation, outcome, attempts })),
+    ).toEqual([
+      { operation: "get", outcome: "failure", attempts: 0 },
+      { operation: "list", outcome: "failure", attempts: 0 },
+    ]);
+  });
 });
 
 describe("DnsClient onOperation", () => {

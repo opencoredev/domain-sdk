@@ -87,4 +87,12 @@ test("recursively redacts nested fetch error causes and handles circular causes"
   cyclic.cause = cyclic;
   const wrappedCycle = new DomainSdkError("UNKNOWN_ERROR", "Loop.", { cause: cyclic });
   expect((wrappedCycle.cause as Error).cause).toBe("[Circular]");
+
+  const inline = new Error("provider returned access_token=supersecret and AccessKey: bunnysecret");
+  const wrappedInline = new DomainSdkError("UNKNOWN_ERROR", "Failed.", { cause: inline });
+  const scrubbed = wrappedInline.cause as Error;
+  expect(scrubbed.message).not.toContain("supersecret");
+  expect(scrubbed.message).not.toContain("bunnysecret");
+  expect(scrubbed.stack).not.toContain("supersecret");
+  expect(scrubbed.stack).not.toContain("bunnysecret");
 });

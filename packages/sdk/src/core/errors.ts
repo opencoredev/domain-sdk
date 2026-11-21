@@ -26,11 +26,16 @@ export interface DomainSdkErrorOptions {
 const SECRET_KEYS =
   /^(?:x-)?(token|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|authorization|secret|password|private[_-]?key)$/i;
 const BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
+const INLINE_SECRET =
+  /(\b(?:x-)?(?:access[_-]?token|accessToken|access[_-]?key|accessKey|api[_-]?token|apiToken|api[_-]?key|apiKey|api[_-]?secret|apiSecret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|authorization|password|private[_-]?key|token|secret)\s*(?:=|:)\s*)(?:"[^"]*"|'[^']*'|[^\s&,;)]+)/gi;
 const MAX_STRING = 1_000;
 
+function scrubString(value: string): string {
+  return value.replace(BEARER, "Bearer [REDACTED]").replace(INLINE_SECRET, "$1[REDACTED]");
+}
+
 export function redact(value: unknown, seen = new WeakSet<object>()): unknown {
-  if (typeof value === "string")
-    return value.replace(BEARER, "Bearer [REDACTED]").slice(0, MAX_STRING);
+  if (typeof value === "string") return scrubString(value).slice(0, MAX_STRING);
   if (value === null || typeof value !== "object") return value;
   if (seen.has(value)) return "[Circular]";
   seen.add(value);
@@ -62,7 +67,7 @@ function redactedCause(cause: Error, seen = new WeakSet<object>()): Error {
   const stack = cause.stack?.startsWith(header)
     ? `${cause.name}: ${message}${cause.stack.slice(header.length)}`
     : cause.stack;
-  safe.stack = stack?.replace(BEARER, "Bearer [REDACTED]");
+  safe.stack = stack ? scrubString(stack) : stack;
   const code: unknown = Reflect.get(cause, "code");
   if (typeof code === "string" || typeof code === "number") Reflect.set(safe, "code", code);
   return safe;
