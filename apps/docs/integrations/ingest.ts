@@ -48,18 +48,29 @@ export const upstreamUrl = (url: URL): URL => {
   return target;
 };
 
-export const ALL: APIRoute = async ({ request, url, clientAddress }) => {
+function resolveClientIp(context: Parameters<APIRoute>[0]): string | undefined {
+  for (const header of ["x-vercel-forwarded-for", "x-real-ip", "x-forwarded-for"]) {
+    const value = context.request.headers.get(header)?.trim();
+    if (value) return value;
+  }
+  try {
+    const addr = context.clientAddress?.trim();
+    if (addr) return addr;
+  } catch {
+    // @astrojs/vercel's clientAddress getter throws when x-forwarded-for is absent.
+  }
+  return undefined;
+}
+
+export const ALL: APIRoute = async (context) => {
+  const { request, url } = context;
   const headers = new Headers();
   for (const [name, value] of request.headers.entries()) {
     if (ALLOWED_REQUEST_HEADERS.has(name.toLowerCase())) {
       headers.set(name, value);
     }
   }
-  const clientIp =
-    request.headers.get("x-vercel-forwarded-for") ??
-    request.headers.get("x-real-ip") ??
-    request.headers.get("x-forwarded-for") ??
-    clientAddress;
+  const clientIp = resolveClientIp(context);
   if (clientIp) {
     headers.set("x-forwarded-for", clientIp);
   }

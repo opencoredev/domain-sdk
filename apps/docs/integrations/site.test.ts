@@ -19,6 +19,7 @@ import {
   patchServerEntry,
   patchSitemapXml,
   patchVercelRoutes,
+  rewriteHtmlModifiedDates,
 } from "../scripts/patch-vercel-routes";
 
 const contentRoot = join(import.meta.dir, "..", "content");
@@ -161,6 +162,21 @@ describe("ingest proxy handler", () => {
       expect(response.headers.get("set-cookie")).toBeNull();
       expect(response.headers.get("content-encoding")).toBeNull();
       expect(await response.text()).toBe('{"status":"ok"}');
+
+      // Throwing clientAddress getter (as @astrojs/vercel does without x-forwarded-for) must not 500.
+      const throwingCtx = {
+        request: new Request("https://www.domain-sdk.dev/ingest/flags?__ts=1&v=2", {
+          method: "GET",
+        }),
+        url: new URL("https://www.domain-sdk.dev/ingest/flags?__ts=1&v=2"),
+        get clientAddress(): string {
+          throw new Error("ClientAddressNotAvailable");
+        },
+      };
+      const noIpResp = await ALL(throwingCtx as unknown as Parameters<typeof ALL>[0]);
+      expect(noIpResp.status).toBe(200);
+      expect(capturedUrl?.href).toBe("https://us.i.posthog.com/flags/?v=2");
+      expect(capturedHeaders?.get("x-forwarded-for")).toBeNull();
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -307,5 +323,16 @@ describe("head injection helpers and Vercel route patching", () => {
     } finally {
       rmSync(repo, { recursive: true, force: true });
     }
+  });
+
+  test("rewriteHtmlModifiedDates syncs JSON-LD, article:modified_time, and visible Last updated time", () => {
+    const html =
+      '<html><head><meta property="article:modified_time" content="2026-11-21T07:28:14.000Z"><script type="application/ld+json">{"dateModified":"2026-11-21T07:28:14.000Z"}</script></head><body><p>Last updated on <time datetime="2026-11-21T07:28:14.000Z">November 21, 2026</time></p></body></html>';
+    const next = rewriteHtmlModifiedDates(html, "2026-11-09");
+    expect(next).toContain('"dateModified":"2026-11-09T00:00:00.000Z"');
+    expect(next).toContain('property="article:modified_time" content="2026-11-09T00:00:00.000Z"');
+    expect(next).toContain(
+      'Last updated on <time datetime="2026-11-09T00:00:00.000Z">November 9, 2026</time>',
+    );
   });
 });

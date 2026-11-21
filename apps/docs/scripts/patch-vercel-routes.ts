@@ -104,6 +104,11 @@ export function patchSitemapXml(
   xml: string,
   resolveDate: (pathname: string) => string | undefined,
 ): string {
+  if (!/<url><loc>/.test(xml)) {
+    throw new Error(
+      "Expected <url><loc> entries in sitemap.xml; update patch-vercel-routes.ts if Blume changed its sitemap format.",
+    );
+  }
   return xml.replace(
     /<url><loc>([^<]+)<\/loc>(?:<lastmod>[^<]*<\/lastmod>)?<\/url>/g,
     (match, loc: string) => {
@@ -165,21 +170,32 @@ function isLastModifiedOnlyDiff(repoRoot: string, commit: string, relPath: strin
 export function createGitDateResolver(docsDir: string): (pathname: string) => string | undefined {
   const repoRoot =
     gitOutput(["rev-parse", "--show-toplevel"], docsDir) ?? resolve(docsDir, "../..");
+  const isShallow = gitOutput(["rev-parse", "--is-shallow-repository"], repoRoot) === "true";
+  const shallowRoots = new Set(
+    isShallow
+      ? (gitOutput(["rev-list", "--max-parents=0", "HEAD"], repoRoot)?.split("\n") ?? [])
+      : [],
+  );
   const migrationBoundary = findMigrationBoundary(repoRoot);
   const contentDir = join(docsDir, "content");
 
-  const gitDate = (relPath: string, diffFilter?: string): string | undefined =>
-    gitOutput(
+  const gitDate = (relPath: string, diffFilter?: string): string | undefined => {
+    const out = gitOutput(
       [
         "log",
         "-1",
         ...(diffFilter ? [`--diff-filter=${diffFilter}`] : []),
-        "--format=%cs",
+        "--format=%H %cs",
         "--",
         relPath,
       ],
       repoRoot,
     );
+    if (!out) return undefined;
+    const [hash, date] = out.split(" ");
+    if (!hash || !date || shallowRoots.has(hash)) return undefined;
+    return date;
+  };
 
   const postMigrationDate = (relPath: string): string | undefined => {
     if (!migrationBoundary) return undefined;
@@ -189,7 +205,7 @@ export function createGitDateResolver(docsDir: string): (pathname: string) => st
     )?.split("\n");
     if (!commits) return undefined;
     for (const commit of commits) {
-      if (commit === migrationBoundary) return undefined;
+      if (commit === migrationBoundary || shallowRoots.has(commit)) return undefined;
       if (isLastModifiedOnlyDiff(repoRoot, commit, relPath)) continue;
       return gitOutput(["show", "-s", "--format=%cs", commit], repoRoot);
     }
@@ -248,6 +264,27 @@ export function createGitDateResolver(docsDir: string): (pathname: string) => st
   };
 }
 
+export function rewriteHtmlModifiedDates(html: string, date: string): string {
+  const iso = `${date}T00:00:00.000Z`;
+  const label = new Date(iso).toLocaleDateString("en-US", {
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+  return html
+    .replace(/"dateModified":"\d{4}-\d{2}-\d{2}T[^"]*"/g, `"dateModified":"${iso}"`)
+    .replace(
+      /(<meta\b[^>]*\bproperty="article:modified_time"[^>]*\bcontent=")[^"]*(")/g,
+      `$1${iso}$2`,
+    )
+    .replace(
+      /(<meta\b[^>]*\bcontent=")[^"]*("[^>]*\bproperty="article:modified_time")/g,
+      `$1${iso}$2`,
+    )
+    .replace(/(Last updated on <time datetime=")[^"]*(">)[^<]*(<\/time>)/g, `$1${iso}$2${label}$3`);
+}
+
 function patchStaticDateModified(staticDir: string, pathname: string, date: string): void {
   const clean = pathname === "/" ? "" : pathname.replace(/^\/+|\/+$/g, "");
   const candidates =
@@ -257,10 +294,7 @@ function patchStaticDateModified(staticDir: string, pathname: string, date: stri
   for (const file of candidates) {
     if (!existsSync(file)) continue;
     const html = readFileSync(file, "utf8");
-    const next = html.replace(
-      /"dateModified":"\d{4}-\d{2}-\d{2}T[^"]*"/g,
-      `"dateModified":"${date}T00:00:00.000Z"`,
-    );
+    const next = rewriteHtmlModifiedDates(html, date);
     if (next !== html) writeFileSync(file, next, "utf8");
   }
 }
@@ -293,14 +327,15 @@ if (import.meta.main) {
 
   const staticDir = resolve(docsDir, ".vercel/output/static");
   const sitemapPath = join(staticDir, "sitemap.xml");
-  if (existsSync(sitemapPath)) {
-    const resolveDate = createGitDateResolver(docsDir);
-    const xml = readFileSync(sitemapPath, "utf8");
-    const nextXml = patchSitemapXml(xml, (pathname) => {
-      const date = resolveDate(pathname);
-      if (date) patchStaticDateModified(staticDir, pathname, date);
-      return date;
-    });
-    if (nextXml !== xml) writeFileSync(sitemapPath, nextXml, "utf8");
+  if (!existsSync(sitemapPath)) {
+    throw new Error(`Expected sitemap.xml at ${sitemapPath}; update patch-vercel-routes.ts.`);
   }
+  const resolveDate = createGitDateResolver(docsDir);
+  const xml = readFileSync(sitemapPath, "utf8");
+  const nextXml = patchSitemapXml(xml, (pathname) => {
+    const date = resolveDate(pathname);
+    if (date) patchStaticDateModified(staticDir, pathname, date);
+    return date;
+  });
+  if (nextXml !== xml) writeFileSync(sitemapPath, nextXml, "utf8");
 }
