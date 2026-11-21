@@ -17,8 +17,8 @@ export interface CliProviderFactory {
   create(env: CliEnv, fetch: Fetch | undefined): DomainProvider;
 }
 
-const value = (env: CliEnv, name: string): string => env[name] ?? "";
-const optional = (env: CliEnv, name: string): string | undefined => env[name] || undefined;
+const value = (env: CliEnv, name: string): string => env[name]?.trim() ?? "";
+const optional = (env: CliEnv, name: string): string | undefined => env[name]?.trim() || undefined;
 
 export const CLI_PROVIDERS: Readonly<Record<string, CliProviderFactory>> = {
   vercel: {

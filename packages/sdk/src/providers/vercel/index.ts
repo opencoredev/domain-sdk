@@ -1,5 +1,5 @@
 import { DomainSdkError } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import { httpError, isAbortError, readJson, requireString, type Fetch } from "../../core/http";
 import type {
   DomainProvider,
   ProviderContext,
@@ -77,7 +77,7 @@ export function vercel(options: VercelOptions): VercelProvider {
         },
       });
     } catch (error) {
-      if (context.signal?.aborted)
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The Vercel request was cancelled.", {
           provider: "vercel",
           cause: error,

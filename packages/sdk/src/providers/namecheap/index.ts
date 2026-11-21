@@ -9,7 +9,7 @@ import {
   type ZoneRecord,
 } from "../../core/dns";
 import { DomainSdkError, parseRetryAfter, type DomainSdkErrorCode } from "../../core/errors";
-import { requireString, type Fetch } from "../../core/http";
+import { isAbortError, requireString, type Fetch } from "../../core/http";
 import { MAX_XML_BYTES, parseXml, type XmlElement } from "./xml";
 
 export interface NamecheapOptions {
@@ -167,13 +167,12 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
         body: body.toString(),
         signal: context.signal,
       });
-    } catch {
+    } catch (error) {
+      const aborted = context.signal?.aborted || isAbortError(error);
       throw new DomainSdkError(
-        context.signal?.aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",
-        context.signal?.aborted
-          ? "The Namecheap request was cancelled."
-          : "Could not reach Namecheap.",
-        { provider: "namecheap", retryable: !context.signal?.aborted },
+        aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",
+        aborted ? "The Namecheap request was cancelled." : "Could not reach Namecheap.",
+        { provider: "namecheap", retryable: !aborted },
       );
     }
     const failure = (code: DomainSdkErrorCode, message: string, providerCode?: string): never => {
@@ -199,12 +198,11 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
       text = await readXmlResponse(response);
     } catch (error) {
       if (error instanceof DomainSdkError) throw error;
+      const aborted = context.signal?.aborted || isAbortError(error);
       throw new DomainSdkError(
-        context.signal?.aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",
-        context.signal?.aborted
-          ? "The Namecheap request was cancelled."
-          : "Could not read the Namecheap response.",
-        { provider: "namecheap", retryable: !context.signal?.aborted },
+        aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",
+        aborted ? "The Namecheap request was cancelled." : "Could not read the Namecheap response.",
+        { provider: "namecheap", retryable: !aborted },
       );
     }
     const root = parseXml(text);

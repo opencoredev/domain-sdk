@@ -10,6 +10,7 @@ import {
 import { DomainSdkError } from "../../core/errors";
 import {
   httpError,
+  isAbortError,
   isResponseTooLarge,
   readJson,
   requireString,
@@ -168,8 +169,7 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
         },
       });
     } catch (error) {
-      const aborted =
-        context.signal?.aborted || (error instanceof Error && error.name === "AbortError");
+      const aborted = context.signal?.aborted || isAbortError(error);
       throw new DomainSdkError(
         aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",
         aborted ? "The Spaceship request was cancelled." : "Could not reach Spaceship.",
@@ -181,11 +181,15 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
       body = await readJson(response, MAX_RESPONSE_BYTES, "spaceship", context.signal);
     } catch (error) {
       if (isResponseTooLarge(error)) throw error;
-      if (context.signal?.aborted || (error instanceof Error && error.name === "AbortError"))
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The Spaceship request was cancelled.", {
           provider: "spaceship",
         });
-      if (error instanceof DomainSdkError && error.code === "PROVIDER_UNAVAILABLE") throw error;
+      if (
+        error instanceof DomainSdkError &&
+        (error.code === "PROVIDER_UNAVAILABLE" || error.code === "ABORTED")
+      )
+        throw error;
       if (response.ok)
         throw new DomainSdkError("REQUEST_FAILED", "Spaceship returned malformed JSON.", {
           provider: "spaceship",

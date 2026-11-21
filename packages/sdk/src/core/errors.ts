@@ -26,7 +26,7 @@ export interface DomainSdkErrorOptions {
 const SECRET_KEYS =
   /^(?:[a-z0-9]+[_-]){0,4}(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key)$/i;
 const BEARER =
-  /\b(?:(Bearer|ApiKey)\s+[^\s"',;)}\]]+|(Basic)\s+(?:[A-Za-z0-9+/=]{8,}|[^\s"',;)}\]]*:[^\s"',;)}\]]+)|(Token)\s+(?=[A-Za-z0-9._~+/=:-]*[\d_.:/+-])[^\s"',;)}\]]+)/gi;
+  /\b(?:(Bearer|ApiKey)\s+[^\s"',;)}\]\\]+|(Basic)\s+(?:[A-Za-z0-9+/=]{8,}|[^\s"',;)}\]\\]*:[^\s"',;)}\]\\]+)|(Token)\s+(?=[A-Za-z0-9._~+/=:-]*[\d_.:/+-])[^\s"',;)}\]\\]+)/gi;
 const INLINE_SECRET_PREFIX =
   /(?<![A-Za-z0-9])(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|token|secret)\\*["']?\s*(?:=|:)\s*/gi;
 const MAX_STRING = 1_000;
@@ -73,9 +73,8 @@ function scanSecretValueEnd(value: string, start: number, allowSecondToken = fal
   if (allowSecondToken && index < value.length && /[ \t]/.test(value[index]!)) {
     let next = index;
     while (next < value.length && /[ \t]/.test(value[next]!)) next += 1;
-    const tokenStart = next;
-    while (next < value.length && !/[\s"',;)}\]]/.test(value[next]!)) next += 1;
-    if (next > tokenStart) index = next;
+    const tokenEnd = scanSecretValueEnd(value, next, false);
+    if (tokenEnd > next) index = tokenEnd;
   }
   return index;
 }
@@ -87,7 +86,7 @@ function scrubInlineSecrets(value: string): string {
   let match: RegExpExecArray | null;
   while ((match = INLINE_SECRET_PREFIX.exec(value)) !== null) {
     const valueStart = match.index + match[0].length;
-    const isAuthHeader = /^authorization\b/i.test(match[0]);
+    const isAuthHeader = /^(?:x-)?authorization\b/i.test(match[0]);
     const valueEnd = scanSecretValueEnd(value, valueStart, isAuthHeader);
     if (valueEnd === valueStart) continue;
     out += value.slice(cursor, valueStart) + "[REDACTED]";

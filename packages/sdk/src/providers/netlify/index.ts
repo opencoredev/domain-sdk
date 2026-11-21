@@ -1,7 +1,7 @@
 import { getDomain } from "tldts";
 
 import { DomainSdkError } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import { httpError, isAbortError, readJson, requireString, type Fetch } from "../../core/http";
 import type {
   DomainProvider,
   ProviderContext,
@@ -70,7 +70,7 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
         },
       });
     } catch (error) {
-      if (context.signal?.aborted)
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The Netlify request was cancelled.", {
           provider: "netlify",
           cause: error,

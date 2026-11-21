@@ -130,7 +130,7 @@ function integerFlag(
 
 function createClient(args: ParsedArgs, io: CliIo): DomainClient {
   const providers = { ...CLI_PROVIDERS, ...io.providers };
-  const name = args.values.provider ?? io.env.DOMAIN_SDK_PROVIDER;
+  const name = (args.values.provider ?? io.env.DOMAIN_SDK_PROVIDER)?.trim();
   if (!name) throw new UsageError("Pass --provider or set DOMAIN_SDK_PROVIDER.");
   const factory = Object.hasOwn(providers, name) ? providers[name] : undefined;
   if (!factory)
@@ -265,10 +265,16 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<CliExi
     io.stdout(await execute(args, client, io));
     return 0;
   } catch (error) {
-    const jsonRequested =
-      args !== undefined
-        ? args.json
-        : argv.some((arg) => arg === "--json" || arg === "--json=true");
+    let jsonRequested = false;
+    if (args !== undefined) {
+      jsonRequested = args.json;
+    } else {
+      for (const arg of argv) {
+        if (arg === "--") break;
+        if (arg === "--json" || arg === "--json=true") jsonRequested = true;
+        else if (arg === "--json=false") jsonRequested = false;
+      }
+    }
     if (error instanceof UsageError) {
       if (jsonRequested) {
         io.stderr(toJson({ error: { code: "USAGE", message: error.message } }));

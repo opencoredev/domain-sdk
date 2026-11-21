@@ -1,5 +1,5 @@
 import { DomainSdkError } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import { httpError, isAbortError, readJson, requireString, type Fetch } from "../../core/http";
 import type {
   DomainProvider,
   ProviderContext,
@@ -92,7 +92,7 @@ export function cloudflareSaaS(options: CloudflareSaaSOptions): CloudflareSaaSPr
         },
       });
     } catch (error) {
-      if (context.signal?.aborted)
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The Cloudflare request was cancelled.", {
           provider: "cloudflare",
           cause: error,

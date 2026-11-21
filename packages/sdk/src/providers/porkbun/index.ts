@@ -10,6 +10,7 @@ import {
 import { DomainSdkError, type DomainSdkErrorCode } from "../../core/errors";
 import {
   httpError,
+  isAbortError,
   isResponseTooLarge,
   readJson,
   requireString,
@@ -86,8 +87,8 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
         },
         body: JSON.stringify({ ...fields, apikey: apiKey, secretapikey: secretApiKey }),
       });
-    } catch {
-      if (context.signal?.aborted)
+    } catch (error) {
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {
           provider: "porkbun",
         });
@@ -104,11 +105,15 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
         | undefined;
     } catch (error) {
       if (isResponseTooLarge(error)) throw error;
-      if (context.signal?.aborted)
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {
           provider: "porkbun",
         });
-      if (error instanceof DomainSdkError && error.code === "PROVIDER_UNAVAILABLE") throw error;
+      if (
+        error instanceof DomainSdkError &&
+        (error.code === "PROVIDER_UNAVAILABLE" || error.code === "ABORTED")
+      )
+        throw error;
       if (!response.ok)
         throw httpError("porkbun", response, undefined, "porkbun rejected the request.");
       throw malformedResponse();

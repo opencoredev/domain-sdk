@@ -53,6 +53,14 @@ async function readText(response: Response, maxBytes: number, provider?: string)
   }
 }
 
+export function isAbortError(error: unknown): boolean {
+  return (
+    (error instanceof Error ||
+      (typeof DOMException !== "undefined" && error instanceof DOMException)) &&
+    error.name === "AbortError"
+  );
+}
+
 /**
  * Parse a JSON response body. Bodies over `maxBytes` (8 MiB by default) are cancelled and
  * rejected with `REQUEST_FAILED` instead of being buffered into memory.
@@ -69,7 +77,7 @@ export async function readJson(
   } catch (error) {
     if (error instanceof DomainSdkError) throw error;
     if (signal?.aborted) throw abortedError(provider, signal.reason ?? error);
-    if (error instanceof Error && error.name === "AbortError") throw abortedError(provider, error);
+    if (isAbortError(error)) throw abortedError(provider, error);
     throw new DomainSdkError("PROVIDER_UNAVAILABLE", "The provider response was interrupted.", {
       provider,
       retryable: true,

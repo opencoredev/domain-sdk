@@ -690,22 +690,27 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       value,
       ttl,
     });
-    const affectedNames = new Set([
-      ...replaced.map((record) => normalizeOwnerName(record.name)),
-      ...requested.map((record) => normalizeOwnerName(record.name)),
-      ...ensured.map((record) => normalizeOwnerName(record.name)),
-    ]);
+    const replacedSet = new Set(replaced);
+    const requestedKeys = new Set(
+      requested.map((record) => `${normalizeOwnerName(record.name)}\0${record.type.toUpperCase()}`),
+    );
     const beforeEditable = provider.capabilities.wholeZoneWrites
       ? before.filter((record) => record.editable)
       : before.filter(
-          (record) => record.editable && affectedNames.has(normalizeOwnerName(record.name)),
+          (record) =>
+            record.editable &&
+            (replacedSet.has(record) || ensured.some((wanted) => sameRecord(record, wanted))),
         );
     const unexpectedCandidates = (records: ZoneRecord[]) =>
       provider.capabilities.wholeZoneWrites
         ? records.filter((record) => record.editable)
         : requested.length
           ? records.filter(
-              (record) => record.editable && affectedNames.has(normalizeOwnerName(record.name)),
+              (record) =>
+                record.editable &&
+                requestedKeys.has(
+                  `${normalizeOwnerName(record.name)}\0${record.type.toUpperCase()}`,
+                ),
             )
           : [];
     const subtract = (expected: ZoneRecord[], actual: ZoneRecord[], exactTtlOnly = false) => {
