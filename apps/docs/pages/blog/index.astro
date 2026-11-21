@@ -1,7 +1,7 @@
 ---
 // Blog index. Posts are the `type: blog` pages in content/blog; Blume renders
-// each one, adds BlogPosting JSON-LD, and builds /blog/rss.xml. This page
-// lists them newest first, as the Fumadocs blog index did.
+// each article (with BlogPosting JSON-LD) and builds /blog/rss.xml. This index
+// page lists them newest first, as the Fumadocs blog index did.
 import { getCollection } from "astro:content";
 import PageLayout from "blume/components/layout/PageLayout.astro";
 import data from "blume:data";

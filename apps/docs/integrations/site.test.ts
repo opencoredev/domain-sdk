@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ALL, upstreamUrl } from "./ingest";
@@ -12,6 +15,7 @@ import {
   ogVideoTags,
 } from "./middleware";
 import {
+  createGitDateResolver,
   patchServerEntry,
   patchSitemapXml,
   patchVercelRoutes,
@@ -135,6 +139,7 @@ describe("ingest proxy handler", () => {
           authorization: "Bearer secret",
           "content-type": "application/json",
           "user-agent": "domain-sdk-test",
+          "x-vercel-forwarded-for": "203.0.113.42",
           "x-vercel-id": "iad1::abc",
           "x-astro-path": "/ingest/e",
           "x-custom": "drop-me",
@@ -147,8 +152,10 @@ describe("ingest proxy handler", () => {
       expect(capturedHeaders?.get("authorization")).toBeNull();
       expect(capturedHeaders?.get("host")).toBeNull();
       expect(capturedHeaders?.get("x-vercel-id")).toBeNull();
+      expect(capturedHeaders?.get("x-vercel-forwarded-for")).toBeNull();
       expect(capturedHeaders?.get("x-astro-path")).toBeNull();
       expect(capturedHeaders?.get("x-custom")).toBeNull();
+      expect(capturedHeaders?.get("x-forwarded-for")).toBe("203.0.113.42");
       expect(capturedHeaders?.get("content-type")).toBe("application/json");
       expect(capturedHeaders?.get("user-agent")).toBe("domain-sdk-test");
       expect(response.headers.get("set-cookie")).toBeNull();
@@ -208,7 +215,7 @@ describe("head injection helpers and Vercel route patching", () => {
     expect(patchedHtml).toContain('"name":"Vercel"');
   });
 
-  test("patchVercelRoutes deduplicates /ingest and rewrites trailing slashes ahead of the 308 rule", () => {
+  test("patchVercelRoutes deduplicates /ingest and places terminal _render routes ahead of the 308 rule", () => {
     const patched = patchVercelRoutes({
       version: 3,
       routes: [
@@ -219,17 +226,19 @@ describe("head injection helpers and Vercel route patching", () => {
     });
     const routes = patched.routes ?? [];
     const slashIdx = routes.findIndex((route) => route.src === "^/(.*)/$");
-    const ingestRewrites = routes.filter((route) => route.src?.startsWith("^/ingest"));
-    expect(ingestRewrites).toHaveLength(3);
-    expect(routes.findIndex((route) => route.src === "^/ingest/(.+)/$")).toBeLessThan(slashIdx);
+    const ingestRoutes = routes.filter((route) => route.src?.startsWith("^/ingest"));
+    expect(ingestRoutes).toHaveLength(2);
+    expect(routes.findIndex((route) => route.src === "^/ingest(?:/.*)?/$")).toBeLessThan(slashIdx);
     expect(routes.findIndex((route) => route.dest === "_render")).toBeLessThan(slashIdx);
+    expect(() => patchVercelRoutes({ version: 3, routes: [] })).toThrow(/trailing-slash 308/);
   });
 
-  test("patchServerEntry rewrites /ingest/*/ before app.match and is idempotent", () => {
+  test("patchServerEntry rewrites /ingest/*/ before app.match, is idempotent, and throws when anchor is missing", () => {
     const sample = "const routeData = app.match(request);";
     const once = patchServerEntry(sample);
     expect(once).toContain('__ingestUrl.searchParams.set("__ts", "1")');
     expect(patchServerEntry(once)).toBe(once);
+    expect(() => patchServerEntry("export default {};")).toThrow(/anchor/);
   });
 
   test("patchSitemapXml populates lastmod for custom and content routes", () => {
@@ -244,5 +253,59 @@ describe("head injection helpers and Vercel route patching", () => {
     expect(patched).toContain(
       "<loc>https://www.domain-sdk.dev/blog/cloudflare-for-saas</loc><lastmod>2026-11-09</lastmod>",
     );
+  });
+
+  test("createGitDateResolver updates dates when a future commit touches both an article and blume.config.ts", () => {
+    const repo = mkdtempSync(join(tmpdir(), "domain-sdk-git-dates-"));
+    const git = (args: string[], date: string) =>
+      execFileSync("git", args, {
+        cwd: repo,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: "Test",
+          GIT_AUTHOR_EMAIL: "test@example.com",
+          GIT_COMMITTER_NAME: "Test",
+          GIT_COMMITTER_EMAIL: "test@example.com",
+          GIT_AUTHOR_DATE: date,
+          GIT_COMMITTER_DATE: date,
+        },
+        stdio: "ignore",
+      });
+    try {
+      git(["init"], "2026-11-09T12:00:00Z");
+      mkdirSync(join(repo, "apps/fumadocs/content/docs"), { recursive: true });
+      writeFileSync(join(repo, "apps/fumadocs/package.json"), "{}");
+      writeFileSync(join(repo, "apps/fumadocs/content/docs/guide.mdx"), "# Guide\n");
+      git(["add", "."], "2026-11-09T12:00:00Z");
+      git(["commit", "-m", "legacy docs"], "2026-11-09T12:00:00Z");
+
+      rmSync(join(repo, "apps/fumadocs"), { recursive: true, force: true });
+      mkdirSync(join(repo, "apps/docs/content/docs"), { recursive: true });
+      writeFileSync(join(repo, "apps/docs/blume.config.ts"), "export default {};\n");
+      writeFileSync(
+        join(repo, "apps/docs/content/docs/guide.mdx"),
+        '---\nlastModified: "2026-11-09"\n---\n# Guide\n',
+      );
+      git(["add", "-A"], "2026-11-21T12:00:00Z");
+      git(["commit", "-m", "migrate to blume"], "2026-11-21T12:00:00Z");
+
+      // Migration-only lastModified cleanup preserves legacy date.
+      writeFileSync(join(repo, "apps/docs/content/docs/guide.mdx"), "---\n---\n# Guide\n");
+      git(["add", "-A"], "2026-11-21T13:00:00Z");
+      git(["commit", "-m", "strip hardcoded lastModified"], "2026-11-21T13:00:00Z");
+
+      const docsDir = join(repo, "apps/docs");
+      expect(createGitDateResolver(docsDir)("/docs/guide")).toBe("2026-11-09");
+
+      // Future commit touching BOTH article and blume.config.ts updates the date.
+      writeFileSync(join(repo, "apps/docs/blume.config.ts"), "export default { site: 'x' };\n");
+      writeFileSync(join(repo, "apps/docs/content/docs/guide.mdx"), "---\n---\n# Updated Guide\n");
+      git(["add", "-A"], "2026-11-22T12:00:00Z");
+      git(["commit", "-m", "update guide and config"], "2026-11-22T12:00:00Z");
+
+      expect(createGitDateResolver(docsDir)("/docs/guide")).toBe("2026-11-22");
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });

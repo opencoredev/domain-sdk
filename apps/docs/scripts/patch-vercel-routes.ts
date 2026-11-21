@@ -18,8 +18,7 @@ export interface VercelOutputConfig {
 }
 
 const INGEST_ROUTES: VercelRoute[] = [
-  { src: "^/ingest/$", dest: "/ingest?__ts=1", continue: true },
-  { src: "^/ingest/(.+)/$", dest: "/ingest/$1?__ts=1", continue: true },
+  { src: "^/ingest(?:/.*)?/$", dest: "_render" },
   { src: "^/ingest(?:/(.*))?$", dest: "_render" },
 ];
 
@@ -33,13 +32,15 @@ const MIGRATION_EDITED_CONTENT = new Set([
 ]);
 
 /**
- * Deduplicates `/ingest` routes and places trailing-slash rewrites plus the
- * `/ingest/*` proxy route ahead of Blume's generic `^/(.*)/$` 308 redirect so
- * PostHog endpoints like `/ingest/e/` and `/ingest/batch/` reach the function
- * directly without a redirect hop.
+ * Deduplicates `/ingest` routes and places terminal `/ingest` routes ahead of
+ * Blume's generic `^/(.*)/$` 308 redirect so PostHog endpoints like `/ingest/e/`
+ * and `/ingest/flags/?v=2` reach the Vercel function directly with their full
+ * query string intact.
  */
 export function patchVercelRoutes(config: VercelOutputConfig): VercelOutputConfig {
-  if (!Array.isArray(config.routes)) return config;
+  if (!Array.isArray(config.routes)) {
+    throw new Error("Expected Vercel output config.json to contain a routes array.");
+  }
 
   const deduped = config.routes.filter((route) => {
     const src = route.src ?? "";
@@ -49,7 +50,11 @@ export function patchVercelRoutes(config: VercelOutputConfig): VercelOutputConfi
   const trailingSlashIndex = deduped.findIndex(
     (route) => route.src === "^/(.*)/$" && route.status === 308,
   );
-  if (trailingSlashIndex === -1) return { ...config, routes: deduped };
+  if (trailingSlashIndex === -1) {
+    throw new Error(
+      "Expected Blume trailing-slash 308 route (^/(.*)/$) in Vercel config.json; update patch-vercel-routes.ts.",
+    );
+  }
 
   const nextRoutes = [...deduped];
   nextRoutes.splice(trailingSlashIndex, 0, ...INGEST_ROUTES);
@@ -60,14 +65,18 @@ const ENTRY_PATCH_MARKER = "/* __domain_sdk_ingest_ts_patch__ */";
 
 /**
  * Patches Astro's built Vercel server entry so direct requests to `/ingest/<path>/`
- * (including `POST /ingest/e/`, `POST /ingest/batch/`, and `GET /ingest/flags/`)
+ * (including `POST /ingest/e/`, `POST /ingest/batch/`, and `GET /ingest/flags/?v=2`)
  * bypass Astro's `trailingSlash: "never"` 308/301 normalization inside `_render`
- * while preserving the trailing slash via `__ts=1` for `integrations/ingest.ts`.
+ * while preserving existing query params and the trailing slash via `__ts=1`.
  */
 export function patchServerEntry(source: string): string {
   if (source.includes(ENTRY_PATCH_MARKER)) return source;
   const anchor = "const routeData = app.match(request);";
-  if (!source.includes(anchor)) return source;
+  if (!source.includes(anchor)) {
+    throw new Error(
+      `Expected Astro server entry anchor (${anchor}) in entry.mjs; update patch-vercel-routes.ts.`,
+    );
+  }
 
   const snippet = `${ENTRY_PATCH_MARKER}
 	const __ingestUrl = new URL(request.url);
@@ -123,21 +132,40 @@ function gitOutput(args: string[], cwd: string): string | undefined {
   }
 }
 
-function findMigrationCutoff(repoRoot: string): string | undefined {
-  // Latest commit that still contained apps/fumadocs (last pre-migration or migration commit).
-  const firstBlume = gitOutput(
-    ["log", "--diff-filter=A", "--format=%H", "--", "apps/docs/blume.config.ts"],
-    repoRoot,
-  )
-    ?.split("\n")
-    .at(-1);
-  return firstBlume;
+function findMigrationBoundary(repoRoot: string): string | undefined {
+  // The commit that removed apps/fumadocs (or added apps/docs/blume.config.ts).
+  return (
+    gitOutput(
+      ["log", "-1", "--diff-filter=D", "--format=%H", "--", "apps/fumadocs/package.json"],
+      repoRoot,
+    ) ??
+    gitOutput(
+      ["log", "--diff-filter=A", "--format=%H", "--", "apps/docs/blume.config.ts"],
+      repoRoot,
+    )
+      ?.split("\n")
+      .at(-1)
+  );
 }
 
-function createGitDateResolver(docsDir: string): (pathname: string) => string | undefined {
+function isLastModifiedOnlyDiff(repoRoot: string, commit: string, relPath: string): boolean {
+  const diff = gitOutput(["show", "--unified=0", "--format=", commit, "--", relPath], repoRoot);
+  if (!diff) return false;
+  const changed = diff
+    .split("\n")
+    .filter(
+      (line) =>
+        (line.startsWith("+") || line.startsWith("-")) &&
+        !line.startsWith("+++") &&
+        !line.startsWith("---"),
+    );
+  return changed.length > 0 && changed.every((line) => /^[+-]lastModified:/.test(line));
+}
+
+export function createGitDateResolver(docsDir: string): (pathname: string) => string | undefined {
   const repoRoot =
     gitOutput(["rev-parse", "--show-toplevel"], docsDir) ?? resolve(docsDir, "../..");
-  const firstBlumeCommit = findMigrationCutoff(repoRoot);
+  const migrationBoundary = findMigrationBoundary(repoRoot);
   const contentDir = join(docsDir, "content");
 
   const gitDate = (relPath: string, diffFilter?: string): string | undefined =>
@@ -153,32 +181,30 @@ function createGitDateResolver(docsDir: string): (pathname: string) => string | 
       repoRoot,
     );
 
-  const hasPostMigrationCommit = (relPath: string): boolean => {
-    if (!firstBlumeCommit) return false;
-    // Check if the file was modified in a commit strictly after the migration commit(s)
-    // that still touched apps/docs/blume.config.ts or apps/fumadocs.
-    const latestCommit = gitOutput(["log", "-1", "--format=%H", "--", relPath], repoRoot);
-    if (!latestCommit || latestCommit === firstBlumeCommit) return false;
-    const filesInLatest = gitOutput(
-      ["diff-tree", "--no-commit-id", "--name-only", "-r", latestCommit],
+  const postMigrationDate = (relPath: string): string | undefined => {
+    if (!migrationBoundary) return undefined;
+    const commits = gitOutput(
+      ["log", "-n", "10", "--diff-filter=AM", "--format=%H", "--", relPath],
       repoRoot,
-    );
-    if (!filesInLatest) return false;
-    const isMigrationCommit =
-      filesInLatest.includes("apps/docs/blume.config.ts") ||
-      filesInLatest.includes("apps/fumadocs/") ||
-      filesInLatest.includes("apps/docs/scripts/patch-vercel-routes.ts");
-    return !isMigrationCommit;
+    )?.split("\n");
+    if (!commits) return undefined;
+    for (const commit of commits) {
+      if (commit === migrationBoundary) return undefined;
+      if (isLastModifiedOnlyDiff(repoRoot, commit, relPath)) continue;
+      return gitOutput(["show", "-s", "--format=%cs", commit], repoRoot);
+    }
+    return undefined;
   };
 
   const resolveContentDate = (relContentPath: string): string | undefined => {
     const currentPath = `apps/docs/content/${relContentPath}`;
     const legacyPath = `apps/fumadocs/content/${relContentPath}`;
-    const currentDate = gitDate(currentPath, "AM");
-    if (MIGRATION_EDITED_CONTENT.has(relContentPath) || hasPostMigrationCommit(currentPath)) {
-      return currentDate;
+    if (MIGRATION_EDITED_CONTENT.has(relContentPath)) {
+      return gitDate(currentPath, "AM");
     }
-    return gitDate(legacyPath, "AM") ?? currentDate;
+    return (
+      postMigrationDate(currentPath) ?? gitDate(legacyPath, "AM") ?? gitDate(currentPath, "AM")
+    );
   };
 
   const contentRelForRoute = (pathname: string): string | undefined => {
@@ -194,21 +220,27 @@ function createGitDateResolver(docsDir: string): (pathname: string) => string | 
     const clean = pathname === "/" ? "/" : pathname.replace(/\/+$/, "");
     if (clean === "/") {
       const current = "apps/docs/pages/index.astro";
-      return hasPostMigrationCommit(current)
-        ? gitDate(current, "AM")
-        : (gitDate("apps/fumadocs/src/app/(home)/page.tsx", "AM") ?? gitDate(current, "AM"));
+      return (
+        postMigrationDate(current) ??
+        gitDate("apps/fumadocs/src/app/(home)/page.tsx", "AM") ??
+        gitDate(current, "AM")
+      );
     }
     if (clean === "/blog") {
       const current = "apps/docs/content/blog";
-      return hasPostMigrationCommit(current)
-        ? gitDate(current, "AM")
-        : (gitDate("apps/fumadocs/content/blog", "AM") ?? gitDate(current, "AM"));
+      return (
+        postMigrationDate(current) ??
+        gitDate("apps/fumadocs/content/blog", "AM") ??
+        gitDate(current, "AM")
+      );
     }
     if (clean === "/sitemap") {
       const current = "apps/docs/content";
-      return hasPostMigrationCommit(current)
-        ? gitDate(current, "AM")
-        : (gitDate("apps/fumadocs/content", "AM") ?? gitDate(current, "AM"));
+      return (
+        postMigrationDate(current) ??
+        gitDate("apps/fumadocs/content", "AM") ??
+        gitDate(current, "AM")
+      );
     }
     const rel = contentRelForRoute(clean);
     if (!rel) return undefined;
@@ -235,6 +267,14 @@ function patchStaticDateModified(staticDir: string, pathname: string, date: stri
 
 if (import.meta.main) {
   const docsDir = process.cwd();
+  const repoRoot =
+    gitOutput(["rev-parse", "--show-toplevel"], docsDir) ?? resolve(docsDir, "../..");
+  if (gitOutput(["rev-parse", "--is-shallow-repository"], repoRoot) === "true") {
+    console.warn(
+      "[patch-vercel-routes] Shallow git clone detected; set VERCEL_DEEP_CLONE=true so sitemap dates preserve pre-migration history.",
+    );
+  }
+
   const configPath = resolve(docsDir, ".vercel/output/config.json");
   const parsed = JSON.parse(readFileSync(configPath, "utf8")) as VercelOutputConfig;
   const patched = patchVercelRoutes(parsed);
@@ -244,11 +284,12 @@ if (import.meta.main) {
     docsDir,
     ".vercel/output/functions/_render.func/apps/docs/dist/server/entry.mjs",
   );
-  if (existsSync(entryPath)) {
-    const entrySource = readFileSync(entryPath, "utf8");
-    const nextEntry = patchServerEntry(entrySource);
-    if (nextEntry !== entrySource) writeFileSync(entryPath, nextEntry, "utf8");
+  if (!existsSync(entryPath)) {
+    throw new Error(`Expected Vercel server entry at ${entryPath}; update patch-vercel-routes.ts.`);
   }
+  const entrySource = readFileSync(entryPath, "utf8");
+  const nextEntry = patchServerEntry(entrySource);
+  if (nextEntry !== entrySource) writeFileSync(entryPath, nextEntry, "utf8");
 
   const staticDir = resolve(docsDir, ".vercel/output/static");
   const sitemapPath = join(staticDir, "sitemap.xml");

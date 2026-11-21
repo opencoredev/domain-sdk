@@ -48,12 +48,20 @@ export const upstreamUrl = (url: URL): URL => {
   return target;
 };
 
-export const ALL: APIRoute = async ({ request, url }) => {
+export const ALL: APIRoute = async ({ request, url, clientAddress }) => {
   const headers = new Headers();
   for (const [name, value] of request.headers.entries()) {
     if (ALLOWED_REQUEST_HEADERS.has(name.toLowerCase())) {
       headers.set(name, value);
     }
+  }
+  const clientIp =
+    request.headers.get("x-vercel-forwarded-for") ??
+    request.headers.get("x-real-ip") ??
+    request.headers.get("x-forwarded-for") ??
+    clientAddress;
+  if (clientIp) {
+    headers.set("x-forwarded-for", clientIp);
   }
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   const upstream = await fetch(upstreamUrl(url), {
