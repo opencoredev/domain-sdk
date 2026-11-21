@@ -61,17 +61,22 @@ Credentials come from environment variables, for example VERCEL_TOKEN and VERCEL
 
 function parseArgs(argv: readonly string[]): ParsedArgs {
   const parsed: ParsedArgs = { positionals: [], values: {}, json: false, help: false };
+  let optionsEnded = false;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index] ?? "";
-    if (argument === "-h" || argument === "--help") {
+    if (!optionsEnded && argument === "--") {
+      optionsEnded = true;
+      continue;
+    }
+    if (!optionsEnded && (argument === "-h" || argument === "--help")) {
       parsed.help = true;
       continue;
     }
-    if (argument === "--json") {
+    if (!optionsEnded && argument === "--json") {
       parsed.json = true;
       continue;
     }
-    if (argument.startsWith("--json=")) {
+    if (!optionsEnded && argument.startsWith("--json=")) {
       const value = argument.slice("--json=".length);
       if (value === "true") {
         parsed.json = true;
@@ -83,20 +88,21 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       }
       throw new UsageError("--json takes no value, or true/false.");
     }
-    if (argument.startsWith("--")) {
+    if (!optionsEnded && argument.startsWith("--")) {
       const [name = "", inline] = argument.slice(2).split(/=(.*)/s, 2);
       if (!isValueFlag(name)) throw new UsageError(`Unknown option --${name}.`);
       const flagValue = inline ?? argv[++index];
       if (
         flagValue === undefined ||
         flagValue === "" ||
-        (inline === undefined && flagValue.startsWith("--"))
+        (inline === undefined && (flagValue.startsWith("--") || flagValue === "-h"))
       )
         throw new UsageError(`--${name} needs a value.`);
       parsed.values[name] = flagValue;
       continue;
     }
-    if (argument.startsWith("-")) throw new UsageError(`Unknown option ${argument}.`);
+    if (!optionsEnded && argument.startsWith("-"))
+      throw new UsageError(`Unknown option ${argument}.`);
     if (parsed.command === undefined && parsed.positionals.length === 0) {
       if (!isCommand(argument)) throw new UsageError(`Unknown command ${argument}.`);
       parsed.command = argument;
@@ -178,6 +184,22 @@ function formatPage(page: DomainPage): string {
 const toJson = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
 async function execute(args: ParsedArgs, client: DomainClient, io: CliIo): Promise<string> {
+  const allowedFlags: Record<Command, ReadonlySet<ValueFlag>> = {
+    add: new Set(["provider"]),
+    get: new Set(["provider"]),
+    verify: new Set(["provider"]),
+    remove: new Set(["provider"]),
+    list: new Set(["provider", "limit", "cursor"]),
+    wait: new Set(["provider", "timeout-ms", "interval-ms"]),
+  };
+  if (args.command) {
+    const allowed = allowedFlags[args.command];
+    for (const flag of Object.keys(args.values) as ValueFlag[]) {
+      if (!allowed.has(flag)) {
+        throw new UsageError(`--${flag} is not supported by ${args.command}.`);
+      }
+    }
+  }
   const options = { signal: io.signal };
   const output = (domain: Domain) => (args.json ? toJson(domain) : formatDomain(domain));
   const hostname = () => {
@@ -270,6 +292,7 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<CliExi
       jsonRequested = args.json;
     } else {
       for (const arg of argv) {
+        if (arg === "--") break;
         if (arg === "--json" || arg === "--json=true") jsonRequested = true;
         else if (arg === "--json=false") jsonRequested = false;
       }

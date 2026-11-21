@@ -593,18 +593,22 @@ describe("ensureRecords write verification", () => {
     expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.10"]);
   });
 
-  test("rollback cleans up provider-rewritten values and reports restored false if any pre-write editable record disappears", async () => {
-    // 1. Provider rewrites replacement value to 192.0.2.99; rollback removes it and restores 192.0.2.10.
-    const provider = memoryDnsProvider({
+  test("rollback cleans up provider-rewritten values on whole-zone hosts and preserves concurrent records on per-record hosts", async () => {
+    // 1. Whole-zone provider rewrites replacement value to 192.0.2.99; rollback removes it and restores 192.0.2.10.
+    const baseWholeZone = memoryDnsProvider({
       zones: {
         "example.com": [
           { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
         ],
       },
     });
-    const baseCreate = provider.createRecords.bind(provider);
+    const wholeZoneProvider = {
+      ...baseWholeZone,
+      capabilities: { ...baseWholeZone.capabilities, wholeZoneWrites: true },
+    };
+    const baseCreate = baseWholeZone.createRecords.bind(baseWholeZone);
     let createCalls = 0;
-    provider.createRecords = (input, ctx) =>
+    wholeZoneProvider.createRecords = (input, ctx) =>
       baseCreate(
         {
           ...input,
@@ -615,14 +619,58 @@ describe("ensureRecords write verification", () => {
         },
         ctx,
       );
-    const dns = createDnsClient({ provider });
+    const dns = createDnsClient({ provider: wholeZoneProvider });
     const rewrittenErr = await dns
       .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
         onConflict: "replace",
       })
       .catch((caught: unknown) => caught);
     expect(rewrittenErr).toMatchObject({ code: "REQUEST_FAILED", details: { restored: true } });
-    expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.10"]);
+    expect(baseWholeZone.records("example.com").map((record) => record.value)).toEqual([
+      "192.0.2.10",
+    ]);
+
+    // 1b. Per-record provider: concurrent writer adds a same-(name, type) record mid-operation.
+    // Rollback must NOT delete the foreign record and must report restored: false + details.unexpected.
+    const perRecord = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
+        ],
+      },
+    });
+    const perRecordCreate = perRecord.createRecords.bind(perRecord);
+    let perRecordCalls = 0;
+    perRecord.createRecords = (input, ctx) =>
+      perRecordCreate(
+        {
+          ...input,
+          records:
+            ++perRecordCalls === 1
+              ? input.records.map((record) => ({ ...record, value: "192.0.2.99" }))
+              : input.records,
+        },
+        ctx,
+      );
+    const perRecordDns = createDnsClient({ provider: perRecord });
+    const foreignErr = await perRecordDns
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(foreignErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        restored: false,
+        unexpected: [{ type: "A", name: "app.example.com", value: "192.0.2.99" }],
+      },
+    });
+    expect(
+      perRecord
+        .records("example.com")
+        .map((record) => record.value)
+        .sort(),
+    ).toEqual(["192.0.2.10", "192.0.2.99"]);
 
     // 2. Provider drops an unrelated pre-existing editable TXT record and refuses to recreate it.
     const lossy = memoryDnsProvider({

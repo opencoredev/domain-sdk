@@ -25,15 +25,18 @@ export interface DomainSdkErrorOptions {
 
 const SECRET_KEYS =
   /^(?:[a-z0-9]+[_-]){0,4}(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)$/i;
-const BEARER =
-  /\b(?:(Bearer|ApiKey)\s+(?:\[REDACTED\]|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s"',;)}\]\\]+)|(Basic)\s+(?:\[REDACTED\]|[A-Za-z0-9+/=]{8,}|[^\s"',;)}\]\\]*:[^\s"',;)}\]\\]+)|(Digest)\s+(?:\[REDACTED\]|[^\r\n;}\]]+)|(Token)\s+(?:\[REDACTED\]|(?=[A-Za-z0-9._~+/=:-]*[\d_.:/+-])[^\s"',;)}\]\\]+))/gi;
-const URL_USERINFO = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:\/\/)([^/@\s:]+):([^@\s/]+)@/gi;
+const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)[ \t]+/gi;
+const URL_USERINFO = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:\/\/)([^/?#\s]+)@/gi;
 const INLINE_SECRET_PREFIX =
-  /(?<![A-Za-z0-9])(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session[_-]?id|token|secret)\\*["']?\s*(?:=|:)\s*/gi;
+  /(?<![A-Za-z0-9])(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)\\*["']?\s*(?:=|:)\s*/gi;
 const MAX_STRING = 1_000;
 const MAX_REDACT_DEPTH = 32;
 
-function scanSecretValueEnd(value: string, start: number, allowSecondToken = false): number {
+function scanSecretValueEnd(
+  value: string,
+  start: number,
+  options: { allowSecondToken?: boolean; includeSemicolons?: boolean } = {},
+): number {
   if (start >= value.length) return start;
   let index = start;
   const first = value[start];
@@ -71,19 +74,65 @@ function scanSecretValueEnd(value: string, start: number, allowSecondToken = fal
         }
         index += 1;
       }
+    } else if (options.includeSemicolons) {
+      while (index < value.length && !/[\r\n)}\]]/.test(value[index]!)) index += 1;
     } else {
       while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
     }
+  } else if (options.includeSemicolons) {
+    while (index < value.length && !/[\r\n)}\]]/.test(value[index]!)) index += 1;
   } else {
     while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
   }
-  if (allowSecondToken && index < value.length && /[ \t]/.test(value[index]!)) {
+  if (options.allowSecondToken && index < value.length && /[ \t]/.test(value[index]!)) {
     let next = index;
     while (next < value.length && /[ \t]/.test(value[next]!)) next += 1;
-    const tokenEnd = scanSecretValueEnd(value, next, false);
+    const tokenEnd = scanSecretValueEnd(value, next);
     if (tokenEnd > next) index = tokenEnd;
   }
   return index;
+}
+
+function scrubAuthSchemes(value: string): string {
+  AUTH_SCHEME_PREFIX.lastIndex = 0;
+  let out = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = AUTH_SCHEME_PREFIX.exec(value)) !== null) {
+    const scheme = match[1]!;
+    const lower = scheme.toLowerCase();
+    const valueStart = match.index + match[0].length;
+    if (valueStart >= value.length) break;
+    if (value.startsWith("[REDACTED]", valueStart)) {
+      AUTH_SCHEME_PREFIX.lastIndex = valueStart + "[REDACTED]".length;
+      continue;
+    }
+    const first = value[valueStart]!;
+    let valueEnd = valueStart;
+    if (
+      first === '"' ||
+      first === "'" ||
+      (first === "\\" && /^\\+"/.test(value.slice(valueStart)))
+    ) {
+      valueEnd = scanSecretValueEnd(value, valueStart);
+    } else if (lower === "digest") {
+      while (valueEnd < value.length && !/[\r\n;}\]]/.test(value[valueEnd]!)) valueEnd += 1;
+    } else {
+      while (valueEnd < value.length && !/[\s"',;)}\]\\]/.test(value[valueEnd]!)) valueEnd += 1;
+      const token = value.slice(valueStart, valueEnd);
+      if (
+        (lower === "basic" && !/^(?:[A-Za-z0-9+/=]{8,}|[^:]*:[^:]+)$/.test(token)) ||
+        (lower === "token" && !/[0-9_.:/+-]/.test(token))
+      ) {
+        continue;
+      }
+    }
+    if (valueEnd === valueStart) continue;
+    out += value.slice(cursor, match.index) + `${scheme} [REDACTED]`;
+    cursor = valueEnd;
+    AUTH_SCHEME_PREFIX.lastIndex = valueEnd;
+  }
+  return cursor === 0 ? value : out + value.slice(cursor);
 }
 
 function scrubInlineSecrets(value: string): string {
@@ -94,7 +143,11 @@ function scrubInlineSecrets(value: string): string {
   while ((match = INLINE_SECRET_PREFIX.exec(value)) !== null) {
     const valueStart = match.index + match[0].length;
     const isAuthHeader = /^(?:x-)?authorization\b/i.test(match[0]);
-    const valueEnd = scanSecretValueEnd(value, valueStart, isAuthHeader);
+    const isCookieHeader = /^(?:x-)?cookie\s*:/i.test(match[0]);
+    const valueEnd = scanSecretValueEnd(value, valueStart, {
+      allowSecondToken: isAuthHeader,
+      includeSemicolons: isCookieHeader,
+    });
     if (valueEnd === valueStart) continue;
     out += value.slice(cursor, valueStart) + "[REDACTED]";
     cursor = valueEnd;
@@ -106,14 +159,16 @@ function scrubInlineSecrets(value: string): string {
 function scrubString(value: string): string {
   const withoutUserinfo =
     value.includes("://") && value.includes("@")
-      ? value.replace(URL_USERINFO, "$1[REDACTED]:[REDACTED]@")
+      ? value.replace(URL_USERINFO, (_match, scheme: string, userinfo: string) => {
+          if (userinfo === "[REDACTED]" || userinfo === "[REDACTED]:[REDACTED]") {
+            return `${scheme}${userinfo}@`;
+          }
+          return userinfo.includes(":")
+            ? `${scheme}[REDACTED]:[REDACTED]@`
+            : `${scheme}[REDACTED]@`;
+        })
       : value;
-  return scrubInlineSecrets(
-    withoutUserinfo.replace(
-      BEARER,
-      (_match, a?: string, b?: string, c?: string, d?: string) => `${a ?? b ?? c ?? d} [REDACTED]`,
-    ),
-  );
+  return scrubInlineSecrets(scrubAuthSchemes(withoutUserinfo));
 }
 
 export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {

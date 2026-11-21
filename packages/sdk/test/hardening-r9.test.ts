@@ -369,4 +369,91 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       provider.list!({ cursor: "1junk", limit: 10 }, { logger: noopLogger }),
     ).rejects.toMatchObject({ code: "REQUEST_FAILED", provider: "netlify" });
   });
+
+  test("redact covers JSON-escaped auth schemes, multi-cookie headers, session=, URL passwords with @, and token-only URLs", () => {
+    expect(redact('Basic "dXNlcjpwYXNz"')).toBe("Basic [REDACTED]");
+    expect(redact('Token "LEAK_123"')).toBe("Token [REDACTED]");
+    const jsonEscaped = JSON.stringify({ message: 'Bearer "LEAK_123" and ApiKey "AK_999"' });
+    const scrubbedEscaped = redact(jsonEscaped) as string;
+    expect(scrubbedEscaped).not.toContain("LEAK_123");
+    expect(scrubbedEscaped).not.toContain("AK_999");
+
+    expect(redact("session=LEAK_123&ok=1")).toBe("session=[REDACTED]&ok=1");
+    expect(redact("Cookie: sid=one; auth=LEAK_123")).toBe("Cookie: [REDACTED]");
+
+    expect(redact("postgres://admin:p@ss@db.local:5432/app")).toBe(
+      "postgres://[REDACTED]:[REDACTED]@db.local:5432/app",
+    );
+    expect(redact("redis://:pass@host:6379/0")).toBe("redis://[REDACTED]:[REDACTED]@host:6379/0");
+    expect(redact("https://TOKEN@github.com/org/repo")).toBe(
+      "https://[REDACTED]@github.com/org/repo",
+    );
+    expect(redact("https://host:8080?email=user@example.com")).toBe(
+      "https://host:8080?email=user@example.com",
+    );
+  });
+
+  test("CLI supports -- terminator, rejects -h as flag value, and rejects inapplicable command flags", async () => {
+    let helpOut = "";
+    const helpCode = await runCli(["--help", "--"], {
+      env: {},
+      stdout: (s) => {
+        helpOut += s;
+      },
+      stderr: () => {},
+    });
+    expect(helpCode).toBe(0);
+    expect(helpOut).toContain("Usage:");
+
+    let errOut = "";
+    const dashHCode = await runCli(["get", "example.com", "--provider", "-h"], {
+      env: {},
+      stdout: () => {},
+      stderr: (s) => {
+        errOut += s;
+      },
+    });
+    expect(dashHCode).toBe(2);
+    expect(errOut).toContain("--provider needs a value.");
+
+    let badFlagOut = "";
+    const badFlagCode = await runCli(
+      ["get", "app.example.com", "--provider", "memory", "--limit", "bogus"],
+      {
+        env: {},
+        providers: {
+          memory: {
+            required: [],
+            create: () =>
+              ({
+                id: "memory",
+                capabilities: {
+                  wildcard: false,
+                  apex: true,
+                  dnsManagement: false,
+                  list: true,
+                },
+                add: async () => {
+                  throw new Error("unused");
+                },
+                get: async () => {
+                  throw new Error("unused");
+                },
+                verify: async () => {
+                  throw new Error("unused");
+                },
+                remove: async () => {},
+                list: async () => ({ domains: [] }),
+              }) as never,
+          },
+        },
+        stdout: () => {},
+        stderr: (s) => {
+          badFlagOut += s;
+        },
+      },
+    );
+    expect(badFlagCode).toBe(2);
+    expect(badFlagOut).toContain("--limit is not supported by get.");
+  });
 });
