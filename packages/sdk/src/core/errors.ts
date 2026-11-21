@@ -24,7 +24,7 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(?:x-)?(token|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|authorization|secret|password|private[_-]?key)$/i;
+  /^(?:x-)?(token|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|authorization|secret|password|private[_-]?key)$/i;
 const BEARER = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 const MAX_STRING = 1_000;
 
@@ -42,6 +42,24 @@ export function redact(value: unknown, seen = new WeakSet<object>()): unknown {
   return safe;
 }
 
+/**
+ * Copy a non-SDK error with its message redacted, keeping its name, stack frames, and a string or
+ * numeric `code` such as `ECONNRESET` so provider failures stay traceable.
+ */
+function redactedCause(cause: Error): Error {
+  const message = String(redact(cause.message));
+  const safe = new Error(message);
+  safe.name = cause.name;
+  const header = `${cause.name}: ${cause.message}`;
+  const stack = cause.stack?.startsWith(header)
+    ? `${cause.name}: ${message}${cause.stack.slice(header.length)}`
+    : cause.stack;
+  safe.stack = stack?.replace(BEARER, "Bearer [REDACTED]");
+  const code: unknown = Reflect.get(cause, "code");
+  if (typeof code === "string" || typeof code === "number") Reflect.set(safe, "code", code);
+  return safe;
+}
+
 export class DomainSdkError extends Error {
   readonly code: DomainSdkErrorCode;
   readonly provider?: string;
@@ -56,7 +74,7 @@ export class DomainSdkError extends Error {
       options.cause instanceof DomainSdkError
         ? options.cause
         : options.cause instanceof Error
-          ? new Error(String(redact(options.cause.message)))
+          ? redactedCause(options.cause)
           : redact(options.cause);
     super(String(redact(message)), { cause: safeCause });
     this.name = "DomainSdkError";
