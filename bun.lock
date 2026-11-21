@@ -64,6 +64,9 @@
     "packages/sdk": {
       "name": "@opencoredev/domain-sdk",
       "version": "0.3.0",
+      "bin": {
+        "domain-sdk": "./dist/cli.js",
+      },
       "dependencies": {
         "tldts": "^7.5.4",
       },

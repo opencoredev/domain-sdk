@@ -23,6 +23,9 @@
     "url": "git+https://github.com/opencoredev/domain-sdk.git",
     "directory": "packages/sdk"
   },
+  "bin": {
+    "domain-sdk": "./dist/cli.js"
+  },
   "files": [
     "dist",
     "README.md"
@@ -94,7 +97,7 @@
   },
   "scripts": {
     "build": "rm -rf dist && bun run build:js && bun run build:types",
-    "build:js": "bun build src/index.ts src/providers/vercel/index.ts src/providers/cloudflare/index.ts src/providers/railway/index.ts src/providers/render/index.ts src/providers/netlify/index.ts src/providers/bunny/index.ts src/providers/porkbun/index.ts src/providers/namecheap/index.ts src/providers/spaceship/index.ts src/testing/index.ts --root src --outdir dist --target node --format esm --sourcemap=external --splitting --entry-naming '[dir]/[name].[ext]'",
+    "build:js": "bun build src/index.ts src/providers/vercel/index.ts src/providers/cloudflare/index.ts src/providers/railway/index.ts src/providers/render/index.ts src/providers/netlify/index.ts src/providers/bunny/index.ts src/providers/porkbun/index.ts src/providers/namecheap/index.ts src/providers/spaceship/index.ts src/testing/index.ts src/cli.ts --root src --outdir dist --target node --format esm --sourcemap=external --splitting --entry-naming '[dir]/[name].[ext]'",
     "build:types": "tsc -p tsconfig.build.json",
     "check-types": "tsc --noEmit",
     "lint": "oxlint src test",
