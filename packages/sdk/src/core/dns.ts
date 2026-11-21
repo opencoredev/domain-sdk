@@ -361,7 +361,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           retry: options.retry,
           signal,
           // A failed replacement was already rolled back; the caller decides whether to try again.
-          shouldRetry: (error) => error.details?.restored === undefined,
+          // An add-only write that rolled back cleanly with nothing replaced is safe to retry.
+          shouldRetry: (error) =>
+            error.details?.restored === undefined ||
+            (error.details.restored === true &&
+              Array.isArray(error.details.replaced) &&
+              error.details.replaced.length === 0),
           onRetry: (error, attempt, delayMs) =>
             logger.warn?.("DNS operation will be retried.", {
               provider: provider.id,

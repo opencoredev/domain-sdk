@@ -24,11 +24,25 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(?:[a-z0-9]+[_-]){0,4}(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)$/i;
+  /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|secret|password|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))$/i;
 const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)[ \t]+/gi;
-const URL_USERINFO = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:\/\/)([^/?#\s"'<>\\]+)@/gi;
+const EXEMPT_AUTH_WORDS =
+  /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should)$/i;
+const URL_USERINFO = /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:(?:\\\/|\/){2})([^/?#\s"'<>\\]+)@/gi;
 const INLINE_SECRET_PREFIX =
-  /(?<![A-Za-z0-9])(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)\\*["']?\s*(?:=|:)\s*/gi;
+  /(?<![A-Za-z0-9])(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))\\*["']?\s*(?:=|:)\s*/gi;
+
+function isShortBasicCredential(token: string): boolean {
+  if (token.length < 4 || token.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(token)) {
+    return false;
+  }
+  try {
+    const decoded = atob(token);
+    return /^[\x20-\x7e]*:[\x20-\x7e]*$/.test(decoded) && decoded.length >= 2;
+  } catch {
+    return false;
+  }
+}
 const MAX_STRING = 1_000;
 const MAX_REDACT_DEPTH = 32;
 
@@ -42,6 +56,8 @@ function scanSecretValueEnd(
   const first = value[start];
   if (value.startsWith("[REDACTED]", start)) {
     return start + "[REDACTED]".length;
+  } else if (options.includeSemicolons) {
+    while (index < value.length && !/[\r\n]/.test(value[index]!)) index += 1;
   } else if (first === '"' || first === "'") {
     index = start + 1;
     while (index < value.length) {
@@ -74,13 +90,9 @@ function scanSecretValueEnd(
         }
         index += 1;
       }
-    } else if (options.includeSemicolons) {
-      while (index < value.length && !/[\r\n]/.test(value[index]!)) index += 1;
     } else {
       while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
     }
-  } else if (options.includeSemicolons) {
-    while (index < value.length && !/[\r\n]/.test(value[index]!)) index += 1;
   } else {
     while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
   }
@@ -125,11 +137,10 @@ function scrubAuthSchemes(value: string): string {
       const token = value.slice(valueStart, valueEnd);
       if (
         (lower === "basic" &&
+          !isShortBasicCredential(token) &&
           (!/^(?:[A-Za-z0-9+/=]{8,}|[^:]*:[^:]+)$/.test(token) ||
             /^[A-Za-z]?[a-z]+$/.test(token))) ||
-        (lower === "bearer" &&
-          /^(?:token|tokens|auth|authentication|authorization|header|credentials)$/i.test(token)) ||
-        (lower === "token" && !/[0-9_.:/+-]/.test(token))
+        ((lower === "bearer" || lower === "token") && EXEMPT_AUTH_WORDS.test(token))
       ) {
         continue;
       }
@@ -150,7 +161,7 @@ function scrubInlineSecrets(value: string): string {
   while ((match = INLINE_SECRET_PREFIX.exec(value)) !== null) {
     const valueStart = match.index + match[0].length;
     const isAuthHeader = /^(?:x-)?authorization\b/i.test(match[0]);
-    const isCookieHeader = /^(?:x-)?(?:set-)?cookie\s*:/i.test(match[0]);
+    const isCookieHeader = /^(?:x-)?(?:set[_-]?)?cookie\s*:/i.test(match[0]);
     const valueEnd = scanSecretValueEnd(value, valueStart, {
       allowSecondToken: isAuthHeader,
       includeSemicolons: isCookieHeader,
@@ -165,7 +176,7 @@ function scrubInlineSecrets(value: string): string {
 
 function scrubString(value: string): string {
   const withoutUserinfo =
-    value.includes("://") && value.includes("@")
+    (value.includes("://") || value.includes(":\\/\\/")) && value.includes("@")
       ? value.replace(URL_USERINFO, (_match, scheme: string, userinfo: string) => {
           if (userinfo === "[REDACTED]" || userinfo === "[REDACTED]:[REDACTED]") {
             return `${scheme}${userinfo}@`;

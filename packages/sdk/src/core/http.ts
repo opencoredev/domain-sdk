@@ -56,7 +56,7 @@ async function readText(response: Response, maxBytes: number, provider?: string)
 export function isAbortError(error: unknown): boolean {
   return (
     (error instanceof Error ||
-      (typeof DOMException !== "undefined" && error instanceof DOMException)) &&
+      (typeof DOMException === "function" && error instanceof DOMException)) &&
     error.name === "AbortError"
   );
 }

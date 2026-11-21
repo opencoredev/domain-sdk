@@ -585,4 +585,54 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     // Externally deleted _a must NOT be resurrected!
     expect(basePer.records("example.com")).toEqual([]);
   });
+
+  test("transient add-only DNS create errors still retry after clean rollback and redaction covers short Basic, alphabetic Token, escaped URLs, camelCase keys, and quoted/underscore cookies", async () => {
+    // 1. Transient 503 on add-only DNS write retries and succeeds on both per-record and whole-zone hosts
+    for (const wholeZoneWrites of [false, true]) {
+      const base = memoryDnsProvider();
+      const origCreate = base.createRecords.bind(base);
+      let calls = 0;
+      const provider: DnsProvider = {
+        ...base,
+        capabilities: { ...base.capabilities, wholeZoneWrites },
+        async createRecords(input, ctx) {
+          calls += 1;
+          if (calls === 1) {
+            throw new DomainSdkError("PROVIDER_UNAVAILABLE", "transient 503", {
+              provider: base.id,
+              statusCode: 503,
+              retryable: true,
+            });
+          }
+          return origCreate(input, ctx);
+        },
+      };
+      const dns = createDnsClient({
+        provider,
+        retry: { maxAttempts: 3, baseDelayMs: 0 },
+      });
+      const created = await dns.ensureRecords([
+        { type: "TXT", name: "_v.example.com", value: "ok" },
+      ]);
+      expect(calls).toBe(2);
+      expect(created).toHaveLength(1);
+    }
+
+    // 2. Short valid Base64 Basic, alphabetic Token, JSON-escaped URL userinfo, camelCase keys, and cookie variants
+    expect(redact("Basic dTpw")).toBe("Basic [REDACTED]");
+    expect(redact("Token alphabeticsecret")).toBe("Token [REDACTED]");
+    expect(redact("Token expired")).toBe("Token expired");
+    expect(redact("https:\\/\\/admin:hunter2@db.example.com")).toBe(
+      "https:\\/\\/[REDACTED]:[REDACTED]@db.example.com",
+    );
+    expect(redact({ sessionToken: "s1", secretAccessKey: "k1", githubToken: "g1" })).toEqual({
+      sessionToken: "[REDACTED]",
+      secretAccessKey: "[REDACTED]",
+      githubToken: "[REDACTED]",
+    });
+    expect(redact("set_cookie: sid=X; Path=/, refresh=zzzsecret2; Path=/")).toBe(
+      "set_cookie: [REDACTED]",
+    );
+    expect(redact('Cookie: "prefs={}"; sid=secret')).toBe("Cookie: [REDACTED]");
+  });
 });

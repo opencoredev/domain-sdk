@@ -19,12 +19,14 @@ Errors normalize authentication, permission, conflict, not-found, rate-limit, pr
 
 Every client method returns a promise and reports failures by rejecting it, including invalid input, so `await` with `try`/`catch` or `.catch()` handles every case. Creating a client throws synchronously.
 
-| Code                    | When                                                                                                                                                                                                                                                                                  |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `INVALID_CONFIGURATION` | A caller mistake in options: a missing provider, a `list()` limit outside 1 to 100, invalid `waitUntilActive()` polling or `retry` options, or creating a client in a browser.                                                                                                        |
-| `INVALID_HOSTNAME`      | A hostname, subdomain label, or DNS record name that cannot be used.                                                                                                                                                                                                                  |
-| `VERIFICATION_FAILED`   | `waitUntilActive()` stopped because `shouldStop` matched, by default when the domain reached `failed`. `details` holds the status and issues.                                                                                                                                         |
-| `REQUEST_FAILED`        | The provider rejected the request or returned something the SDK cannot use: malformed JSON, a body over the size cap, or DNS records missing or mismatched after a write (rollback errors also include `details.restored` and, when concurrent records remain, `details.unexpected`). |
-| `TIMEOUT`               | `waitUntilActive()` reached `timeoutMs` while the domain was still pending.                                                                                                                                                                                                           |
+| Code                    | When                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `INVALID_CONFIGURATION` | A caller mistake in options: a missing provider, a `list()` limit outside 1 to 100, invalid `waitUntilActive()` polling or `retry` options, or creating a client in a browser. |
+| `INVALID_HOSTNAME`      | A hostname, subdomain label, or DNS record name that cannot be used.                                                                                                           |
+| `VERIFICATION_FAILED`   | `waitUntilActive()` stopped because `shouldStop` matched, by default when the domain reached `failed`. `details` holds the status and issues.                                  |
+| `REQUEST_FAILED`        | The provider rejected the request or returned something the SDK cannot use: malformed JSON, a body over the size cap, or DNS records missing or mismatched after a write.      |
+| `TIMEOUT`               | `waitUntilActive()` reached `timeoutMs` while the domain was still pending.                                                                                                    |
+
+When a DNS write rolls back after an error, the rejected error preserves the underlying code (such as `REQUEST_FAILED`, `RATE_LIMITED`, or `PROVIDER_UNAVAILABLE`) and attaches `details.restored`, `details.replaced`, and (on per-record hosts when concurrent records remain) `details.unexpected`.
 
 Read next: [`DomainSdkError`](../api-reference/domain-sdk-error.mdx).
