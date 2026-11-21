@@ -42,11 +42,12 @@ for (const expectedSrc of ["^/ingest(?:/.*)?/$", "^/ingest(?:/(.*))?$"]) {
 }
 
 const llmsNoindex = routes.some(
-  (r) => r.src === "^/llms(?:-full)?\\.txt$" && r.headers?.["x-robots-tag"] === "noindex",
+  (r) =>
+    r.src === "^/(?:llms(?:-full)?\\.txt|.+\\.mdx?)$" && r.headers?.["x-robots-tag"] === "noindex",
 );
 if (!llmsNoindex) {
   throw new Error(
-    "Missing X-Robots-Tag: noindex header route for /llms.txt in Vercel config.json.",
+    "Missing X-Robots-Tag: noindex header route for /llms.txt and raw .md/.mdx endpoints in Vercel config.json.",
   );
 }
 
@@ -158,8 +159,11 @@ if (
   );
 }
 
+const site = `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim() || "www.domain-sdk.dev"}`;
+const expectedAuthor = `"author":{"@id":"${site}#organization"}`;
+
 const sampleDocHtml = readFileSync(join(staticDir, "docs/providers/vercel/index.html"), "utf8");
-if (!sampleDocHtml.includes('"author":{"@id":"https://www.domain-sdk.dev#organization"}')) {
+if (!sampleDocHtml.includes(expectedAuthor)) {
   throw new Error("Expected docs article JSON-LD to include organization author @id.");
 }
 
@@ -167,6 +171,9 @@ const sampleBlogPostHtml = readFileSync(
   join(staticDir, "blog/cloudflare-for-saas/index.html"),
   "utf8",
 );
+if (!sampleBlogPostHtml.includes(expectedAuthor)) {
+  throw new Error("Expected blog post JSON-LD to include organization author @id.");
+}
 if (
   !sampleBlogPostHtml.includes('class="domain-blog-byline"') ||
   !sampleBlogPostHtml.includes("Domain SDK team")

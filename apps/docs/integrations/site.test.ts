@@ -309,6 +309,13 @@ describe("head injection helpers and Vercel route patching", () => {
     expect(ingestRoutes).toHaveLength(2);
     expect(routes.findIndex((route) => route.src === "^/ingest(?:/.*)?/$")).toBeLessThan(slashIdx);
     expect(routes.findIndex((route) => route.dest === "_render")).toBeLessThan(slashIdx);
+    const noindex = routes.find((route) => route.headers?.["x-robots-tag"] === "noindex");
+    expect(noindex?.src).toBe("^/(?:llms(?:-full)?\\.txt|.+\\.mdx?)$");
+    expect(new RegExp(noindex!.src!).test("/llms.txt")).toBe(true);
+    expect(new RegExp(noindex!.src!).test("/llms-full.txt")).toBe(true);
+    expect(new RegExp(noindex!.src!).test("/docs/installation.md")).toBe(true);
+    expect(new RegExp(noindex!.src!).test("/docs/installation.mdx")).toBe(true);
+    expect(new RegExp(noindex!.src!).test("/docs/installation")).toBe(false);
     expect(() => patchVercelRoutes({ version: 3, routes: [] })).toThrow(/trailing-slash 308/);
   });
 

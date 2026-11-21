@@ -72,6 +72,12 @@ article.prose :not(pre) > code {
   color: #c8d6ff;
 }
 
+/* Blume resets .prose :where(pre.astro-code) to transparent with !important,
+   so re-apply the code surface token directly on fenced code blocks. */
+article.prose pre.astro-code {
+  background-color: var(--blume-code-background) !important;
+}
+
 /* Provider marks in the sidebar -------------------------------------------- */
 
 /* Blume's sidebar icons are Lucide names, so the provider marks from the

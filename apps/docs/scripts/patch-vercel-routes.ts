@@ -23,7 +23,7 @@ const INGEST_ROUTES: VercelRoute[] = [
 ];
 
 const LLMS_NOINDEX_ROUTE: VercelRoute = {
-  src: "^/llms(?:-full)?\\.txt$",
+  src: "^/(?:llms(?:-full)?\\.txt|.+\\.mdx?)$",
   headers: { "x-robots-tag": "noindex" },
   continue: true,
 };
