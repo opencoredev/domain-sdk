@@ -19,9 +19,10 @@ const domains = createDomainClient({
 export const subdomains = createSubdomainClient({
   domainClient: domains,
   baseDomain: "mydomain.com",
-  reservedLabels: ["www", "api", "admin", "mail"],
 });
 ```
+
+`www`, `api`, `admin`, and `mail` are reserved by default. Pass `reservedLabels` to replace that list, for example `[...DEFAULT_RESERVED_LABELS, "billing"]`.
 
 ## Provision one wildcard
 

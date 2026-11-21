@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { createDomainClient, createSubdomainClient, DomainSdkError } from "../../src";
+import {
+  createDomainClient,
+  createSubdomainClient,
+  DEFAULT_RESERVED_LABELS,
+  DomainSdkError,
+} from "../../src";
 import { memoryProvider } from "../../src/testing";
 
 describe("subdomain client", () => {
@@ -86,5 +91,71 @@ describe("subdomain client", () => {
     });
     wildcardProvider.capabilities.wildcardDomains = true;
     await supported.removeWildcard();
+  });
+
+  test("reserves www, api, admin, and mail by default", () => {
+    const subdomains = createSubdomainClient({
+      domainClient: createDomainClient({ provider: memoryProvider() }),
+      baseDomain: "example.com",
+    });
+    expect(DEFAULT_RESERVED_LABELS).toEqual(["www", "api", "admin", "mail"]);
+    for (const label of ["www", "API", "admin", "mail", "_acme-challenge"])
+      expect(() => subdomains.toHostname(label)).toThrow(
+        expect.objectContaining({ code: "INVALID_HOSTNAME" }),
+      );
+    expect(subdomains.toHostname("acme")).toBe("acme.example.com");
+  });
+
+  test("reservedLabels replaces the defaults and [] opts out", () => {
+    const domainClient = createDomainClient({ provider: memoryProvider() });
+    const open = createSubdomainClient({
+      domainClient,
+      baseDomain: "example.com",
+      reservedLabels: [],
+    });
+    expect(open.toHostname("www")).toBe("www.example.com");
+    const extended = createSubdomainClient({
+      domainClient,
+      baseDomain: "example.com",
+      reservedLabels: [...DEFAULT_RESERVED_LABELS, "billing"],
+    });
+    for (const label of ["www", "billing"])
+      expect(() => extended.toHostname(label)).toThrow(DomainSdkError);
+  });
+
+  test("lists only tenant subdomains of the base domain", async () => {
+    const memory = memoryProvider();
+    const wildcardProvider = {
+      ...memory,
+      capabilities: { ...memory.capabilities, wildcardDomains: true },
+    };
+    const domainClient = createDomainClient({ provider: wildcardProvider });
+    for (const hostname of [
+      "acme.example.com",
+      "beta.example.com",
+      "www.example.com",
+      "deep.acme.example.com",
+      "*.example.com",
+      "app.other.com",
+      "example.com",
+    ])
+      await domainClient.add(hostname);
+    const subdomains = createSubdomainClient({ domainClient, baseDomain: "example.com" });
+
+    const all = await subdomains.list({ limit: 100 });
+    expect(all.subdomains.map(({ label, domain }) => [label, domain.hostname])).toEqual([
+      ["acme", "acme.example.com"],
+      ["beta", "beta.example.com"],
+    ]);
+    expect(all.nextCursor).toBeUndefined();
+
+    const labels: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await subdomains.list({ limit: 2, cursor });
+      labels.push(...page.subdomains.map((subdomain) => subdomain.label));
+      cursor = page.nextCursor;
+    } while (cursor);
+    expect(labels).toEqual(["acme", "beta"]);
   });
 });

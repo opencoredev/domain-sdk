@@ -1,15 +1,42 @@
 import { DomainSdkError } from "./errors";
 import { normalizeHostname } from "./hostname";
 import type { DomainClient } from "./provider";
-import type { Domain, RequestOptions, WaitUntilActiveOptions } from "./types";
+import type { Domain, ListDomainsOptions, RequestOptions, WaitUntilActiveOptions } from "./types";
+
+/**
+ * Labels reserved when `reservedLabels` is not set. Underscore labels such as `_acme-challenge`
+ * need no entry: they are never valid tenant labels.
+ */
+export const DEFAULT_RESERVED_LABELS: readonly string[] = Object.freeze([
+  "www",
+  "api",
+  "admin",
+  "mail",
+]);
 
 export interface SubdomainClientOptions {
   /** Domain lifecycle client for the platform that serves tenant traffic. */
   domainClient: DomainClient;
   /** Parent hostname owned by the application, for example `mydomain.com`. */
   baseDomain: string;
-  /** Labels that tenants must never be allowed to claim. */
+  /**
+   * Labels that tenants must never be allowed to claim. Defaults to `DEFAULT_RESERVED_LABELS`
+   * (`www`, `api`, `admin`, `mail`). A list replaces the defaults, so pass `[]` to reserve nothing
+   * or `[...DEFAULT_RESERVED_LABELS, "billing"]` to extend them.
+   */
   reservedLabels?: readonly string[];
+}
+
+export interface TenantSubdomain {
+  /** Normalized direct-child label, for example `acme`. */
+  label: string;
+  domain: Domain;
+}
+
+export interface SubdomainPage {
+  subdomains: TenantSubdomain[];
+  /** Pass to the next `list()` call. Present while the provider has more domains. */
+  nextCursor?: string;
 }
 
 export interface SubdomainClient {
@@ -29,6 +56,12 @@ export interface SubdomainClient {
   verify(label: string, options?: RequestOptions): Promise<Domain>;
   remove(label: string, options?: RequestOptions): Promise<void>;
   waitUntilActive(label: string, options?: WaitUntilActiveOptions): Promise<Domain>;
+  /**
+   * List tenant subdomains: direct children of `baseDomain` that are not reserved and not the
+   * wildcard. Reads one provider page per call and filters it, so a page can hold fewer than
+   * `limit` subdomains, or none, while `nextCursor` is still set.
+   */
+  list(options?: ListDomainsOptions): Promise<SubdomainPage>;
 
   /** Attach `*.baseDomain` once so the application can route every tenant label. */
   provisionWildcard(options?: RequestOptions): Promise<Domain>;
@@ -80,7 +113,9 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
     return label;
   };
 
-  const reserved = new Set((options.reservedLabels ?? []).map((label) => normalizeLabel(label)));
+  const reserved = new Set(
+    (options.reservedLabels ?? DEFAULT_RESERVED_LABELS).map((label) => normalizeLabel(label)),
+  );
   const allowedLabel = (input: string): string => {
     const label = normalizeLabel(input);
     if (reserved.has(label)) invalidLabel(input, baseDomain, "the label is reserved");
@@ -132,6 +167,17 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
     },
     async waitUntilActive(label, polling) {
       return domainClient.waitUntilActive(toHostname(label), polling);
+    },
+    async list(listOptions) {
+      const page = await domainClient.list(listOptions);
+      const subdomains: TenantSubdomain[] = [];
+      for (const domain of page.domains) {
+        if (!domain.hostname.endsWith(suffix)) continue;
+        const label = domain.hostname.slice(0, -suffix.length);
+        if (!label || label.includes(".") || label === "*" || reserved.has(label)) continue;
+        subdomains.push({ label, domain });
+      }
+      return { subdomains, nextCursor: page.nextCursor };
     },
     async provisionWildcard(advanced) {
       return withWildcard((hostname) => domainClient.add(hostname, advanced));

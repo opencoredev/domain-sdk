@@ -13,7 +13,7 @@ export {
 export { DomainSdkError } from "./core/errors";
 export { normalizeHostname } from "./core/hostname";
 export { deduplicateRecords } from "./core/records";
-export { createSubdomainClient } from "./core/subdomains";
+export { createSubdomainClient, DEFAULT_RESERVED_LABELS } from "./core/subdomains";
 export type {
   ApplyDomainRecordsOptions,
   DnsClient,
@@ -40,7 +40,12 @@ export type {
   DomainProviderCapabilities,
   ProviderContext,
 } from "./core/provider";
-export type { SubdomainClient, SubdomainClientOptions } from "./core/subdomains";
+export type {
+  SubdomainClient,
+  SubdomainClientOptions,
+  SubdomainPage,
+  TenantSubdomain,
+} from "./core/subdomains";
 export type {
   AddDomainObject,
   CertificateStatus,
