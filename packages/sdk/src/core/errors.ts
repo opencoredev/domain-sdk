@@ -24,10 +24,10 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key)$/i;
-const BEARER = /\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+/gi;
+  /^(?:[\w-]*[_-])?(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key)$/i;
+const BEARER = /\b(Bearer|Basic|Token|ApiKey)\s+[A-Za-z0-9._~+/=-]+/gi;
 const INLINE_SECRET =
-  /(\b(?:x-)?(?:access[_-]?token|accessToken|access[_-]?key|accessKey|api[_-]?token|apiToken|api[_-]?key|apiKey|api[_-]?secret|apiSecret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|clientSecret|refresh[_-]?token|refreshToken|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|token|secret)["']?\s*(?:=|:)\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s&,;)}\]]+)/gi;
+  /(\b(?:[\w-]*[_-])?(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|token|secret)\\?["']?\s*(?:=|:)\s*)(?:\\"(?:\\.|[^"\\])*\\"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s&,;)}\]]+)/gi;
 const MAX_STRING = 1_000;
 
 function scrubString(value: string): string {

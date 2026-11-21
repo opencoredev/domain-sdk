@@ -82,7 +82,7 @@ export async function readJson(
       provider,
       statusCode: response.status,
       retryable: response.status >= 500,
-      details: { response: rawText.slice(0, 1_000) },
+      details: { response: redact(rawText) },
     });
   }
 }

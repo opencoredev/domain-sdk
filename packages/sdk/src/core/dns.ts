@@ -285,7 +285,11 @@ function incompatible(a: DnsRecordInput, b: DnsRecordInput): boolean {
 }
 
 function conflictsWith(existing: ZoneRecord, wanted: DnsRecordInput): boolean {
-  if (existing.name !== wanted.name || sameRecord(existing, wanted)) return false;
+  if (
+    existing.name.trim().toLowerCase().replace(/\.$/, "") !== wanted.name.toLowerCase() ||
+    sameRecord(existing, wanted)
+  )
+    return false;
   const type = existing.type.toUpperCase();
   if (type === "CNAME" || wanted.type === "CNAME") return true;
   if (type === wanted.type) return ROUTING_TYPES.has(type);
@@ -633,12 +637,17 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       ttl,
     });
     const beforeEditable = before.filter((record) => record.editable);
+    const ownerName = (name: string) => name.trim().toLowerCase().replace(/\.$/, "");
     const affectedNames = new Set([
-      ...replaced.map((record) => normalizeHostname(record.name)),
-      ...requested.map((record) => normalizeHostname(record.name)),
+      ...replaced.map((record) => ownerName(record.name)),
+      ...requested.map((record) => ownerName(record.name)),
     ]);
-    const isAffectedEditable = (record: ZoneRecord) =>
-      record.editable && affectedNames.has(normalizeHostname(record.name));
+    const unexpectedCandidates = (records: ZoneRecord[]) =>
+      provider.capabilities.wholeZoneWrites
+        ? records.filter((record) => record.editable)
+        : requested.length
+          ? records.filter((record) => record.editable && affectedNames.has(ownerName(record.name)))
+          : [];
     const subtract = (expected: ZoneRecord[], actual: ZoneRecord[]) => {
       const pool = [...actual];
       let pending = expected;
@@ -655,10 +664,8 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     let restored = false;
     try {
       const current = await provider.listRecords({ zone }, ctx);
-      if (requested.length) {
-        const unexpected = subtract(current.filter(isAffectedEditable), beforeEditable);
-        if (unexpected.length) await provider.deleteRecords({ zone, records: unexpected }, ctx);
-      }
+      const unexpected = subtract(unexpectedCandidates(current), beforeEditable);
+      if (unexpected.length) await provider.deleteRecords({ zone, records: unexpected }, ctx);
       // Match one for one, exact TTL matches first, so every pre-write editable record that
       // disappeared is restored with its own TTL. Ids are not used because whole-zone hosts reissue them.
       const gone = subtract(beforeEditable, current).map(asInput);
@@ -669,9 +676,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       if (records.length === gone.length) {
         const verified = await provider.listRecords({ zone }, ctx);
         const stillGone = subtract(beforeEditable, verified);
-        const stillUnexpected = requested.length
-          ? subtract(verified.filter(isAffectedEditable), beforeEditable)
-          : [];
+        const stillUnexpected = subtract(unexpectedCandidates(verified), beforeEditable);
         restored = stillGone.length === 0 && stillUnexpected.length === 0;
       }
     } catch {

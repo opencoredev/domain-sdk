@@ -103,7 +103,11 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
         | PorkbunResponse
         | undefined;
     } catch (error) {
-      if (isResponseTooLarge(error)) throw error;
+      if (
+        isResponseTooLarge(error) ||
+        (error instanceof DomainSdkError && error.code === "PROVIDER_UNAVAILABLE")
+      )
+        throw error;
       if (context.signal?.aborted)
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {
           provider: "porkbun",

@@ -180,7 +180,11 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
     try {
       body = await readJson(response, MAX_RESPONSE_BYTES, "spaceship");
     } catch (error) {
-      if (isResponseTooLarge(error)) throw error;
+      if (
+        isResponseTooLarge(error) ||
+        (error instanceof DomainSdkError && error.code === "PROVIDER_UNAVAILABLE")
+      )
+        throw error;
       if (context.signal?.aborted || (error instanceof Error && error.name === "AbortError"))
         throw new DomainSdkError("ABORTED", "The Spaceship request was cancelled.", {
           provider: "spaceship",
@@ -248,25 +252,21 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
           `${recordsPath(zone)}?take=100&skip=${skip}`,
           context,
         );
+        if (!page || !Array.isArray(page.items) || !Number.isInteger(page.total) || page.total < 0)
+          throw new DomainSdkError(
+            "REQUEST_FAILED",
+            "Spaceship returned an invalid records page.",
+            {
+              provider: "spaceship",
+            },
+          );
         // Pages are offsets, so a record added or deleted between pages shifts every later
         // page and would skip or repeat a record. Start over to get a consistent snapshot.
-        if (
-          page &&
-          Number.isInteger(page.total) &&
-          expectedTotal !== undefined &&
-          page.total !== expectedTotal
-        ) {
+        if (expectedTotal !== undefined && page.total !== expectedTotal) {
           restart();
           continue;
         }
-        if (
-          !page ||
-          !Array.isArray(page.items) ||
-          !Number.isInteger(page.total) ||
-          page.total < 0 ||
-          (!page.items.length && skip < page.total) ||
-          skip + page.items.length > page.total
-        )
+        if ((!page.items.length && skip < page.total) || skip + page.items.length > page.total)
           throw new DomainSdkError(
             "REQUEST_FAILED",
             "Spaceship returned an invalid records page.",

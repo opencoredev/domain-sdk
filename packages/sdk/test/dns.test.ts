@@ -670,4 +670,87 @@ describe("ensureRecords write verification", () => {
     );
     expect(records.map((r) => r.value)).toEqual(["192.0.2.2"]);
   });
+
+  test("rolls back cleanly when zones or requests contain underscore or wildcard names and detects uppercase conflicts", async () => {
+    // 1. Unrelated _dmarc bystander + _vercel requested record during failed create rollback.
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "a1", type: "A", name: "example.com", value: "1.1.1.1", editable: true },
+          {
+            id: "dmarc",
+            type: "TXT",
+            name: "_dmarc.example.com",
+            value: "v=DMARC1; p=none",
+            editable: true,
+          },
+        ],
+      },
+    });
+    const origCreate = provider.createRecords.bind(provider);
+    let calls = 0;
+    provider.createRecords = async (input, ctx) => {
+      if (++calls === 1)
+        throw new DomainSdkError("PROVIDER_UNAVAILABLE", "down", { provider: provider.id });
+      return origCreate(input, ctx);
+    };
+    const dns = createDnsClient({ provider });
+    const err = await dns
+      .ensureRecords(
+        [
+          { type: "A", name: "example.com", value: "2.2.2.2" },
+          { type: "TXT", name: "_vercel.example.com", value: "vc-verify=123" },
+        ],
+        { onConflict: "replace" },
+      )
+      .catch((caught: unknown) => caught);
+    expect(err).toMatchObject({ code: "PROVIDER_UNAVAILABLE", details: { restored: true } });
+    expect(provider.records("example.com").map((r) => `${r.type}:${r.name}:${r.value}`)).toEqual([
+      "TXT:_dmarc.example.com:v=DMARC1; p=none",
+      "A:example.com:1.1.1.1",
+    ]);
+
+    // 2. Wildcard CNAME conflict rollback.
+    const wild = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          {
+            id: "w1",
+            type: "CNAME",
+            name: "*.example.com",
+            value: "old.example.net",
+            editable: true,
+          },
+        ],
+      },
+    });
+    const wildOrigCreate = wild.createRecords.bind(wild);
+    let wildCalls = 0;
+    wild.createRecords = async (input, ctx) => {
+      if (++wildCalls === 1)
+        throw new DomainSdkError("PROVIDER_UNAVAILABLE", "down", { provider: wild.id });
+      return wildOrigCreate(input, ctx);
+    };
+    const wildErr = await createDnsClient({ provider: wild })
+      .ensureRecords([{ type: "CNAME", name: "*.example.com", value: "new.example.net" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(wildErr).toMatchObject({ code: "PROVIDER_UNAVAILABLE", details: { restored: true } });
+    expect(wild.records("example.com").map((r) => r.value)).toEqual(["old.example.net"]);
+
+    // 3. Case-insensitive owner conflict detection.
+    const mixed = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "up", type: "A", name: "APP.example.com", value: "1.1.1.1", editable: true },
+        ],
+      },
+    });
+    await expect(
+      createDnsClient({ provider: mixed }).ensureRecords([
+        { type: "A", name: "app.example.com", value: "2.2.2.2" },
+      ]),
+    ).rejects.toMatchObject({ code: "DOMAIN_CONFLICT" });
+  });
 });

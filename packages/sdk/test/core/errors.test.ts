@@ -102,14 +102,43 @@ test("recursively redacts nested fetch error causes and handles circular causes"
     access_token: 'tok_"escaped"_789',
     authorization: "Basic dXNlcjpwYXNz",
   });
-  const wrappedJson = new DomainSdkError("REQUEST_FAILED", quotedJson, {
-    cause: new Error(quotedJson),
-    details: { response: quotedJson },
-  });
-  for (const secret of ["pk_live_123", "sk_live_456", "tok_", "dXNlcjpwYXNz"]) {
+  const doubleEncoded = JSON.stringify(quotedJson);
+  const wrappedJson = new DomainSdkError(
+    "REQUEST_FAILED",
+    `${quotedJson} ${doubleEncoded} cf_api_key=cf_secret_999 Authorization: Token tok_header_888`,
+    {
+      cause: new Error(`${quotedJson} ${doubleEncoded}`),
+      details: { response: `${quotedJson} ${doubleEncoded}` },
+    },
+  );
+  for (const secret of [
+    "pk_live_123",
+    "sk_live_456",
+    "tok_",
+    "dXNlcjpwYXNz",
+    "cf_secret_999",
+    "tok_header_888",
+  ]) {
     expect(wrappedJson.message).not.toContain(secret);
     expect((wrappedJson.cause as Error).message).not.toContain(secret);
     expect((wrappedJson.cause as Error).stack).not.toContain(secret);
     expect(JSON.stringify(wrappedJson.details)).not.toContain(secret);
   }
+});
+
+test("readJson redacts malformed JSON before truncating the error preview", async () => {
+  const { readJson } = await import("../../src/core/http");
+  const padding = "x".repeat(970);
+  const body = `{"pad":"${padding}","apiKey":"secret_part_1 secret_part_2_tail"} broken`;
+  let caught: unknown;
+  try {
+    await readJson(new Response(body, { status: 500 }), undefined, "vercel");
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(DomainSdkError);
+  const err = caught as DomainSdkError;
+  expect(err.provider).toBe("vercel");
+  expect(String(err.details?.response)).not.toContain("secret_part_1");
+  expect(String(err.details?.response)).not.toContain("secret_part_2");
 });
