@@ -335,6 +335,11 @@ export function cloudflareSaaS(options: CloudflareSaaSOptions): CloudflareSaaSPr
     async remove({ hostname }, context) {
       const existing = await find(hostname, context);
       if (!existing?.id) return;
+      if (existing.id === "." || existing.id === "..") {
+        throw new DomainSdkError("REQUEST_FAILED", "Invalid Cloudflare custom hostname id.", {
+          provider: "cloudflare",
+        });
+      }
       await request(`/${encodeURIComponent(existing.id)}`, context, { method: "DELETE" }, true);
     },
   };

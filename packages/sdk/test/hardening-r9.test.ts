@@ -2672,4 +2672,196 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       details: { committed: true, restored: false, externalChange: true },
     });
   });
+
+  test("R33: TXT record details preservation, cross-realm hooks, frozen hook errors, spaced/passphrase redaction, per-record foreignSameKey, throwing restore locked record, and Cloudflare dot-segment IDs", async () => {
+    // 1. DNS record values (e.g. TXT verification tokens) are preserved in structured error details.
+    const txtErr = new DomainSdkError("REQUEST_FAILED", "missing", {
+      details: {
+        missing: [{ type: "TXT", name: "_verify.example.com", value: "token=abc123" }],
+        unexpected: [{ type: "TXT", name: "_verify.example.com", value: "secret=xyz789" }],
+        collateralMissing: [{ type: "TXT", name: "_verify.example.com", value: "password=p1" }],
+        passphrase: "pp_secret_value",
+      },
+    });
+    expect(txtErr.details).toMatchObject({
+      missing: [{ type: "TXT", name: "_verify.example.com", value: "token=abc123" }],
+      unexpected: [{ type: "TXT", name: "_verify.example.com", value: "secret=xyz789" }],
+      collateralMissing: [{ type: "TXT", name: "_verify.example.com", value: "password=p1" }],
+      passphrase: "[REDACTED]",
+    });
+
+    // 2. Spaced :, %3A, %3D, Basic =, Digest =, API key:, and auth= redaction.
+    for (const [raw, leak] of [
+      ['token : "supersecret123"', "supersecret123"],
+      ["Bearer : sk_live_abc123", "sk_live_abc123"],
+      ["ApiKey : ak_live_987654", "ak_live_987654"],
+      ["Basic = admin:s3cr3t", "s3cr3t"],
+      ['Digest = "dig_secret_99"', "dig_secret_99"],
+      ["token %3A tok_enc_111", "tok_enc_111"],
+      ["token %3D tok_enc_222", "tok_enc_222"],
+      ["Invalid API key: sk_live_spacekey", "sk_live_spacekey"],
+      ["auth=Zm9vOmJhcg==", "Zm9vOmJhcg=="],
+      ["AUTH: raw_auth_val_1", "raw_auth_val_1"],
+    ] as const) {
+      const redacted = String(redact(raw));
+      expect(redacted).not.toContain(leak);
+      expect(redacted).toContain("[REDACTED]");
+    }
+    expect(String(redact("auth: failed"))).toBe("auth: failed");
+
+    // 3. Cross-realm promise from onOperation does not leak unhandled rejection,
+    //    and onOperation cannot mutate the thrown error's code/retryable.
+    const { runInNewContext } = await import("node:vm");
+    const foreignRejection = () =>
+      runInNewContext("Promise.reject(new Error('foreign-hook-boom'))");
+    const warnings: string[] = [];
+    const mutClient = createDomainClient({
+      provider: memoryProvider(),
+      logger: {
+        debug() {},
+        info() {},
+        warn(msg) {
+          warnings.push(msg);
+        },
+        error() {},
+      },
+      onOperation: ((ev: { outcome: string; error?: DomainSdkError }) => {
+        if (ev.error) {
+          (ev.error as { code: string }).code = "TIMEOUT";
+          (ev.error as { retryable: boolean }).retryable = true;
+        }
+        return foreignRejection();
+      }) as unknown as () => void,
+    });
+    const missingErr = await mutClient.get("missing-r33.example.com").catch((e) => e);
+    await new Promise((r) => setTimeout(r, 10));
+    expect(missingErr).toBeInstanceOf(DomainSdkError);
+    expect(missingErr.code).toBe("DOMAIN_NOT_FOUND");
+    expect(missingErr.retryable).toBe(false);
+    expect(warnings.some((w) => w.includes("onOperation hook threw"))).toBe(true);
+
+    // 4. Per-record host pre-commit throw with concurrent foreign same-key record sets restored: true, externalChange: true.
+    const prZone: ZoneRecord[] = [];
+    const prErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "pr-foreign-samekey",
+        capabilities: {
+          wholeZoneWrites: false,
+          recordTypes: ["A"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return prZone.map((r) => ({ ...r }));
+        },
+        async createRecords() {
+          prZone.push({
+            id: "f-same",
+            type: "A",
+            name: "app.example.com",
+            value: "8.8.8.8",
+            ttl: 300,
+            editable: true,
+          });
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "write failed before commit", {
+            provider: "pr-foreign-samekey",
+          });
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(prErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true, externalChange: true },
+    });
+    expect(prErr.details?.unexpected).toBeUndefined();
+
+    // 5. Throwing restore with concurrent locked owned record preserves externalChange: true.
+    const lrZone: ZoneRecord[] = [
+      {
+        id: "old1",
+        type: "A",
+        name: "app.example.com",
+        value: "9.9.9.9",
+        ttl: 300,
+        editable: true,
+      },
+    ];
+    let lrCreate = 0;
+    const lrErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "wz-locked-concurrent",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["A"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return lrZone.map((r) => ({ ...r }));
+        },
+        async createRecords() {
+          lrCreate += 1;
+          if (lrCreate === 1) {
+            lrZone.length = 0;
+            throw new DomainSdkError("REQUEST_FAILED", "write failed", {
+              provider: "wz-locked-concurrent",
+            });
+          }
+          lrZone.push({
+            id: "locked-1",
+            type: "A",
+            name: "app.example.com",
+            value: "1.2.3.4",
+            ttl: 300,
+            editable: false,
+          });
+          throw new DomainSdkError("REQUEST_FAILED", "restore failed", {
+            provider: "wz-locked-concurrent",
+          });
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+        onConflict: "replace",
+      })
+      .catch((e) => e);
+    expect(lrErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { restored: false, externalChange: true },
+    });
+
+    // 6. Cloudflare remove() rejects dot-segment response IDs ("." / "..").
+    let cfDeleteCalled = false;
+    const cf = cloudflareSaaS({
+      apiToken: "cf-tok",
+      zoneId: "zone123",
+      cnameTarget: "fallback.example.com",
+      fetch: async (_url, init) => {
+        if (init?.method === "DELETE") {
+          cfDeleteCalled = true;
+        }
+        return new Response(
+          JSON.stringify({
+            success: true,
+            result: [{ id: "..", hostname: "dot.example.com", status: "active" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      },
+    });
+    const cfErr = await createDomainClient({ provider: cf, retry: { maxAttempts: 1 } })
+      .remove("dot.example.com")
+      .catch((e) => e);
+    expect(cfErr).toBeInstanceOf(DomainSdkError);
+    expect(cfDeleteCalled).toBe(false);
+  });
 });

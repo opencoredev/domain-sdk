@@ -24,7 +24,7 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|basic[_-]?auth|auth|credentials|bearer|jwt|x-amz-signature|signature|secret|password|passwd|pwd|pass|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Bearer|Jwt))$/i;
+  /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|basic[_-]?auth|auth|credentials|bearer|jwt|x-amz-signature|signature|secret|password|passwd|pwd|pass|passphrase|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Bearer|Jwt))$/i;
 const AUTH_SCHEME_PREFIX =
   /\b(Bearer|ApiKey|Basic|Digest|Token)(\s+|%20|%09|[:=](?:[ \t]|%20|%09)*|%3A(?:[ \t]|%20|%09)*|%3D(?:[ \t]|%20|%09)*)/gi;
 const AUTH_PARAM_PREFIX =
@@ -38,7 +38,7 @@ const URL_USERINFO_DOUBLE_QUOTED =
 const URL_USERINFO_SINGLE_QUOTED =
   /(?<=')([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/']|(?![/\\']))|[^/?#\s\\'<>]|'(?=[^}\]:\s])(?!,\s*'))+)@/gi;
 const INLINE_SECRET_PREFIX =
-  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|bearer|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|passphrase|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?::=|=|:|%3D|%3A)(?:\s|%20|%09)*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|password|passwd|pwd|passphrase|private[_-]?key|secret)[ \t]+|(?:password|passphrase|secret)[ \t]+is[ \t]+))/gi;
+  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[ \t]+key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|basic|digest|auth|bearer|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|passphrase|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?::=|=|:|%3D|%3A)(?:\s|%20|%09)*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|password|passwd|pwd|passphrase|private[_-]?key|secret)[ \t]+|(?:password|passphrase|secret)[ \t]+is[ \t]+))/gi;
 
 function isShortBasicCredential(token: string): boolean {
   if (token.length < 4 || token.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(token)) {
@@ -244,10 +244,16 @@ function scrubAuthSchemes(value: string): string {
       continue;
     }
     const first = value[valueStart]!;
-    // Spaced key/value assignments like `token = "secret"` or `token := secret` belong to scrubInlineSecrets.
+    // Spaced key/value assignments like `token = "secret"`, `token : "secret"`, `token := secret`,
+    // or `token %3D secret` belong to scrubInlineSecrets.
     if (
       /^\s+$/.test(match[2]!) &&
-      (first === "=" || (first === ":" && value[valueStart + 1] === "="))
+      (first === "=" ||
+        (first === ":" &&
+          (value[valueStart + 1] === "=" ||
+            value[valueStart + 1] === " " ||
+            value[valueStart + 1] === "\t")) ||
+        /^%(?:3A|3D)/i.test(value.slice(valueStart, valueStart + 3)))
     ) {
       continue;
     }
@@ -516,12 +522,12 @@ function scrubInlineSecrets(value: string): string {
     const rawVal = value.slice(valueStart, valueEnd);
     const quote = value[valueStart];
     const cleanVal = rawVal.replace(/[.!?:]+$/, "");
-    const isBareSecretOrPassword = /^(?:secret|password)[ \t]+$/i.test(match[0]);
+    const isBareSecretOrPassword = /^(?:secret|password)[ \t]+$|^basic\s*:\s*$/i.test(match[0]);
     if (
       quote !== '"' &&
       quote !== "'" &&
       quote !== "\\" &&
-      /^(?:token|authorization|pass|password|passwd|pwd|signature|credentials|jwt|secret)\s*(?:=|:|is\s+|\s+)\s*$/i.test(
+      /^(?:token|authorization|auth|basic|digest|api[ \t]+key|pass|password|passwd|pwd|signature|credentials|jwt|secret)\s*(?:=|:|is\s+|\s+)\s*$/i.test(
         match[0],
       ) &&
       (EXEMPT_AUTH_WORDS.test(cleanVal) ||
@@ -620,7 +626,20 @@ function setDataProperty(target: Record<string, unknown>, key: string, value: un
   });
 }
 
-export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
+const DNS_RECORD_DETAIL_KEYS = new Set([
+  "missing",
+  "unexpected",
+  "collateralMissing",
+  "replaced",
+  "conflicts",
+]);
+
+export function redact(
+  value: unknown,
+  seen = new WeakSet<object>(),
+  depth = 0,
+  inDnsRecordList = false,
+): unknown {
   if (typeof value === "string") {
     const bounded =
       value.length > MAX_STRING * 8 && !/^[\s]*["{[]/.test(value)
@@ -640,7 +659,9 @@ export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0):
   }
   if (isArray) {
     try {
-      return (value as unknown[]).slice(0, 50).map((item) => redact(item, seen, depth + 1));
+      return (value as unknown[])
+        .slice(0, 50)
+        .map((item) => redact(item, seen, depth + 1, inDnsRecordList));
     } catch {
       return "[Unreadable]";
     }
@@ -651,6 +672,11 @@ export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0):
   } catch {
     return "[Unreadable]";
   }
+  const isDnsRecordEntry =
+    inDnsRecordList &&
+    typeof safeRead(value, "type") === "string" &&
+    typeof safeRead(value, "name") === "string" &&
+    typeof safeRead(value, "value") === "string";
   const safe: Record<string, unknown> = {};
   for (const key of keys) {
     if (SECRET_KEYS.test(key)) {
@@ -664,7 +690,16 @@ export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0):
       setDataProperty(safe, key, "[Unreadable]");
       continue;
     }
-    setDataProperty(safe, key, redact(child, seen, depth + 1));
+    if (isDnsRecordEntry && key === "value" && typeof child === "string") {
+      // Preserve actionable DNS record values (such as TXT verification tokens) in structured details.
+      setDataProperty(safe, key, child.slice(0, MAX_STRING));
+      continue;
+    }
+    setDataProperty(
+      safe,
+      key,
+      redact(child, seen, depth + 1, depth === 0 && DNS_RECORD_DETAIL_KEYS.has(key)),
+    );
   }
   return safe;
 }

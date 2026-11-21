@@ -351,8 +351,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       });
     try {
       const result: unknown = options.onOperation?.(event);
-      if (result instanceof Promise) {
-        void result.catch(logHookFailure);
+      if (
+        result !== null &&
+        (typeof result === "object" || typeof result === "function") &&
+        typeof (result as PromiseLike<unknown>).then === "function"
+      ) {
+        void Promise.resolve(result).catch(logHookFailure);
       }
     } catch {
       logHookFailure();
@@ -409,7 +413,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       finish({ outcome: "success" });
       return result;
     } catch (error) {
-      const normalized = normalizeUnknownError(error, provider.id);
+      const normalized = Object.freeze(normalizeUnknownError(error, provider.id));
       safeLog("error", "DNS operation failed.", {
         provider: provider.id,
         operation: name,
@@ -637,7 +641,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                   item.type.toUpperCase() as DnsRecordType,
                 ),
             );
-            if (locked.length || (options.onConflict ?? "error") === "error")
+            const onConflict = Object.hasOwn(options, "onConflict")
+              ? (options.onConflict ?? "error")
+              : "error";
+            if (locked.length || onConflict === "error")
               throw new DomainSdkError(
                 "DOMAIN_CONFLICT",
                 `Existing DNS records in ${zone} conflict with the records being written.`,
@@ -824,12 +831,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       const current = await provider.listRecords({ zone }, ctx);
       externalChange = !afterAcceptedWrite && subtract(preExistingWanted, current).length > 0;
       const unexpected = subtract(deletableUnexpectedCandidates(current), beforeForUnexpected);
+      const isRequested = (record: ZoneRecord) =>
+        requested.some((wanted) => sameRecord(record, wanted));
       if (provider.capabilities.wholeZoneWrites) {
         // A new same-key record with a value the SDK never requested is either the host's rewrite
         // of our value or another writer's record. The zone cannot tell them apart, so keep it
         // and report the concurrent change instead of risking deleting foreign data.
-        const isRequested = (record: ZoneRecord) =>
-          requested.some((wanted) => sameRecord(record, wanted));
         foreignSameKey = subtract(
           current.filter((record) => isOwned(record) && !isRequested(record)),
           before,
@@ -839,6 +846,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           before,
         );
         if (foreignSameKey.length || initialForeignAdded.length) externalChange = true;
+      } else if (requested.length) {
+        foreignSameKey = subtract(
+          current.filter((record) => requestedKeys.has(recordKey(record)) && !isRequested(record)),
+          beforeForUnexpected,
+        );
+        if (foreignSameKey.length) externalChange = true;
       }
       if (unexpected.length) await provider.deleteRecords({ zone, records: unexpected }, ctx);
       // Match one for one, exact TTL matches first, so every pre-write editable record that
@@ -907,12 +920,56 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       restored = false;
       try {
         const afterFailure = await provider.listRecords({ zone }, ctx);
+        const lockedLost = subtract(beforeLocked, afterFailure).length > 0;
+        const preWantedLost = subtract(preExistingWanted, afterFailure).length > 0;
+        if (!afterAcceptedWrite && (preWantedLost || lockedLost)) {
+          externalChange = true;
+        }
+        const isRequested = (record: ZoneRecord) =>
+          requested.some((wanted) => sameRecord(record, wanted));
         if (provider.capabilities.wholeZoneWrites) {
           const failureForeignAdded = subtract(
             afterFailure.filter((record) => !isOwned(record)),
             before,
           );
-          if (failureForeignAdded.length > 0) externalChange = true;
+          const failureForeignSameKey = subtract(
+            afterFailure.filter((record) => isOwned(record) && !isRequested(record)),
+            before,
+          );
+          const failureLockedOwnedAdded = subtract(
+            afterFailure.filter((record) => isOwned(record) && !record.editable),
+            before,
+          );
+          const failureUnrelatedRemoved = !afterAcceptedWrite
+            ? subtract(
+                before.filter((record) => record.editable && !preWantedSet.has(record)),
+                afterFailure,
+              )
+            : [];
+          if (
+            failureForeignAdded.length > 0 ||
+            failureForeignSameKey.length > 0 ||
+            failureLockedOwnedAdded.length > 0 ||
+            failureUnrelatedRemoved.length > 0
+          ) {
+            externalChange = true;
+          }
+        } else if (requested.length) {
+          const failureForeignSameKey = subtract(
+            afterFailure.filter(
+              (record) => requestedKeys.has(recordKey(record)) && !isRequested(record),
+            ),
+            beforeForUnexpected,
+          );
+          const failureLockedOwnedAdded = subtract(
+            afterFailure.filter(
+              (record) => requestedKeys.has(recordKey(record)) && !record.editable,
+            ),
+            beforeForUnexpected,
+          );
+          if (failureForeignSameKey.length > 0 || failureLockedOwnedAdded.length > 0) {
+            externalChange = true;
+          }
         }
         remainingUnexpected = subtract(
           subtract(sameKeyUnexpectedCandidates(afterFailure), beforeForUnexpected),

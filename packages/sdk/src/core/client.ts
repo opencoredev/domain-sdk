@@ -70,6 +70,15 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
   const context = (signal?: AbortSignal): ProviderContext => ({ signal, logger: safeLogger });
   const normalizeInput = (hostname: string) =>
     normalizeHostname(hostname, { allowWildcard: provider.capabilities.wildcardDomains });
+  const catchThenable = (value: unknown, onReject: () => void) => {
+    if (
+      value !== null &&
+      (typeof value === "object" || typeof value === "function") &&
+      typeof (value as PromiseLike<unknown>).then === "function"
+    ) {
+      void Promise.resolve(value).catch(onReject);
+    }
+  };
   const report = (event: DomainOperationEvent) => {
     const logHookFailure = () =>
       safeLog("warn", "Domain onOperation hook threw.", {
@@ -78,9 +87,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       });
     try {
       const result: unknown = options.onOperation?.(event);
-      if (result instanceof Promise) {
-        void result.catch(logHookFailure);
-      }
+      catchThenable(result, logHookFailure);
     } catch {
       logHookFailure();
     }
@@ -137,7 +144,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       finish({ outcome: "success" });
       return result;
     } catch (error) {
-      const normalized = normalizeUnknownError(error, provider.id);
+      const normalized = Object.freeze(normalizeUnknownError(error, provider.id));
       safeLog("error", "Domain operation failed.", {
         provider: provider.id,
         operation: name,
@@ -150,7 +157,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
     }
   };
   function failEarly(name: DomainOperation, hostname: string | undefined, error: unknown): never {
-    const normalized = normalizeUnknownError(error, provider.id);
+    const normalized = Object.freeze(normalizeUnknownError(error, provider.id));
     report({
       operation: name,
       provider: provider.id,
@@ -310,13 +317,16 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
         try {
           // The polling loop already retries transient failures, so each poll is one attempt.
           const domain = await get(normalized, polling.signal, { maxAttempts: 1 });
-          try {
-            polling.onStatus?.(domain);
-          } catch {
+          const logStatusFailure = () =>
             safeLog("warn", "Domain onStatus hook threw.", {
               provider: provider.id,
               hostname: normalized,
             });
+          try {
+            const statusResult: unknown = polling.onStatus?.(domain);
+            catchThenable(statusResult, logStatusFailure);
+          } catch {
+            logStatusFailure();
           }
           if (domain.status === "active") return domain;
           // A non-retryable error, so the catch below rethrows it instead of polling again.

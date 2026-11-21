@@ -134,7 +134,7 @@ For one-off checks while building or debugging, use the bundled CLI instead of w
 npx @opencoredev/domain-sdk get app.customer.com --provider vercel --json
 ```
 
-Commands are `add`, `get`, `list`, `verify`, `remove`, and `wait`. Exit code 1 means the provider operation failed and prints the `DomainSdkError` code; exit code 2 means the command line or environment was invalid. Do not use the CLI for tenant-facing flows: it does no tenant authorization.
+Commands are `add`, `get`, `list`, `verify`, `remove`, and `wait`. Exit code 1 means the operation or provider configuration failed and prints the `DomainSdkError` code; exit code 2 means the command line was invalid or required environment variables were missing. Do not use the CLI for tenant-facing flows: it does no tenant authorization.
 
 ## Validate the integration
 
