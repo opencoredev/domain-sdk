@@ -19,7 +19,7 @@
     "format": "oxfmt --write .",
     "check": "bun run lint && bun run typecheck && oxfmt --check .",
     "tegami": "node scripts/tegami.mts",
-    "release:check": "bun run --filter @opencoredev/domain-sdk lint && bun run --filter @opencoredev/domain-sdk check-types && bun run --filter @opencoredev/domain-sdk test",
+    "release:check": "turbo run lint check-types test --filter=@opencoredev/domain-sdk",
     "release:build": "bun run --filter @opencoredev/domain-sdk build",
     "release": "bun run release:check && bun run tegami version && bun run release:build && bun run tegami publish && bun run tegami cleanup"
   },
