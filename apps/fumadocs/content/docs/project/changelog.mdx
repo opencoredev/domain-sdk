@@ -11,7 +11,7 @@ description: User-visible Domain SDK releases and compatibility changes.
 - Async client methods now reject their promise instead of throwing synchronously (including invalid input and out-of-range `list()` limits, which reject with `INVALID_CONFIGURATION`).
 - `ensureRecords()` and `applyDomainRecords()` re-read the zone after writing, roll back failed writes while preserving foreign concurrent records, and report `details.restored`, `details.externalChange`, and `details.unexpected`.
 - Provider JSON responses are capped at 8 MiB by default (16 MiB for Porkbun and Spaceship responses); Namecheap XML responses are capped at 1 MiB.
-- Fixed Railway `tokenType` handling, Render wildcard support, Netlify concurrent alias serialization, and Spaceship `listRecords()` pagination drift.
+- Fixed Railway `tokenType` handling, Netlify concurrent alias serialization, and Spaceship `listRecords()` pagination drift.
 
 ## 0.3.0
 

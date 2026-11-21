@@ -42,8 +42,16 @@ function isShortBasicCredential(token: string): boolean {
     return false;
   }
   try {
-    const decoded = atob(token);
-    return /^[\x20-\x7e]*:[\x20-\x7e]*$/.test(decoded) && decoded.length >= 2;
+    const raw = atob(token);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (decoded.length < 2 || !decoded.includes(":")) return false;
+    for (let i = 0; i < decoded.length; i += 1) {
+      const code = decoded.charCodeAt(i);
+      if (code < 0x20 || code === 0x7f) return false;
+    }
+    return true;
   } catch {
     return false;
   }
@@ -154,16 +162,35 @@ function scrubAuthSchemes(value: string): string {
     } else {
       const scanAuthParam = (from: number): number => {
         let end = from;
-        while (end < value.length && !/[\s"',;)}\]\\&]/.test(value[end]!)) end += 1;
-        if (
-          end > from &&
-          value[end - 1] === "=" &&
-          end < value.length &&
-          (value[end] === '"' ||
-            value[end] === "'" ||
-            (value[end] === "\\" && /^\\+"/.test(value.slice(end))))
-        ) {
-          end = scanSecretValueEnd(value, end);
+        while (end < value.length && !/[\s"',;)}\]\\&?#%<>|*~`^$@]/.test(value[end]!)) end += 1;
+        let eq = -1;
+        if (end > from && value[end - 1] === "=") {
+          eq = end;
+        } else if (end > from) {
+          let ws = end;
+          while (ws < value.length && (value[ws] === " " || value[ws] === "\t")) ws += 1;
+          if (value[ws] === "=") eq = ws + 1;
+        }
+        if (eq > from) {
+          let valStart = eq;
+          while (valStart < value.length && (value[valStart] === " " || value[valStart] === "\t")) {
+            valStart += 1;
+          }
+          if (
+            valStart < value.length &&
+            (value[valStart] === '"' ||
+              value[valStart] === "'" ||
+              (value[valStart] === "\\" && /^\\+"/.test(value.slice(valStart))))
+          ) {
+            return scanSecretValueEnd(value, valStart);
+          }
+          if (valStart > end) {
+            let unqEnd = valStart;
+            while (unqEnd < value.length && !/[\s"',;)}\]\\&?#%<>|*~`^$@]/.test(value[unqEnd]!)) {
+              unqEnd += 1;
+            }
+            return unqEnd;
+          }
         }
         return end;
       };
@@ -174,7 +201,7 @@ function scrubAuthSchemes(value: string): string {
       ) {
         while (valueEnd < value.length) {
           const rest = value.slice(valueEnd);
-          const comma = /^,[ \t]+(?=[A-Za-z_][A-Za-z0-9_-]*=)/.exec(rest);
+          const comma = /^[ \t]*[,;][ \t]*(?=[A-Za-z_][A-Za-z0-9_-]*[ \t]*=)/.exec(rest);
           if (!comma) break;
           const nextEnd = scanAuthParam(valueEnd + comma[0].length);
           if (nextEnd <= valueEnd + comma[0].length) break;
@@ -188,7 +215,7 @@ function scrubAuthSchemes(value: string): string {
         (lower === "basic" &&
           (/^realm=/i.test(token) ||
             (!isShortBasicCredential(word) &&
-              (!/^(?:[A-Za-z0-9+/=]{8,}|[^:\s=]+:[^:\s]+)$/.test(word) ||
+              (!/^(?:[A-Za-z0-9+/=]{8,}|[^:\s=]+:[^\s]+)$/.test(word) ||
                 /^[A-Za-z]?[a-z]+$/.test(word))))) ||
         ((lower === "bearer" || lower === "token") && EXEMPT_AUTH_WORDS.test(word))
       ) {

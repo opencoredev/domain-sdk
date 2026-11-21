@@ -1678,6 +1678,15 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     expect(scrubMsg('Authorization: Token token="S" for https://u:p@api.vercel.com')).not.toContain(
       "]:[REDACTED]",
     );
+    // 12b. R22: OWS multi-param Token/ApiKey, UTF-8 short Basic, multi-colon Basic, and trailing URL/XML punctuation
+    expect(scrubMsg('Token realm="api",key="SECRET123"')).toBe("Token [REDACTED]");
+    expect(scrubMsg('Token realm="api" , key="SECRET123"')).toBe("Token [REDACTED]");
+    expect(scrubMsg('Token realm="api", key = "SECRET123"')).toBe("Token [REDACTED]");
+    expect(scrubMsg('ApiKey id="pub",sig="SECRET123"')).toBe("ApiKey [REDACTED]");
+    expect(scrubMsg("Basic OsOp")).toBe("Basic [REDACTED]");
+    expect(scrubMsg("Basic user:p:a:s:s")).toBe("Basic [REDACTED]");
+    expect(scrubMsg("Basic dXNlcjpwYXNz?x=1")).toBe("Basic [REDACTED]?x=1");
+    expect(scrubMsg("Basic dXNlcjpwYXNz</Error>")).toBe("Basic [REDACTED]</Error>");
 
     // 13. R21: whole-zone ensureRecords catches dropped locked NS record & tracks committed writes across post-write listRecords failure
     let wzLockedState: ZoneRecord[] = [

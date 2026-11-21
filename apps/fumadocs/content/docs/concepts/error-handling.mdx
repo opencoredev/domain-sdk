@@ -27,6 +27,6 @@ Every async client method returns a promise and reports failures by rejecting it
 | `REQUEST_FAILED`        | The provider rejected the request or returned something the SDK cannot use: malformed JSON, a body over the size cap, or DNS records missing or mismatched after a write.      |
 | `TIMEOUT`               | `waitUntilActive()` reached `timeoutMs` while the domain was still pending.                                                                                                    |
 
-When a DNS write rolls back after an error, the rejected error preserves the underlying code (such as `REQUEST_FAILED`, `RATE_LIMITED`, or `PROVIDER_UNAVAILABLE`) and attaches `details.restored`, `details.replaced`, `details.externalChange` (when records outside the SDK's own writes changed concurrently), and `details.unexpected` (when concurrent or locked records remain).
+When a DNS write rolls back after an error, the rejected error preserves the underlying code (such as `REQUEST_FAILED`, `RATE_LIMITED`, or `PROVIDER_UNAVAILABLE`) and attaches `details.restored`, `details.replaced`, `details.externalChange` (when records outside the SDK's own writes changed concurrently), and `details.unexpected` (when unexpected or concurrent records remain; dropped locked records are reported in `details.collateralMissing`).
 
 Read next: [`DomainSdkError`](../api-reference/domain-sdk-error.mdx).
