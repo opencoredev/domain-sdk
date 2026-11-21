@@ -24,7 +24,6 @@
     "release": "bun run release:check && bun run tegami version && bun run release:build && bun run tegami publish && bun run tegami cleanup"
   },
   "dependencies": {
-    "dotenv": "^17.4.2",
     "zod": "^4.6.7"
   },
   "devDependencies": {
