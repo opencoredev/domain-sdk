@@ -71,13 +71,18 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
   const normalizeInput = (hostname: string) =>
     normalizeHostname(hostname, { allowWildcard: provider.capabilities.wildcardDomains });
   const report = (event: DomainOperationEvent) => {
-    try {
-      options.onOperation?.(event);
-    } catch {
+    const logHookFailure = () =>
       safeLog("warn", "Domain onOperation hook threw.", {
         provider: provider.id,
         operation: event.operation,
       });
+    try {
+      const result: unknown = options.onOperation?.(event);
+      if (result instanceof Promise) {
+        void result.catch(logHookFailure);
+      }
+    } catch {
+      logHookFailure();
     }
   };
   const run = async <T>(

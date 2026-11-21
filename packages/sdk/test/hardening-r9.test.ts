@@ -2550,4 +2550,126 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       details: { committed: true, restored: false, externalChange: true },
     });
   });
+
+  test("R32: O(N) delimiter/CR redaction on JSON-prefixed payloads, escaped quotes, Bearer params, spaced assignments, hostile details proxy, async onOperation, and throwing rollback externalChange", async () => {
+    // 1. O(N) performance on JSON-prefixed delimiter runs, CR+LF runs, and huge cause stacks.
+    const t0 = performance.now();
+    new DomainSdkError("REQUEST_FAILED", "[Basic admin:pass" + "}".repeat(64_000) + "X");
+    new DomainSdkError("REQUEST_FAILED", '{"a":"Basic u:p' + ",".repeat(64_000) + 'x"}');
+    new DomainSdkError("REQUEST_FAILED", "{\r" + "token is invalid\n".repeat(40_000));
+    const bigCause = new Error("fail");
+    bigCause.stack = "Error: fail\n" + "[Basic u:p" + "}".repeat(30_000) + "X";
+    new DomainSdkError("REQUEST_FAILED", "wrapped", { cause: bigCause });
+    expect(performance.now() - t0).toBeLessThan(500);
+
+    // 2. Escaped quote inside JSON-embedded Basic, Bearer params, spaced assignments, and normal prose.
+    const escMsg = new DomainSdkError(
+      "REQUEST_FAILED",
+      'Upstream error: {"nested":{"header":"Basic admin:pa\\"SECRET"},"status":401}',
+    ).message;
+    expect(escMsg).not.toContain("SECRET");
+    expect(escMsg).toContain('"status":401');
+
+    for (const [input, leaked] of [
+      ['Bearer token="SECRET123"', "SECRET123"],
+      ['Bearer access_token="SECRET123"', "SECRET123"],
+      ['token = "supersecret"', "supersecret"],
+      ["TOKEN = abc123XYZ", "abc123XYZ"],
+      ['bearer = "xsecret"', "xsecret"],
+      ["token := abc123XYZ", "abc123XYZ"],
+      ['passphrase = "my-secret-pass"', "my-secret-pass"],
+    ] as const) {
+      const msg = new DomainSdkError("REQUEST_FAILED", input).message;
+      expect(msg).not.toContain(leaked);
+      expect(msg).toContain("[REDACTED]");
+    }
+    expect(new DomainSdkError("REQUEST_FAILED", "Token bucket exhausted").message).toBe(
+      "Token bucket exhausted",
+    );
+
+    // 3. Hostile Proxy as details still produces a plain object, never a string.
+    const hostileDetails = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error("denied");
+        },
+      },
+    );
+    const hostileErr = new DomainSdkError("REQUEST_FAILED", "oops", {
+      details: hostileDetails as Record<string, unknown>,
+    });
+    expect(typeof hostileErr.details).toBe("object");
+    expect(hostileErr.details).toEqual({ value: "[Unreadable]" });
+
+    // 4. Async rejecting onOperation hook does not cause an unhandled rejection.
+    const asyncHookClient = createDomainClient({
+      provider: memoryProvider(),
+      onOperation: (async () => {
+        throw new Error("async hook fail");
+      }) as unknown as () => void,
+    });
+    await expect(asyncHookClient.add("hook-async.example.com")).resolves.toMatchObject({
+      hostname: "hook-async.example.com",
+    });
+
+    // 5. Throwing rollback after foreign addition still preserves externalChange: true.
+    const tz: ZoneRecord[] = [
+      { id: "t0", type: "TXT", name: "old.example.com", value: "v0", ttl: 300, editable: true },
+      {
+        id: "mx0",
+        type: "MX",
+        name: "example.com",
+        value: "mail.example.com",
+        ttl: 300,
+        editable: true,
+      },
+    ];
+    let createCalls = 0;
+    const throwRestoreErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "wz-throw-restore",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["A", "TXT"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return tz.map((r) => ({ ...r }));
+        },
+        async createRecords() {
+          createCalls += 1;
+          if (createCalls === 1) {
+            tz.length = 0;
+            tz.push({
+              id: "f1",
+              type: "TXT",
+              name: "foreign.example.com",
+              value: "ext",
+              ttl: 300,
+              editable: true,
+            });
+            throw new DomainSdkError("REQUEST_FAILED", "first write failed", {
+              provider: "wz-throw-restore",
+              details: { committed: true },
+            });
+          }
+          throw new DomainSdkError("REQUEST_FAILED", "restore write failed", {
+            provider: "wz-throw-restore",
+          });
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(throwRestoreErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { committed: true, restored: false, externalChange: true },
+    });
+  });
 });

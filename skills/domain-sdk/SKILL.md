@@ -1,7 +1,7 @@
 ---
 name: domain-sdk
 description: This skill should be used when the user asks to "add custom domains", "manage customer domains", "integrate Domain SDK", "set up Vercel domains", "set up Cloudflare custom hostnames", "set up Railway domains", "set up Render domains", "set up Netlify domain aliases", "set up bunny.net pull zone hostnames", "write DNS records to Porkbun, Namecheap, or Spaceship", "show DNS records", "verify a customer domain", or "test domain flows without network calls" in a TypeScript application.
-version: 0.2.0
+version: 0.3.0
 ---
 
 # Domain SDK

@@ -30,7 +30,7 @@ const AUTH_SCHEME_PREFIX =
 const AUTH_PARAM_PREFIX =
   /\b(?:response|nonce|cnonce|opaque)(?:[ \t]|%20|%09)*(?:=|%3D)(?:[ \t]|%20|%09)*/gi;
 const EXEMPT_AUTH_WORDS =
-  /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your|ok|passed|true|false)$/i;
+  /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|of|bucket|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your|ok|passed|true|false)$/i;
 const URL_USERINFO_BARE =
   /(?<![a-z0-9+."'-])([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:\/|(?![/\\]))|[^/?#\s\\<>])+)@/gi;
 const URL_USERINFO_DOUBLE_QUOTED =
@@ -38,7 +38,7 @@ const URL_USERINFO_DOUBLE_QUOTED =
 const URL_USERINFO_SINGLE_QUOTED =
   /(?<=')([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/']|(?![/\\']))|[^/?#\s\\'<>]|'(?=[^}\]:\s])(?!,\s*'))+)@/gi;
 const INLINE_SECRET_PREFIX =
-  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?:=|:|%3D|%3A)(?:\s|%20|%09)*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|password|passwd|pwd|private[_-]?key|secret)[ \t]+|(?:password|secret)[ \t]+is[ \t]+))/gi;
+  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|bearer|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|passphrase|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?::=|=|:|%3D|%3A)(?:\s|%20|%09)*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|password|passwd|pwd|passphrase|private[_-]?key|secret)[ \t]+|(?:password|passphrase|secret)[ \t]+is[ \t]+))/gi;
 
 function isShortBasicCredential(token: string): boolean {
   if (token.length < 4 || token.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(token)) {
@@ -220,16 +220,18 @@ function scrubAuthSchemes(value: string): string {
   AUTH_SCHEME_PREFIX.lastIndex = 0;
   let out = "";
   let cursor = 0;
-  const hasCR = value.includes("\r");
-  let cachedLineEnd = -1;
+  let nextNL = 0;
+  let nextCR = 0;
   const getLineEnd = (pos: number): number => {
-    if (pos >= cachedLineEnd) {
-      const nl = value.indexOf("\n", pos);
-      const cr = hasCR ? value.indexOf("\r", pos) : -1;
-      cachedLineEnd =
-        nl === -1 ? (cr === -1 ? value.length : cr) : cr === -1 ? nl : Math.min(nl, cr);
-    }
-    return cachedLineEnd;
+    if (nextNL !== -1 && nextNL < pos) nextNL = value.indexOf("\n", pos);
+    if (nextCR !== -1 && nextCR < pos) nextCR = value.indexOf("\r", pos);
+    return nextNL === -1
+      ? nextCR === -1
+        ? value.length
+        : nextCR
+      : nextCR === -1
+        ? nextNL
+        : Math.min(nextNL, nextCR);
   };
   let match: RegExpExecArray | null;
   while ((match = AUTH_SCHEME_PREFIX.exec(value)) !== null) {
@@ -242,6 +244,13 @@ function scrubAuthSchemes(value: string): string {
       continue;
     }
     const first = value[valueStart]!;
+    // Spaced key/value assignments like `token = "secret"` or `token := secret` belong to scrubInlineSecrets.
+    if (
+      /^\s+$/.test(match[2]!) &&
+      (first === "=" || (first === ":" && value[valueStart + 1] === "="))
+    ) {
+      continue;
+    }
     let valueEnd = valueStart;
     if (
       first === '"' ||
@@ -320,10 +329,12 @@ function scrubAuthSchemes(value: string): string {
         valueEnd += 1;
       }
     } else {
-      const allowParams = lower === "token" || lower === "apikey";
+      const allowParams = lower === "token" || lower === "apikey" || lower === "bearer";
       const opener = match.index > 0 ? value[match.index - 1] : undefined;
       const enclosingQuote = opener === '"' || opener === "'" ? opener : undefined;
+      let failedDelimEnd = -1;
       const isTrailingClosingDelims = (startIdx: number): boolean => {
+        if (startIdx < failedDelimEnd) return false;
         let p = startIdx;
         while (
           p < value.length &&
@@ -331,13 +342,21 @@ function scrubAuthSchemes(value: string): string {
         ) {
           p += 1;
         }
-        return p >= value.length || /[\s<]/.test(value[p]!);
+        const ok = p >= value.length || /[\s<]/.test(value[p]!);
+        if (!ok) failedDelimEnd = p;
+        return ok;
       };
       const isValueStop = (idx: number, from: number, hasColon: boolean): boolean => {
         const ch = value[idx]!;
         if (lower === "basic") {
           if (enclosingQuote !== undefined && ch === enclosingQuote) {
-            return true;
+            let backslashes = 0;
+            let b = idx - 1;
+            while (b >= from && value[b] === "\\") {
+              backslashes += 1;
+              b -= 1;
+            }
+            if (backslashes % 2 === 0) return true;
           }
           if (hasColon && /[;,)}\]"'\\]/.test(ch)) {
             if (idx + 1 >= value.length || /[\s<]/.test(value[idx + 1]!)) return true;
@@ -471,16 +490,18 @@ function scrubInlineSecrets(value: string): string {
   INLINE_SECRET_PREFIX.lastIndex = 0;
   let out = "";
   let cursor = 0;
-  const hasCR = value.includes("\r");
-  let cachedLineEnd = -1;
+  let nextNL = 0;
+  let nextCR = 0;
   const getLineEnd = (pos: number): number => {
-    if (pos >= cachedLineEnd) {
-      const nl = value.indexOf("\n", pos);
-      const cr = hasCR ? value.indexOf("\r", pos) : -1;
-      cachedLineEnd =
-        nl === -1 ? (cr === -1 ? value.length : cr) : cr === -1 ? nl : Math.min(nl, cr);
-    }
-    return cachedLineEnd;
+    if (nextNL !== -1 && nextNL < pos) nextNL = value.indexOf("\n", pos);
+    if (nextCR !== -1 && nextCR < pos) nextCR = value.indexOf("\r", pos);
+    return nextNL === -1
+      ? nextCR === -1
+        ? value.length
+        : nextCR
+      : nextCR === -1
+        ? nextNL
+        : Math.min(nextNL, nextCR);
   };
   let match: RegExpExecArray | null;
   while ((match = INLINE_SECRET_PREFIX.exec(value)) !== null) {
@@ -547,18 +568,19 @@ function scrubString(value: string, depth = 0): string {
       // Non-JSON diagnostics still use the text scanner below.
     }
   }
+  const bounded = value.length > MAX_STRING * 8 ? value.slice(0, MAX_STRING * 8) : value;
   const scrubUserinfo = (_match: string, scheme: string, userinfo: string) => {
     if (userinfo === "[REDACTED]" || userinfo === "[REDACTED]:[REDACTED]") {
       return `${scheme}${userinfo}@`;
     }
     return userinfo.includes(":") ? `${scheme}[REDACTED]:[REDACTED]@` : `${scheme}[REDACTED]@`;
   };
-  const withoutUserinfo = value.includes("@")
-    ? value
+  const withoutUserinfo = bounded.includes("@")
+    ? bounded
         .replace(URL_USERINFO_DOUBLE_QUOTED, scrubUserinfo)
         .replace(URL_USERINFO_SINGLE_QUOTED, scrubUserinfo)
         .replace(URL_USERINFO_BARE, scrubUserinfo)
-    : value;
+    : bounded;
   return scrubInlineSecrets(scrubAuthParams(scrubAuthSchemes(withoutUserinfo)));
 }
 
@@ -669,18 +691,19 @@ function redactedCause(cause: Error, seen = new WeakSet<object>(), depth = 0): E
     else nested = redact(rawNested, seen, depth + 1);
   }
   const safe = nested !== undefined ? new Error(message, { cause: nested }) : new Error(message);
-  safe.name = scrubString(nameText);
+  safe.name = scrubString(nameText.slice(0, MAX_STRING * 8)).slice(0, MAX_STRING);
   if (typeof rawStack === "string") {
     const header = `${nameText}: ${messageText}`;
     const stack = rawStack.startsWith(header)
       ? `${safe.name}: ${message}${rawStack.slice(header.length)}`
       : rawStack;
-    safe.stack = scrubString(stack);
+    safe.stack = scrubString(stack.slice(0, MAX_STRING * 8));
   } else {
     safe.stack = undefined;
   }
   const code = safeRead(cause, "code");
-  if (typeof code === "string") Reflect.set(safe, "code", scrubString(code));
+  if (typeof code === "string")
+    Reflect.set(safe, "code", scrubString(code.slice(0, MAX_STRING * 8)).slice(0, MAX_STRING));
   else if (typeof code === "number") Reflect.set(safe, "code", code);
   return safe;
 }
@@ -707,9 +730,17 @@ export class DomainSdkError extends Error {
     this.statusCode = options.statusCode;
     this.retryable = options.retryable ?? false;
     this.retryAfter = options.retryAfter;
-    this.details = options.details
-      ? (redact(options.details) as Record<string, unknown>)
-      : undefined;
+    if (options.details) {
+      const redactedDetails = redact(options.details);
+      this.details =
+        typeof redactedDetails === "object" &&
+        redactedDetails !== null &&
+        !Array.isArray(redactedDetails)
+          ? (redactedDetails as Record<string, unknown>)
+          : { value: redactedDetails };
+    } else {
+      this.details = undefined;
+    }
     this.cause = safeCause;
   }
 }

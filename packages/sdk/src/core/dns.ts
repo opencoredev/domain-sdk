@@ -344,13 +344,18 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
   const lock = options.lock ?? memoryLock;
 
   const report = (event: DnsOperationEvent) => {
-    try {
-      options.onOperation?.(event);
-    } catch {
+    const logHookFailure = () =>
       safeLog("warn", "DNS onOperation hook threw.", {
         provider: provider.id,
         operation: event.operation,
       });
+    try {
+      const result: unknown = options.onOperation?.(event);
+      if (result instanceof Promise) {
+        void result.catch(logHookFailure);
+      }
+    } catch {
+      logHookFailure();
     }
   };
 
@@ -826,10 +831,14 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         const isRequested = (record: ZoneRecord) =>
           requested.some((wanted) => sameRecord(record, wanted));
         foreignSameKey = subtract(
-          current.filter((record) => record.editable && isOwned(record) && !isRequested(record)),
+          current.filter((record) => isOwned(record) && !isRequested(record)),
           before,
         );
-        if (foreignSameKey.length) externalChange = true;
+        const initialForeignAdded = subtract(
+          current.filter((record) => !isOwned(record)),
+          before,
+        );
+        if (foreignSameKey.length || initialForeignAdded.length) externalChange = true;
       }
       if (unexpected.length) await provider.deleteRecords({ zone, records: unexpected }, ctx);
       // Match one for one, exact TTL matches first, so every pre-write editable record that
@@ -896,6 +905,22 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       }
     } catch {
       restored = false;
+      try {
+        const afterFailure = await provider.listRecords({ zone }, ctx);
+        if (provider.capabilities.wholeZoneWrites) {
+          const failureForeignAdded = subtract(
+            afterFailure.filter((record) => !isOwned(record)),
+            before,
+          );
+          if (failureForeignAdded.length > 0) externalChange = true;
+        }
+        remainingUnexpected = subtract(
+          subtract(sameKeyUnexpectedCandidates(afterFailure), beforeForUnexpected),
+          afterAcceptedWrite ? [] : foreignSameKey,
+        );
+      } catch {
+        // Best-effort post-failure classification; keep whatever externalChange was already observed.
+      }
     }
     throw new DomainSdkError(
       cause.code,
