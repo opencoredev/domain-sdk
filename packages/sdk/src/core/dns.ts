@@ -702,10 +702,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           }
           const verificationError = verifyAfterWrite(after);
           if (verificationError) {
-            if (
-              verificationError.details?.collateralMissing ||
-              provider.capabilities.wholeZoneWrites
-            )
+            if (provider.capabilities.wholeZoneWrites)
               return restore(
                 zone,
                 [],
@@ -753,11 +750,9 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     const preWantedSet = new Set(preExistingWanted);
     const requestedKeys = new Set(requested.map(recordKey));
     const beforeEditable = provider.capabilities.wholeZoneWrites
-      ? before.filter(
-          (record) =>
-            record.editable &&
-            (afterAcceptedWrite ? !preWantedSet.has(record) : replacedSet.has(record)),
-        )
+      ? afterAcceptedWrite
+        ? before.filter((record) => record.editable)
+        : []
       : before.filter((record) => record.editable && replacedSet.has(record));
     const beforeLocked = provider.capabilities.wholeZoneWrites
       ? before.filter((record) => !record.editable && !preWantedSet.has(record))
@@ -816,7 +811,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     let foreignSameKey: ZoneRecord[] = [];
     try {
       const current = await provider.listRecords({ zone }, ctx);
-      externalChange = subtract(preExistingWanted, current).length > 0;
+      externalChange = !afterAcceptedWrite && subtract(preExistingWanted, current).length > 0;
       const unexpected = subtract(deletableUnexpectedCandidates(current), beforeForUnexpected);
       if (provider.capabilities.wholeZoneWrites) {
         // A new same-key record with a value the SDK never requested is either the host's rewrite
@@ -853,10 +848,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         const unrelatedRemoved =
           provider.capabilities.wholeZoneWrites && !afterAcceptedWrite
             ? subtract(
-                before.filter(
-                  (record) =>
-                    record.editable && !replacedSet.has(record) && !preWantedSet.has(record),
-                ),
+                before.filter((record) => record.editable && !preWantedSet.has(record)),
                 verified,
               )
             : [];

@@ -2059,5 +2059,128 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     expect(flipReads).toBe(1);
     expect(flipPage.subdomains[0]?.label).toBe("acme");
     expect(flipPage.subdomains[0]?.domain.hostname).toBe("acme.app.example.com");
+
+    // R26: whole-zone pre-commit replacement external deletion, committed pre-wanted restoration, and redaction edge cases
+    expect(scrub("Digest username=a; response=SECRET123")).toBe("Digest [REDACTED]");
+    expect(scrub('Digest username="a"; response="SECRET123"')).toBe("Digest [REDACTED]");
+    expect(scrub("Digest authentication is not supported.")).toBe(
+      "Digest authentication is not supported.",
+    );
+    expect(scrub("Basic dTrp")).toBe("Basic [REDACTED]");
+    expect(scrub("Basic 6Tpw")).toBe("Basic [REDACTED]");
+    expect(scrub("Basic admin:pa;SECRET123")).toBe("Basic [REDACTED]");
+    expect(scrub("Basic admin:pa)SECRET123")).toBe("Basic [REDACTED]");
+    expect(scrub("Basic <dXNlcjpwYXNz>")).toBe("Basic [REDACTED]");
+    expect(scrub("passwd=SECRET123 pwd: SECRET456")).toBe("passwd=[REDACTED] pwd: [REDACTED]");
+    expect(
+      new DomainSdkError("REQUEST_FAILED", "x", { details: { passwd: "SECRETVALUE", pwd: "S2" } })
+        .details,
+    ).toEqual({ passwd: "[REDACTED]", pwd: "[REDACTED]" });
+
+    let preReplaceZone: ZoneRecord[] = [
+      {
+        id: "c1",
+        type: "CNAME",
+        name: "app.example.com",
+        value: "old.example.net",
+        ttl: 300,
+        editable: true,
+      },
+    ];
+    const preReplaceErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "wz-pre-replace",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["CNAME"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return [...preReplaceZone];
+        },
+        async deleteRecords() {
+          // Concurrent writer deletes CNAME before our write commits
+          preReplaceZone = [];
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "503 before commit", {
+            provider: "wz-pre-replace",
+            statusCode: 503,
+            retryable: true,
+          });
+        },
+        async createRecords({ records }) {
+          for (const r of records) {
+            preReplaceZone.push({ id: "restored", editable: true, ttl: 300, ...r });
+          }
+        },
+      },
+    })
+      .ensureRecords([{ type: "CNAME", name: "app.example.com", value: "new.example.net" }], {
+        zone: "example.com",
+        onConflict: "replace",
+      })
+      .catch((e) => e);
+    expect(preReplaceZone).toEqual([]);
+    expect(preReplaceErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true, externalChange: true },
+    });
+
+    let commitWantedZone: ZoneRecord[] = [
+      {
+        id: "w1",
+        type: "TXT",
+        name: "example.com",
+        value: "verify=NEW",
+        ttl: 300,
+        editable: true,
+      },
+      { id: "a1", type: "A", name: "example.com", value: "1.2.3.4", ttl: 300, editable: true },
+    ];
+    let commitCreateCalls = 0;
+    const commitWantedErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "wz-commit-wanted",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["A", "TXT"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return [...commitWantedZone];
+        },
+        async createRecords({ records }) {
+          commitCreateCalls += 1;
+          if (commitCreateCalls === 1) {
+            commitWantedZone = commitWantedZone.filter((r) => r.id !== "w1");
+            throw new DomainSdkError("REQUEST_FAILED", "committed drop", {
+              provider: "wz-commit-wanted",
+              details: { committed: true },
+            });
+          }
+          for (const r of records) {
+            commitWantedZone.push({ id: `r-${commitCreateCalls}`, editable: true, ttl: 300, ...r });
+          }
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords(
+        [
+          { type: "TXT", name: "example.com", value: "verify=NEW" },
+          { type: "TXT", name: "_other.example.com", value: "verify=NEW2" },
+        ],
+        { zone: "example.com" },
+      )
+      .catch((e) => e);
+    expect(commitWantedZone.some((r) => r.value === "verify=NEW")).toBe(true);
+    expect(commitWantedErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { restored: true, committed: true },
+    });
+    expect(commitWantedErr.details?.externalChange).toBeUndefined();
   });
 });

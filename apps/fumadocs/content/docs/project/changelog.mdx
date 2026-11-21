@@ -9,7 +9,7 @@ description: User-visible Domain SDK releases and compatibility changes.
 - Added `onOperation` hooks on `createDomainClient()` and `createDnsClient()`, `SubdomainClient.list()`, `shouldStop` on `waitUntilActive()` (which now rejects with `VERIFICATION_FAILED` when a domain reaches `failed`), `render({ apexAddress })`, and exported DNS record helpers.
 - `createSubdomainClient()` now reserves `www`, `api`, `admin`, and `mail` by default (`DEFAULT_RESERVED_LABELS`).
 - Async client methods now reject their promise instead of throwing synchronously (including invalid input and out-of-range `list()` limits, which reject with `INVALID_CONFIGURATION`).
-- `ensureRecords()` and `applyDomainRecords()` re-read the zone after writing, roll back failed writes while preserving foreign concurrent records, and report `details.restored`, `details.externalChange`, and `details.unexpected`.
+- `ensureRecords()` and `applyDomainRecords()` re-read the zone after writing, roll back failed replacements, whole-zone writes, and per-record add-only throws while preserving foreign concurrent records and pre-commit external deletions (accepted per-record add-only verification failures throw directly without rollback), and report `details.restored`, `details.externalChange`, `details.unexpected`, `details.collateralMissing`, and `details.committed`.
 - Provider JSON responses are capped at 8 MiB by default (16 MiB for Porkbun and Spaceship responses); Namecheap XML responses are capped at 1 MiB.
 - Fixed Railway `tokenType` handling, Netlify concurrent alias serialization, and Spaceship `listRecords()` pagination drift.
 

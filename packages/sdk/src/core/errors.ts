@@ -24,7 +24,7 @@ export interface DomainSdkErrorOptions {
 }
 
 const SECRET_KEYS =
-  /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|secret|password|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))$/i;
+  /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|secret|password|passwd|pwd|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie))$/i;
 const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)(\s+|[:=][ \t]*)/gi;
 const EXEMPT_AUTH_WORDS =
   /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your)$/i;
@@ -35,7 +35,7 @@ const URL_USERINFO_DOUBLE_QUOTED =
 const URL_USERINFO_SINGLE_QUOTED =
   /(?<=')([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/']|(?![/\\']))|[^/?#\s\\'<>]|'(?=[^}\]:\s])(?!,\s*'))+)@/gi;
 const INLINE_SECRET_PREFIX =
-  /(?<![A-Za-z0-9])(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))\\*["']?\s*(?:=|:)\s*/gi;
+  /(?<![A-Za-z0-9])(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|passwd|pwd|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie))\\*["']?\s*(?:=|:)\s*/gi;
 
 function isShortBasicCredential(token: string): boolean {
   if (token.length < 4 || token.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(token)) {
@@ -43,15 +43,14 @@ function isShortBasicCredential(token: string): boolean {
   }
   try {
     const raw = atob(token);
-    const bytes = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
-    const decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    if (decoded.length < 2 || !decoded.includes(":")) return false;
-    for (let i = 0; i < decoded.length; i += 1) {
-      const code = decoded.charCodeAt(i);
-      if (code < 0x20 || code === 0x7f) return false;
+    if (raw.length < 2) return false;
+    let hasColon = false;
+    for (let i = 0; i < raw.length; i += 1) {
+      const code = raw.charCodeAt(i);
+      if (code === 0x3a) hasColon = true;
+      if (code < 0x20 || (code >= 0x7f && code < 0xa0)) return false;
     }
-    return true;
+    return hasColon;
   } catch {
     return false;
   }
@@ -159,6 +158,8 @@ function scrubAuthSchemes(value: string): string {
     ) {
       valueEnd = scanSecretValueEnd(value, valueStart);
     } else if (lower === "digest") {
+      const digestLead = /^([A-Za-z_][A-Za-z0-9_-]*)(?![ \t]*=)/.exec(value.slice(valueStart));
+      if (digestLead && EXEMPT_AUTH_WORDS.test(digestLead[1]!)) continue;
       let inQuote: '"' | "'" | null = null;
       while (valueEnd < value.length) {
         const ch = value[valueEnd]!;
@@ -176,7 +177,22 @@ function scrubAuthSchemes(value: string): string {
           valueEnd += 1;
           continue;
         }
-        if (ch === ";" || ch === "}" || ch === "]") break;
+        if (ch === " " || ch === "\t") {
+          if (/^[ \t]+(?:[a-z][a-z0-9+.-]{0,20}:\/\/|\[REDACTED\])/i.test(value.slice(valueEnd))) {
+            break;
+          }
+        }
+        if (ch === ";") {
+          if (/^;\s*[A-Za-z_][A-Za-z0-9_-]*[ \t]*=/.test(value.slice(valueEnd))) {
+            valueEnd += 1;
+            continue;
+          }
+          break;
+        }
+        if (ch === "<" && valueEnd > valueStart && /^<\/[A-Za-z]/.test(value.slice(valueEnd))) {
+          break;
+        }
+        if (ch === "}" || ch === "]") break;
         if (ch === "\r" || ch === "\n") {
           const cont = /^\r?\n[ \t]+/.exec(value.slice(valueEnd));
           if (cont) {
@@ -196,6 +212,15 @@ function scrubAuthSchemes(value: string): string {
       const allowParams = lower === "token" || lower === "apikey";
       const isValueStop = (idx: number, from: number): boolean => {
         const ch = value[idx]!;
+        if (
+          lower === "basic" &&
+          (ch === ";" || ch === ")") &&
+          value.slice(from, idx).includes(":") &&
+          idx + 1 < value.length &&
+          !/[\s"'<]/.test(value[idx + 1]!)
+        ) {
+          return false;
+        }
         if (/[\s"',;)}\]\\]/.test(ch)) return true;
         if ((ch === "&" || ch === "?") && /^[&?][A-Za-z_][A-Za-z0-9_-]*=/.test(value.slice(idx))) {
           return true;
@@ -248,12 +273,13 @@ function scrubAuthSchemes(value: string): string {
       const token = value.slice(valueStart, valueEnd);
       const word = token.replace(/[.!?:]+$/, "");
       if (/^(?:bearer|basic|digest|apikey|token)$/i.test(word)) continue;
+      const basicWord = word.startsWith("<") && word.endsWith(">") ? word.slice(1, -1) : word;
       if (
         (lower === "basic" &&
           (/^realm[ \t]*=/i.test(token) ||
-            (!isShortBasicCredential(word) &&
-              (!/^(?:(?:[A-Za-z0-9+/=_~-]|%[0-9A-Fa-f]{2}){8,}|[^:\s=]*:[^\s]+)$/.test(word) ||
-                /^[A-Za-z]?[a-z]+$/.test(word))))) ||
+            (!isShortBasicCredential(basicWord) &&
+              (!/^(?:(?:[A-Za-z0-9+/=_~-]|%[0-9A-Fa-f]{2}){8,}|[^:\s=]*:[^\s]+)$/.test(basicWord) ||
+                /^[A-Za-z]?[a-z]+$/.test(basicWord))))) ||
         ((lower === "bearer" || lower === "token") && EXEMPT_AUTH_WORDS.test(word))
       ) {
         continue;
