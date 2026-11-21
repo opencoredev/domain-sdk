@@ -2140,6 +2140,13 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     expect(scrub("password is SECRET123 token%3DSECRET456 X-Amz-Signature=SIG123")).toBe(
       "password is [REDACTED] token%3D[REDACTED] X-Amz-Signature=[REDACTED]",
     );
+    expect(scrub('Digest authentication failed, response="SECRET123"')).toBe("Digest [REDACTED]");
+    expect(scrub('Basic authentication failed, response="SECRET123"')).toBe(
+      "Basic authentication failed, response=[REDACTED]",
+    );
+    expect(scrub("Basic%20dXNlcjpwYXNz password%3A%20SECRET17")).toBe(
+      "Basic%20[REDACTED] password%3A%20[REDACTED]",
+    );
     expect(
       new DomainSdkError("REQUEST_FAILED", "x", {
         details: {

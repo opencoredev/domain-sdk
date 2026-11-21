@@ -857,7 +857,9 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             ? subtract(replaced, verified).length > 0
             : false;
         externalChange ||=
-          preWantedLost || lockedLost || foreignAdded.length > 0 || unrelatedRemoved.length > 0;
+          (!afterAcceptedWrite && (preWantedLost || lockedLost)) ||
+          foreignAdded.length > 0 ||
+          unrelatedRemoved.length > 0;
         // A kept unrequested same-key record means rollback is incomplete when the write was
         // accepted or committed (it may be the host's rewrite of our value). When the write threw
         // before committing, the record is purely another writer's and our own writes are clean.
