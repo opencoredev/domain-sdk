@@ -2,7 +2,14 @@ import { abortedError, DomainSdkError, normalizeUnknownError } from "./errors";
 import { normalizeHostname } from "./hostname";
 import { sleep, withRetry } from "./http";
 import type { DomainClient, DomainClientOptions, ProviderContext } from "./provider";
-import type { Domain, DomainLogger, WaitUntilActiveOptions } from "./types";
+import type {
+  Domain,
+  DomainLogger,
+  DomainOperation,
+  DomainOperationEvent,
+  OperationOutcome,
+  WaitUntilActiveOptions,
+} from "./types";
 
 const silentLogger: DomainLogger = {};
 const stopOnFailed = (domain: Domain): boolean => domain.status === "failed";
@@ -46,8 +53,18 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
   const context = (signal?: AbortSignal): ProviderContext => ({ signal, logger });
   const normalizeInput = (hostname: string) =>
     normalizeHostname(hostname, { allowWildcard: provider.capabilities.wildcardDomains });
+  const report = (event: DomainOperationEvent) => {
+    try {
+      options.onOperation?.(event);
+    } catch {
+      logger.warn?.("Domain onOperation hook threw.", {
+        provider: provider.id,
+        operation: event.operation,
+      });
+    }
+  };
   const run = async <T>(
-    name: string,
+    name: DomainOperation,
     hostname: string | undefined,
     operation: () => Promise<T>,
     signal?: AbortSignal,
@@ -58,26 +75,44 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       operation: name,
       hostname,
     });
-    try {
-      const result = await withRetry(operation, {
-        retry,
-        signal,
-        sleep: clock.sleep,
-        onRetry: (error, attempt, delayMs) =>
-          logger.warn?.("Domain operation will be retried.", {
-            provider: provider.id,
-            operation: name,
-            hostname,
-            code: error.code,
-            attempt,
-            delayMs,
-          }),
+    const started = clock.now();
+    let attempts = 0;
+    const finish = (outcome: OperationOutcome) =>
+      report({
+        operation: name,
+        provider: provider.id,
+        hostname,
+        durationMs: clock.now() - started,
+        attempts,
+        ...outcome,
       });
+    try {
+      const result = await withRetry(
+        () => {
+          attempts += 1;
+          return operation();
+        },
+        {
+          retry,
+          signal,
+          sleep: clock.sleep,
+          onRetry: (error, attempt, delayMs) =>
+            logger.warn?.("Domain operation will be retried.", {
+              provider: provider.id,
+              operation: name,
+              hostname,
+              code: error.code,
+              attempt,
+              delayMs,
+            }),
+        },
+      );
       logger.info?.("Domain operation completed.", {
         provider: provider.id,
         operation: name,
         hostname,
       });
+      finish({ outcome: "success" });
       return result;
     } catch (error) {
       const normalized = normalizeUnknownError(error, provider.id);
@@ -88,6 +123,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
         code: normalized.code,
         retryable: normalized.retryable,
       });
+      finish({ outcome: "failure", error: normalized });
       throw normalized;
     }
   };

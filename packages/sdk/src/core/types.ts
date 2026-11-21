@@ -1,3 +1,5 @@
+import type { DomainSdkError } from "./errors";
+
 export type DomainStatus =
   | "pending"
   | "pending_dns"
@@ -111,3 +113,28 @@ export interface WaitUntilActiveOptions extends RequestOptions {
    */
   shouldStop?(domain: Domain): boolean;
 }
+
+/** Domain client operations reported to `onOperation`. `refresh()` and polls report `get`. */
+export type DomainOperation = "add" | "get" | "list" | "verify" | "remove";
+/** DNS client operations reported to `onOperation`. `applyDomainRecords()` reports `ensureRecords`. */
+export type DnsOperation = "getZone" | "listRecords" | "ensureRecords" | "removeRecords";
+
+interface OperationEventBase {
+  provider: string;
+  /** Wall time including retries and their waits. */
+  durationMs: number;
+  /** Provider attempts made, including the first. */
+  attempts: number;
+}
+
+export type OperationOutcome =
+  | { outcome: "success" }
+  | { outcome: "failure"; error: DomainSdkError };
+
+/** One finished `DomainClient` call, for metrics and tracing. */
+export type DomainOperationEvent = OperationEventBase &
+  OperationOutcome & { operation: DomainOperation; hostname?: string };
+
+/** One finished `DnsClient` call, for metrics and tracing. */
+export type DnsOperationEvent = OperationEventBase &
+  OperationOutcome & { operation: DnsOperation; zone: string };

@@ -2,6 +2,7 @@ import type {
   AddDomainObject,
   Domain,
   DomainLogger,
+  DomainOperationEvent,
   DomainPage,
   ListDomainsOptions,
   RequestOptions,
@@ -45,6 +46,11 @@ export interface DomainClientOptions {
   logger?: DomainLogger;
   /** Retry rate limits and transient outages. Pass `{ maxAttempts: 1 }` to disable. */
   retry?: RetryOptions;
+  /**
+   * Called once when each operation finishes, with its duration, attempt count, and outcome.
+   * Errors thrown by the hook are logged with `logger.warn` and never change the result.
+   */
+  onOperation?(event: DomainOperationEvent): void;
   /** Internal deterministic-test hooks. */
   clock?: { now(): number; sleep(ms: number, signal?: AbortSignal): Promise<void> };
 }

@@ -5,10 +5,13 @@ import { DomainSdkError, normalizeUnknownError } from "./errors";
 import { normalizeHostname } from "./hostname";
 import { withRetry } from "./http";
 import type {
+  DnsOperation,
+  DnsOperationEvent,
   DnsRecord,
   DnsRecordType,
   Domain,
   DomainLogger,
+  OperationOutcome,
   RequestOptions,
   RetryOptions,
 } from "./types";
@@ -133,6 +136,11 @@ export interface DnsClientOptions {
    * workers or serverless instances write to the same zones.
    */
   lock?: DnsZoneLock;
+  /**
+   * Called once when each operation finishes, with its duration, attempt count, and outcome.
+   * Errors thrown by the hook are logged with `logger.warn` and never change the result.
+   */
+  onOperation?(event: DnsOperationEvent): void;
 }
 
 export interface DnsClient {
@@ -308,30 +316,59 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
   };
   const lock = options.lock ?? memoryLock;
 
+  const report = (event: DnsOperationEvent) => {
+    try {
+      options.onOperation?.(event);
+    } catch {
+      logger.warn?.("DNS onOperation hook threw.", {
+        provider: provider.id,
+        operation: event.operation,
+      });
+    }
+  };
+
   const run = async <T>(
-    name: string,
+    name: DnsOperation,
     zone: string,
     operation: () => Promise<T>,
     signal?: AbortSignal,
   ): Promise<T> => {
     logger.debug?.("DNS operation started.", { provider: provider.id, operation: name, zone });
-    try {
-      const result = await withRetry(operation, {
-        retry: options.retry,
-        signal,
-        // A failed replacement was already rolled back; the caller decides whether to try again.
-        shouldRetry: (error) => error.details?.restored === undefined,
-        onRetry: (error, attempt, delayMs) =>
-          logger.warn?.("DNS operation will be retried.", {
-            provider: provider.id,
-            operation: name,
-            zone,
-            code: error.code,
-            attempt,
-            delayMs,
-          }),
+    const started = performance.now();
+    let attempts = 0;
+    const finish = (outcome: OperationOutcome) =>
+      report({
+        operation: name,
+        provider: provider.id,
+        zone,
+        durationMs: performance.now() - started,
+        attempts,
+        ...outcome,
       });
+    try {
+      const result = await withRetry(
+        () => {
+          attempts += 1;
+          return operation();
+        },
+        {
+          retry: options.retry,
+          signal,
+          // A failed replacement was already rolled back; the caller decides whether to try again.
+          shouldRetry: (error) => error.details?.restored === undefined,
+          onRetry: (error, attempt, delayMs) =>
+            logger.warn?.("DNS operation will be retried.", {
+              provider: provider.id,
+              operation: name,
+              zone,
+              code: error.code,
+              attempt,
+              delayMs,
+            }),
+        },
+      );
       logger.info?.("DNS operation completed.", { provider: provider.id, operation: name, zone });
+      finish({ outcome: "success" });
       return result;
     } catch (error) {
       const normalized = normalizeUnknownError(error, provider.id);
@@ -342,6 +379,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         code: normalized.code,
         retryable: normalized.retryable,
       });
+      finish({ outcome: "failure", error: normalized });
       throw normalized;
     }
   };
