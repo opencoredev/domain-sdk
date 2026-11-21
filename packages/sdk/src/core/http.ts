@@ -1,4 +1,4 @@
-import { abortedError, DomainSdkError, parseRetryAfter, redact } from "./errors";
+import { abortedError, DomainSdkError, parseRetryAfter, redact, safeInstanceOf } from "./errors";
 import type { RetryOptions } from "./types";
 
 export type Fetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
@@ -20,7 +20,7 @@ function responseTooLarge(response: Response, maxBytes: number, provider?: strin
 
 /** Whether `readJson()` rejected a body for exceeding its byte cap. */
 export function isResponseTooLarge(error: unknown): error is DomainSdkError {
-  return error instanceof DomainSdkError && oversizedResponses.has(error);
+  return safeInstanceOf(error, DomainSdkError) && oversizedResponses.has(error);
 }
 
 /** Read a response body as text, refusing to buffer more than `maxBytes`. */
@@ -79,7 +79,7 @@ export async function readJson(
   try {
     rawText = await readText(response, maxBytes, provider);
   } catch (error) {
-    if (error instanceof DomainSdkError) throw error;
+    if (safeInstanceOf(error, DomainSdkError)) throw error;
     if (signal?.aborted) throw abortedError(provider, signal.reason ?? error);
     if (isAbortError(error)) throw abortedError(provider, error);
     throw new DomainSdkError("PROVIDER_UNAVAILABLE", "The provider response was interrupted.", {
@@ -172,7 +172,7 @@ const RETRYABLE_STATUS = new Set([502, 503, 504]);
 
 /** Whether an error is a transient rate limit or outage worth retrying. */
 export function isTransientError(error: unknown): error is DomainSdkError {
-  if (!(error instanceof DomainSdkError) || !error.retryable) return false;
+  if (!safeInstanceOf(error, DomainSdkError) || !error.retryable) return false;
   if (error.code === "RATE_LIMITED") return true;
   if (error.code === "PROVIDER_UNAVAILABLE")
     return error.statusCode === undefined || RETRYABLE_STATUS.has(error.statusCode);

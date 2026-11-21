@@ -8,7 +8,12 @@ import {
   type DnsProviderContext,
   type ZoneRecord,
 } from "../../core/dns";
-import { DomainSdkError, parseRetryAfter, type DomainSdkErrorCode } from "../../core/errors";
+import {
+  DomainSdkError,
+  parseRetryAfter,
+  safeInstanceOf,
+  type DomainSdkErrorCode,
+} from "../../core/errors";
 import { isAbortError, requireString, type Fetch } from "../../core/http";
 import { MAX_XML_BYTES, parseXml, type XmlElement } from "./xml";
 
@@ -197,7 +202,7 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
     try {
       text = await readXmlResponse(response);
     } catch (error) {
-      if (error instanceof DomainSdkError) throw error;
+      if (safeInstanceOf(error, DomainSdkError)) throw error;
       const aborted = context.signal?.aborted || isAbortError(error);
       throw new DomainSdkError(
         aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",

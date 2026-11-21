@@ -229,7 +229,7 @@ export function absoluteRecordName(name: string, zone: string): string {
 
 /** Split a presentation-format CAA value into its parts. */
 export function parseCaaValue(value: string): { flag: number; tag: string; value: string } {
-  const match = /^\s*(\d{1,3})\s+([a-z0-9]+)\s+(?:"((?:[^"\\]|\\.)*)"|(\S+))\s*$/i.exec(value);
+  const match = /^\s*(\d{1,3})\s+([a-z0-9]+)\s+(?:"((?:[^"\\]|\\.)*)"|([^"\s]+))\s*$/i.exec(value);
   const flag = Number(match?.[1]);
   if (!match || flag > 255)
     invalidRecordValue(`CAA value ${value} must look like 0 issue "letsencrypt.org".`, { value });
@@ -788,10 +788,32 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     let restored = false;
     let externalChange = false;
     let remainingUnexpected: ZoneRecord[] = [];
+    let foreignSameKey: ZoneRecord[] = [];
     try {
       const current = await provider.listRecords({ zone }, ctx);
       externalChange = subtract(preExistingWanted, current).length > 0;
-      const unexpected = subtract(deletableUnexpectedCandidates(current), beforeForUnexpected);
+      let unexpected = subtract(deletableUnexpectedCandidates(current), beforeForUnexpected);
+      if (provider.capabilities.wholeZoneWrites) {
+        // A new same-key record with a value the SDK never requested is the host's rewrite of a
+        // requested value only when a requested value at that key is missing. Otherwise another
+        // writer added it, so keep it and report the concurrent change.
+        const isRequested = (record: ZoneRecord) =>
+          requested.some((wanted) => sameRecord(record, wanted));
+        const missingAtKey = (key: string) =>
+          requested.filter(
+            (wanted) =>
+              recordKey(wanted) === key && !current.some((item) => sameRecord(item, wanted)),
+          ).length;
+        const others = unexpected.filter((record) => !isRequested(record));
+        foreignSameKey = others.filter(
+          (record) =>
+            others.filter((other) => recordKey(other) === recordKey(record)).length >
+            missingAtKey(recordKey(record)),
+        );
+        const foreign = new Set(foreignSameKey);
+        unexpected = unexpected.filter((record) => !foreign.has(record));
+        if (foreignSameKey.length) externalChange = true;
+      }
       if (unexpected.length) await provider.deleteRecords({ zone, records: unexpected }, ctx);
       // Match one for one, exact TTL matches first, so every pre-write editable record that
       // disappeared is restored with its own TTL. Ids are not used because whole-zone hosts reissue them.
@@ -812,7 +834,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             )
           : [];
         externalChange ||= preWantedLost || foreignAdded.length > 0;
-        remainingUnexpected = subtract(sameKeyUnexpectedCandidates(verified), beforeForUnexpected);
+        remainingUnexpected = subtract(
+          subtract(sameKeyUnexpectedCandidates(verified), beforeForUnexpected),
+          foreignSameKey,
+        );
         restored =
           stillGone.length === 0 &&
           bystandersLost.length === 0 &&

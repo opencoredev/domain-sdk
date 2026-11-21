@@ -29,7 +29,7 @@ const AUTH_SCHEME_PREFIX = /\b(Bearer|ApiKey|Basic|Digest|Token)[ \t]+/gi;
 const EXEMPT_AUTH_WORDS =
   /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should)$/i;
 const URL_USERINFO =
-  /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:[^/?#\s"'<>\\]|\\+[/\\"'])+)@/gi;
+  /(?<![a-z0-9+.-])([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+[/\\"']|[^/?#\s"'<>]|["'](?=[^,}\]:\s]))+)@/gi;
 const INLINE_SECRET_PREFIX =
   /(?<![A-Za-z0-9])(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|PrivateKey|Cookie))\\*["']?\s*(?:=|:)\s*/gi;
 
@@ -162,7 +162,7 @@ function scrubInlineSecrets(value: string): string {
   let match: RegExpExecArray | null;
   while ((match = INLINE_SECRET_PREFIX.exec(value)) !== null) {
     const valueStart = match.index + match[0].length;
-    const isAuthHeader = /^(?:x-)?authorization\b/i.test(match[0]);
+    const isAuthHeader = /^(?:x-)?authorization\s*:/i.test(match[0]);
     const isCookieHeader = /^(?:x-)?(?:set[_-]?)?cookie\s*:/i.test(match[0]);
     const valueEnd = scanSecretValueEnd(value, valueStart, {
       allowSecondToken: isAuthHeader,
@@ -183,7 +183,17 @@ function scrubInlineSecrets(value: string): string {
   return cursor === 0 ? value : out + value.slice(cursor);
 }
 
-function scrubString(value: string): string {
+function scrubString(value: string, depth = 0): string {
+  if (depth < MAX_REDACT_DEPTH && /^[\s]*["{[]/.test(value)) {
+    try {
+      const parsed: unknown = JSON.parse(value);
+      if (typeof parsed === "string" || (parsed !== null && typeof parsed === "object")) {
+        return JSON.stringify(redact(parsed, new WeakSet<object>(), depth + 1));
+      }
+    } catch {
+      // Non-JSON diagnostics still use the text scanner below.
+    }
+  }
   const withoutUserinfo = value.includes("@")
     ? value.replace(URL_USERINFO, (_match, scheme: string, userinfo: string) => {
         if (userinfo === "[REDACTED]" || userinfo === "[REDACTED]:[REDACTED]") {
@@ -203,7 +213,10 @@ function safeRead(target: object, key: string): unknown {
   }
 }
 
-function safeInstanceOf<T>(value: unknown, ctor: abstract new (...args: never[]) => T): value is T {
+export function safeInstanceOf<T>(
+  value: unknown,
+  ctor: abstract new (...args: never[]) => T,
+): value is T {
   try {
     return value instanceof ctor;
   } catch {
@@ -229,7 +242,7 @@ function setDataProperty(target: Record<string, unknown>, key: string, value: un
 }
 
 export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
-  if (typeof value === "string") return scrubString(value).slice(0, MAX_STRING);
+  if (typeof value === "string") return scrubString(value, depth).slice(0, MAX_STRING);
   if (value === null || typeof value !== "object") return value;
   if (depth > MAX_REDACT_DEPTH) return "[Truncated]";
   if (seen.has(value)) return "[Circular]";

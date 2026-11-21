@@ -1165,4 +1165,112 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     });
     await expect(dcRevoked.get("app.example.com")).rejects.toBeInstanceOf(DomainSdkError);
   });
+
+  test("R17: whole-zone same-key concurrent ACME TXT preserved, raw URL passwords & JSON auth redaction clean, CAA quotes & getPrototypeOf Proxy contained", async () => {
+    const { parseCaaValue } = await import("../src/core/dns");
+    const { netlify } = await import("../src/providers/netlify/index");
+
+    // 1. Concurrent ACME TXT at same (name, type) on whole-zone rollback is kept and blocks retry
+    const acmeBase = memoryDnsProvider({ zones: { "example.com": [] } });
+    const origAcmeCreate = acmeBase.createRecords.bind(acmeBase);
+    let acmeCalls = 0;
+    const acmeProvider: DnsProvider = {
+      ...acmeBase,
+      capabilities: { ...acmeBase.capabilities, wholeZoneWrites: true },
+      async createRecords(input, ctx) {
+        acmeCalls += 1;
+        await origAcmeCreate(input, ctx);
+        if (acmeCalls === 1) {
+          await origAcmeCreate(
+            {
+              zone: input.zone,
+              records: [
+                {
+                  type: "TXT",
+                  name: "_acme-challenge.example.com",
+                  value: "other-worker",
+                  ttl: 60,
+                },
+              ],
+            },
+            ctx,
+          );
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "transient 503", {
+            provider: acmeBase.id,
+            statusCode: 503,
+            retryable: true,
+          });
+        }
+      },
+    };
+    const acmeDns = createDnsClient({
+      provider: acmeProvider,
+      retry: { maxAttempts: 3, baseDelayMs: 0 },
+    });
+    const acmeErr = await acmeDns
+      .ensureRecords([{ type: "TXT", name: "_acme-challenge.example.com", value: "mine", ttl: 60 }])
+      .catch((e) => e);
+    expect(acmeErr).toBeInstanceOf(DomainSdkError);
+    expect(acmeErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true, externalChange: true },
+    });
+    expect(acmeCalls).toBe(1);
+    const acmeAfter = await acmeBase.listRecords({ zone: "example.com" }, { logger: {} });
+    expect(acmeAfter.some((r) => r.value === "other-worker")).toBe(true);
+    expect(acmeAfter.some((r) => r.value === "mine")).toBe(false);
+
+    // 2. Raw URL passwords with \, ", ' redact cleanly; JSON with Authorization/authorization stays valid JSON
+    const rawBs = new DomainSdkError(
+      "REQUEST_FAILED",
+      String.raw`upstream postgres://u:LEAK\w@db.example.com refused`,
+    );
+    expect(rawBs.message).not.toContain("LEAK");
+    const rawQuote = new DomainSdkError("REQUEST_FAILED", 'https://u:LEAK"w@db.example.com');
+    expect(rawQuote.message).not.toContain("LEAK");
+
+    const jsonAuth = new DomainSdkError(
+      "REQUEST_FAILED",
+      JSON.stringify({ message: "Authorization: Bearer tok extra", ok: true }),
+    );
+    expect(() => JSON.parse(jsonAuth.message)).not.toThrow();
+    expect(jsonAuth.message).not.toContain("tok");
+
+    const jsonSpaced = new DomainSdkError(
+      "REQUEST_FAILED",
+      '{"authorization": "Bearer sk_live_123" , "ok": true}',
+    );
+    expect(() => JSON.parse(jsonSpaced.message)).not.toThrow();
+    expect(jsonSpaced.message).not.toContain("sk_live_123");
+
+    // 3. Unterminated CAA quotes rejected
+    expect(() => parseCaaValue('0 issue "a')).toThrow(DomainSdkError);
+    expect(() => parseCaaValue('0 issue a"')).toThrow(DomainSdkError);
+
+    // 4. getPrototypeOf-throwing Proxy contained in readJson & withRetry
+    const hostileProto = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error("getPrototypeOf boom");
+        },
+      },
+    );
+    const netlifyHostile = netlify({
+      accessToken: "tok",
+      siteId: "site",
+      fetch: async () =>
+        new Response(
+          new ReadableStream({
+            pull() {
+              throw hostileProto;
+            },
+          }),
+          { status: 200 },
+        ),
+    });
+    await expect(
+      netlifyHostile.get({ hostname: "app.example.com" }, { logger: {} }),
+    ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE" });
+  });
 });
