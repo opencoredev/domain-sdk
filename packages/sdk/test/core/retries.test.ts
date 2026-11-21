@@ -152,13 +152,13 @@ describe("waitUntilActive backoff", () => {
     const client = createDomainClient({ provider: memoryProvider() });
     await expect(
       client.waitUntilActive("app.customer.com", { backoffFactor: 0.5 }),
-    ).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+    ).rejects.toMatchObject({ code: "INVALID_CONFIGURATION" });
     await expect(
       client.waitUntilActive("app.customer.com", { intervalMs: 5_000, maxIntervalMs: 1_000 }),
-    ).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+    ).rejects.toMatchObject({ code: "INVALID_CONFIGURATION" });
     for (const invalid of [{ backoffFactor: Number.NaN }, { maxIntervalMs: Number.NaN }])
       await expect(client.waitUntilActive("app.customer.com", invalid)).rejects.toMatchObject({
-        code: "REQUEST_FAILED",
+        code: "INVALID_CONFIGURATION",
       });
   });
 

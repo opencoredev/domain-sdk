@@ -58,9 +58,9 @@ describe("subdomain client", () => {
       baseDomain: "example.com",
     });
     expect(unsupported.supportsWildcard).toBe(false);
-    expect(() => unsupported.provisionWildcard()).toThrow(
-      expect.objectContaining({ code: "UNSUPPORTED_OPERATION" }),
-    );
+    await expect(unsupported.provisionWildcard()).rejects.toMatchObject({
+      code: "UNSUPPORTED_OPERATION",
+    });
 
     const memory = memoryProvider();
     const wildcardProvider = {
@@ -81,9 +81,9 @@ describe("subdomain client", () => {
     expect((await supported.waitUntilWildcardActive({ timeoutMs: 0 })).status).toBe("active");
     wildcardProvider.capabilities.wildcardDomains = false;
     expect(supported.supportsWildcard).toBe(false);
-    expect(() => supported.refreshWildcard()).toThrow(
-      expect.objectContaining({ code: "UNSUPPORTED_OPERATION" }),
-    );
+    await expect(supported.refreshWildcard()).rejects.toMatchObject({
+      code: "UNSUPPORTED_OPERATION",
+    });
     wildcardProvider.capabilities.wildcardDomains = true;
     await supported.removeWildcard();
   });

@@ -28,7 +28,8 @@ export function assertServerEnvironment(): void {
   const isBrowser = typeof window !== "undefined" || typeof document !== "undefined";
 
   if (isBrowser) {
-    throw new Error(
+    throw new DomainSdkError(
+      "INVALID_CONFIGURATION",
       "Domain SDK is server-side only. Initialize it in a server route, server action, or backend service.",
     );
   }
@@ -94,22 +95,23 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
     ...domain,
     hostname: normalizeInput(domain.hostname),
   });
-  const get = (hostname: string, signal?: AbortSignal, retry = options.retry) =>
-    run(
+  const get = async (hostname: string, signal?: AbortSignal, retry = options.retry) => {
+    const normalized = normalizeInput(hostname);
+    return run(
       "get",
-      normalizeInput(hostname),
-      async () =>
-        normalize(await provider.get({ hostname: normalizeInput(hostname) }, context(signal))),
+      normalized,
+      async () => normalize(await provider.get({ hostname: normalized }, context(signal))),
       signal,
       retry,
     );
+  };
 
   return {
     provider: provider.id,
     capabilities: provider.capabilities,
-    add(input, advanced) {
+    async add(input, advanced) {
       const hostname = normalizeInput(typeof input === "string" ? input : input.hostname);
-      const signal = typeof input === "string" ? advanced?.signal : input.signal;
+      const signal = (typeof input === "string" ? undefined : input.signal) ?? advanced?.signal;
       return run(
         "add",
         hostname,
@@ -123,7 +125,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
     refresh(hostname, advanced) {
       return get(hostname, advanced?.signal);
     },
-    list(input = {}) {
+    async list(input = {}) {
       if (!provider.list || !provider.capabilities.list) {
         throw new DomainSdkError(
           "UNSUPPORTED_OPERATION",
@@ -133,17 +135,20 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       }
       const limit = input.limit ?? 50;
       if (!Number.isInteger(limit) || limit < 1 || limit > 100)
-        throw new DomainSdkError("REQUEST_FAILED", "List limit must be between 1 and 100.", {
-          provider: provider.id,
-        });
+        throw new DomainSdkError(
+          "INVALID_CONFIGURATION",
+          "List limit must be an integer between 1 and 100.",
+          { provider: provider.id },
+        );
+      const list = provider.list.bind(provider);
       return run(
         "list",
         undefined,
-        async () => provider.list!({ limit, cursor: input.cursor }, context(input.signal)),
+        () => list({ limit, cursor: input.cursor }, context(input.signal)),
         input.signal,
       );
     },
-    verify(hostname, advanced) {
+    async verify(hostname, advanced) {
       if (!provider.verify || !provider.capabilities.explicitVerification) {
         throw new DomainSdkError(
           "UNSUPPORTED_OPERATION",
@@ -151,16 +156,16 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
           { provider: provider.id },
         );
       }
+      const verify = provider.verify.bind(provider);
       const normalized = normalizeInput(hostname);
       return run(
         "verify",
         normalized,
-        async () =>
-          normalize(await provider.verify!({ hostname: normalized }, context(advanced?.signal))),
+        async () => normalize(await verify({ hostname: normalized }, context(advanced?.signal))),
         advanced?.signal,
       );
     },
-    remove(hostname, advanced) {
+    async remove(hostname, advanced) {
       const normalized = normalizeInput(hostname);
       return run(
         "remove",
@@ -182,7 +187,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
         !(maxIntervalMs >= intervalMs && Number.isFinite(maxIntervalMs))
       )
         throw new DomainSdkError(
-          "REQUEST_FAILED",
+          "INVALID_CONFIGURATION",
           "Polling timeout must be non-negative, interval must be at least 250ms, backoffFactor at least 1, and maxIntervalMs at least intervalMs.",
           { provider: provider.id },
         );

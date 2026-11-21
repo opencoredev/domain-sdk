@@ -405,12 +405,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     return normalized;
   };
 
-  const ensure = (
+  const ensure = async (
     records: readonly DnsRecordInput[],
     optional: readonly DnsRecordInput[],
     options: EnsureRecordsOptions,
   ): Promise<ZoneRecord[]> => {
-    if (!records.length && !optional.length) return Promise.resolve([]);
+    if (!records.length && !optional.length) return [];
     const zone = resolveZone(records.length ? records : optional, options.zone);
     return run(
       "ensureRecords",
@@ -581,24 +581,23 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
   return {
     provider: provider.id,
     capabilities: provider.capabilities,
-    getZone(zone, request) {
-      const normalized = normalizeZone(zone);
+    async getZone(zone, request) {
       if (!provider.getZone || !provider.capabilities.zoneInfo)
-        return Promise.reject(
-          new DomainSdkError(
-            "UNSUPPORTED_OPERATION",
-            `${provider.id} does not report zone delegation.`,
-            { provider: provider.id },
-          ),
+        throw new DomainSdkError(
+          "UNSUPPORTED_OPERATION",
+          `${provider.id} does not report zone delegation.`,
+          { provider: provider.id },
         );
+      const getZone = provider.getZone.bind(provider);
+      const normalized = normalizeZone(zone);
       return run(
         "getZone",
         normalized,
-        () => provider.getZone!({ zone: normalized }, context(request?.signal)),
+        () => getZone({ zone: normalized }, context(request?.signal)),
         request?.signal,
       );
     },
-    listRecords(zone, request) {
+    async listRecords(zone, request) {
       const normalized = normalizeZone(zone);
       return run(
         "listRecords",
@@ -608,8 +607,8 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       );
     },
     ensureRecords,
-    removeRecords(records, remove = {}) {
-      if (!records.length) return Promise.resolve();
+    async removeRecords(records, remove = {}) {
+      if (!records.length) return;
       const zone = resolveZone(records, remove.zone);
       return run(
         "removeRecords",

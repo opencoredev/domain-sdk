@@ -115,40 +115,40 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
       const label = hostname.slice(0, -suffix.length);
       return allowedLabel(label);
     },
-    add(label, advanced) {
+    async add(label, advanced) {
       return domainClient.add(toHostname(label), advanced);
     },
-    get(label, advanced) {
+    async get(label, advanced) {
       return domainClient.get(toHostname(label), advanced);
     },
-    refresh(label, advanced) {
+    async refresh(label, advanced) {
       return domainClient.refresh(toHostname(label), advanced);
     },
-    verify(label, advanced) {
+    async verify(label, advanced) {
       return domainClient.verify(toHostname(label), advanced);
     },
-    remove(label, advanced) {
+    async remove(label, advanced) {
       return domainClient.remove(toHostname(label), advanced);
     },
-    waitUntilActive(label, polling) {
+    async waitUntilActive(label, polling) {
       return domainClient.waitUntilActive(toHostname(label), polling);
     },
-    provisionWildcard(advanced) {
+    async provisionWildcard(advanced) {
       return withWildcard((hostname) => domainClient.add(hostname, advanced));
     },
-    getWildcard(advanced) {
+    async getWildcard(advanced) {
       return withWildcard((hostname) => domainClient.get(hostname, advanced));
     },
-    refreshWildcard(advanced) {
+    async refreshWildcard(advanced) {
       return withWildcard((hostname) => domainClient.refresh(hostname, advanced));
     },
-    verifyWildcard(advanced) {
+    async verifyWildcard(advanced) {
       return withWildcard((hostname) => domainClient.verify(hostname, advanced));
     },
-    removeWildcard(advanced) {
+    async removeWildcard(advanced) {
       return withWildcard((hostname) => domainClient.remove(hostname, advanced));
     },
-    waitUntilWildcardActive(polling) {
+    async waitUntilWildcardActive(polling) {
       return withWildcard((hostname) => domainClient.waitUntilActive(hostname, polling));
     },
   };
