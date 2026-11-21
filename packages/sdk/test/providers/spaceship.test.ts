@@ -593,4 +593,57 @@ describe("spaceship DNS", () => {
       "100",
     ]);
   });
+
+  test("returns all records for a static zone with duplicate records across a page boundary", async () => {
+    const record = (index: number) => ({
+      type: "TXT",
+      name: `r${index}`,
+      value: "x",
+      ttl: 300,
+      group: { type: "custom" },
+    });
+    const zone = [...Array.from({ length: 100 }, (_, index) => record(index)), record(0)];
+    const mock = mockFetch((url) => {
+      const skip = Number(url.searchParams.get("skip"));
+      return json({ items: zone.slice(skip, skip + 100), total: zone.length });
+    });
+    const records = await spaceship({ ...credentials, fetch: mock.fetch }).listRecords(
+      { zone: "example.com" },
+      context,
+    );
+    expect(records).toHaveLength(101);
+    expect(records[0]?.name).toBe("r0.example.com");
+    expect(records[100]?.name).toBe("r0.example.com");
+    expect(mock.calls.map((call) => new URL(call.url).searchParams.get("skip"))).toEqual([
+      "0",
+      "100",
+      "0",
+      "100",
+    ]);
+  });
+
+  test("gives up when same-total offset shifts keep repeating across every pass", async () => {
+    const record = (index: number) => ({
+      type: "TXT",
+      name: `r${index}`,
+      value: "x",
+      ttl: 300,
+      group: { type: "custom" },
+    });
+    let zone = Array.from({ length: 150 }, (_, index) => record(index));
+    let nextId = 1000;
+    const mock = mockFetch((url) => {
+      const skip = Number(url.searchParams.get("skip"));
+      const page = { items: zone.slice(skip, skip + 100), total: zone.length };
+      if (skip === 0) zone = [record(nextId++), ...zone.slice(0, 149)];
+      return json(page);
+    });
+    await expect(
+      spaceship({ ...credentials, fetch: mock.fetch }).listRecords(
+        { zone: "example.com" },
+        context,
+      ),
+    ).rejects.toMatchObject({ code: "PROVIDER_UNAVAILABLE", retryable: true });
+    expect(mock.calls).toHaveLength(8);
+  });
 });

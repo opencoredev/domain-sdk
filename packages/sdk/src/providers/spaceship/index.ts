@@ -233,10 +233,13 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
     async listRecords({ zone }, context) {
       let records: ZoneRecord[] = [];
       let previousPages = new Set<string>();
+      let passSnapshot: string[] = [];
+      let sawCrossPageDuplicate = false;
+      let lastDuplicateSnapshot: string[] | undefined;
       let skip = 0;
       let expectedTotal: number | undefined;
       let restarts = 0;
-      const restart = () => {
+      const restart = (clearSnapshot = false) => {
         if (++restarts > MAX_LIST_RESTARTS)
           throw new DomainSdkError(
             "PROVIDER_UNAVAILABLE",
@@ -245,6 +248,9 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
           );
         records = [];
         previousPages = new Set<string>();
+        passSnapshot = [];
+        sawCrossPageDuplicate = false;
+        if (clearSnapshot) lastDuplicateSnapshot = undefined;
         skip = 0;
         expectedTotal = undefined;
       };
@@ -264,7 +270,7 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
         // Pages are offsets, so a record added or deleted between pages shifts every later
         // page and would skip or repeat a record. Start over to get a consistent snapshot.
         if (expectedTotal !== undefined && page.total !== expectedTotal) {
-          restart();
+          restart(true);
           continue;
         }
         if ((!page.items.length && skip < page.total) || skip + page.items.length > page.total)
@@ -276,7 +282,6 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
             },
           );
         const pageKeys: string[] = [];
-        let shifted = false;
         for (const item of page.items) {
           if (
             !item ||
@@ -301,24 +306,31 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
           if (record.type === "MX") record.priority = item.preference;
           const identity = { type: item.type, name: item.name, ...recordFields(item) };
           const key = JSON.stringify(identity);
-          // Even when total is unchanged (an add and delete between pages), a record shifting
-          // from an earlier page into this one reveals an inconsistent offset snapshot.
-          if (previousPages.has(key)) {
-            shifted = true;
-            break;
-          }
+          // Even when total is unchanged, a record repeating across pages can indicate an
+          // offset shift between requests or a static zone with duplicate records. Re-read
+          // once and accept the snapshot only if two consecutive full passes match.
+          if (previousPages.has(key)) sawCrossPageDuplicate = true;
           pageKeys.push(key);
+          passSnapshot.push(JSON.stringify([key, item.ttl, item.group?.type ?? null]));
           identities.set(record, identity);
           records.push(record);
-        }
-        if (shifted) {
-          restart();
-          continue;
         }
         for (const key of pageKeys) previousPages.add(key);
         expectedTotal = page.total;
         skip += page.items.length;
-        if (skip >= page.total) return records;
+        if (skip >= page.total) {
+          if (sawCrossPageDuplicate) {
+            const matchesPrevious =
+              lastDuplicateSnapshot !== undefined &&
+              lastDuplicateSnapshot.length === passSnapshot.length &&
+              passSnapshot.every((entry, index) => entry === lastDuplicateSnapshot?.[index]);
+            if (matchesPrevious) return records;
+            lastDuplicateSnapshot = passSnapshot;
+            restart();
+            continue;
+          }
+          return records;
+        }
       }
     },
     async createRecords({ zone, records }, context) {
