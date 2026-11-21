@@ -2140,7 +2140,9 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     expect(scrub("password is SECRET123 token%3DSECRET456 X-Amz-Signature=SIG123")).toBe(
       "password is [REDACTED] token%3D[REDACTED] X-Amz-Signature=[REDACTED]",
     );
-    expect(scrub('Digest authentication failed, response="SECRET123"')).toBe("Digest [REDACTED]");
+    expect(scrub('Digest authentication failed, response="SECRET123"')).toBe(
+      "Digest authentication failed, response=[REDACTED]",
+    );
     expect(scrub('Basic authentication failed, response="SECRET123"')).toBe(
       "Basic authentication failed, response=[REDACTED]",
     );
@@ -2304,6 +2306,165 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
     expect(aliasedErr).toMatchObject({
       code: "REQUEST_FAILED",
       details: { restored: true, committed: true },
+    });
+  });
+
+  test("R30: linear-time redaction, multi-scheme/quoted/multiline/%20%3D/inline auth redaction, concurrent locked additions, and partial-restore unexpected", async () => {
+    // 1. Linear-time redaction on huge repeated auth strings (no O(N^2) blow-up).
+    const t0 = performance.now();
+    const bigDigest = new DomainSdkError("REQUEST_FAILED", "Digest authentication ".repeat(40_000));
+    const bigBasic = new DomainSdkError("REQUEST_FAILED", 'Basic realm="a" '.repeat(40_000));
+    const elapsedMs = performance.now() - t0;
+    expect(bigDigest.message.length).toBeLessThanOrEqual(1_000);
+    expect(bigBasic.message.length).toBeLessThanOrEqual(1_000);
+    expect(elapsedMs).toBeLessThan(1_000);
+
+    // 2. Multi-scheme lines, quoted/angle-bracketed trailing credentials, multiline Digest, %20%3D, and inline prose/credentials.
+    for (const [input, leaks] of [
+      [
+        'Basic authentication failed; Bearer SECRET_BEARER_999, nonce="NONCE123"',
+        ["SECRET_BEARER_999", "NONCE123"],
+      ],
+      [
+        'Basic realm="example", Basic dXNlcjpwYXNz, opaque="OPAQUE123"',
+        ["dXNlcjpwYXNz", "OPAQUE123"],
+      ],
+      ['Basic authentication failed dXNlcjpwYXNz, nonce="NONCE123"', ["dXNlcjpwYXNz", "NONCE123"]],
+      ['Bearer invalid "SECRET123"', ["SECRET123"]],
+      ['Basic required "dXNlcjpwYXNz"', ["dXNlcjpwYXNz"]],
+      ["Basic authentication failed <dXNlcjpwYXNz>", ["dXNlcjpwYXNz"]],
+      ['Bearer invalid nonce="NONCE123", response="SECRET123"', ["NONCE123", "SECRET123"]],
+      [
+        'Digest authentication failed\n  nonce="NONCE123", response="SECRET_DIGEST_999"',
+        ["NONCE123", "SECRET_DIGEST_999"],
+      ],
+      ["Digest authentication failed response%20%3D%20SECRET123", ["SECRET123"]],
+      [
+        "Basic authentication failed, nonce%20%3D%20NONCE123, response%20%3D%20SECRET123",
+        ["NONCE123", "SECRET123"],
+      ],
+      ["secret is SECRET123", ["SECRET123"]],
+      ["password: invalid SECRET123", ["SECRET123"]],
+      ["password SECRET123", ["SECRET123"]],
+    ] as const) {
+      const msg = new DomainSdkError("REQUEST_FAILED", input).message;
+      for (const secret of leaks) expect(msg).not.toContain(secret);
+      expect(msg).toContain("[REDACTED]");
+    }
+
+    // Embedded compact JSON and prose stay intact.
+    expect(
+      new DomainSdkError(
+        "REQUEST_FAILED",
+        'Upstream error: {"header":"Basic admin:pass","status":401}',
+      ).message,
+    ).toBe('Upstream error: {"header":"Basic [REDACTED]","status":401}');
+    expect(new DomainSdkError("REQUEST_FAILED", "secret rotation failed").message).toBe(
+      "secret rotation failed",
+    );
+    expect(new DomainSdkError("REQUEST_FAILED", "secret is missing").message).toBe(
+      "secret is missing",
+    );
+
+    // 3. Concurrent locked addition during whole-zone pre-commit 503 sets externalChange and vetoes retry.
+    const lockedZone: ZoneRecord[] = [];
+    let lockedCreates = 0;
+    const lockedErr = await createDnsClient({
+      retry: { maxAttempts: 2, baseDelayMs: 1, maxDelayMs: 5 },
+      provider: {
+        id: "wz-locked-add",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["A", "TXT"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return lockedZone.map((r) => ({ ...r }));
+        },
+        async createRecords() {
+          lockedCreates += 1;
+          lockedZone.push({
+            id: "mx-ext",
+            type: "MX",
+            name: "example.com",
+            value: "mail.concurrent.net",
+            ttl: 300,
+            editable: false,
+          });
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "503", {
+            provider: "wz-locked-add",
+            statusCode: 503,
+            retryable: true,
+          });
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "TXT", name: "app.example.com", value: "wanted" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(lockedCreates).toBe(1);
+    expect(lockedErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true, externalChange: true },
+    });
+
+    // 4. Committed whole-zone write dropping un-restorable MX + leaving unexpected same-key A still reports details.unexpected.
+    const partialZone: ZoneRecord[] = [
+      {
+        id: "mx1",
+        type: "MX",
+        name: "example.com",
+        value: "mail.example.com",
+        ttl: 300,
+        editable: true,
+      },
+    ];
+    const partialErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "wz-partial-unexp",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["A", "TXT"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return partialZone.map((r) => ({ ...r }));
+        },
+        async createRecords() {
+          partialZone.length = 0;
+          partialZone.push({
+            id: "a-rewritten",
+            type: "A",
+            name: "app.example.com",
+            value: "9.9.9.9",
+            ttl: 300,
+            editable: true,
+          });
+          throw new DomainSdkError("REQUEST_FAILED", "committed drop+rewrite", {
+            provider: "wz-partial-unexp",
+            details: { committed: true },
+          });
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "2.2.2.2" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(partialErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        committed: true,
+        restored: false,
+        externalChange: true,
+        unexpected: [{ type: "A", name: "app.example.com", value: "9.9.9.9" }],
+      },
     });
   });
 });

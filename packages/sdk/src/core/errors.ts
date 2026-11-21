@@ -27,8 +27,8 @@ const SECRET_KEYS =
   /^(?:(?:[a-z0-9]+[_-]){0,4}(?:x-)?(?:token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|authorization|basic[_-]?auth|auth|credentials|bearer|jwt|x-amz-signature|signature|secret|password|passwd|pwd|pass|private[_-]?key|cookie|set[_-]?cookie|session(?:[_-]?id)?)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Bearer|Jwt))$/i;
 const AUTH_SCHEME_PREFIX =
   /\b(Bearer|ApiKey|Basic|Digest|Token)(\s+|%20|%09|[:=](?:[ \t]|%20|%09)*|%3A(?:[ \t]|%20|%09)*|%3D(?:[ \t]|%20|%09)*)/gi;
-const TRAILING_AUTH_PARAM =
-  /\b(?:response|nonce|cnonce|opaque)(?:[ \t]*=[ \t]*|%3D(?:[ \t]|%20|%09)*)/gi;
+const AUTH_PARAM_PREFIX =
+  /\b(?:response|nonce|cnonce|opaque)(?:[ \t]|%20|%09)*(?:=|%3D)(?:[ \t]|%20|%09)*/gi;
 const EXEMPT_AUTH_WORDS =
   /^(?:token|tokens|auth|authentication|authorization|header|headers|credentials|credential|required|missing|invalid|expired|revoked|denied|rejected|failed|error|format|type|value|mismatch|is|was|not|for|has|must|cannot|could|should|provided|supplied|used|the|this|that|you|your|ok|passed|true|false)$/i;
 const URL_USERINFO_BARE =
@@ -38,7 +38,7 @@ const URL_USERINFO_DOUBLE_QUOTED =
 const URL_USERINFO_SINGLE_QUOTED =
   /(?<=')([a-z][a-z0-9+.-]{0,20}:(?:\\*\/){2})((?:\\+(?:[/']|(?![/\\']))|[^/?#\s\\'<>]|'(?=[^}\]:\s])(?!,\s*'))+)@/gi;
 const INLINE_SECRET_PREFIX =
-  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?:=|:|%3D|%3A)(?:\s|%20|%09)*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|passwd|pwd|private[_-]?key|secret)[ \t]+|password[ \t]+is[ \t]+))/gi;
+  /(?<![A-Za-z0-9])(?:(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|secret[_-]?access[_-]?key|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|authorization|basic[_-]?auth|x-amz-signature|signature|credentials|jwt|password|passwd|pwd|pass|private[_-]?key|set[_-]?cookie|cookie|session(?:[_-]?id)?|token|secret)|[a-z][a-z0-9]{0,24}(?:Token|ApiKey|Secret|AccessKey|SecretKey|Password|Passwd|PrivateKey|Cookie|BasicAuth|Signature|Credentials|Jwt))\\*["']?\s*(?:=|:|%3D|%3A)(?:\s|%20|%09)*|(?:(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secret[_-]?access[_-]?key|client[_-]?secret|refresh[_-]?token|session[_-]?token|id[_-]?token|auth[_-]?token|auth[_-]?key|x-amz-signature|password|passwd|pwd|private[_-]?key|secret)[ \t]+|(?:password|secret)[ \t]+is[ \t]+))/gi;
 
 function isShortBasicCredential(token: string): boolean {
   if (token.length < 4 || token.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(token)) {
@@ -127,7 +127,7 @@ function scanSecretValueEnd(
   }
   if (options.allowSecondToken && index < value.length) {
     while (index < value.length) {
-      const sep = /^(?:[ \t,;]+|\r?\n[ \t]+)/.exec(value.slice(index));
+      const sep = /^(?:[ \t,;]+|\r?\n[ \t]+)/.exec(value.slice(index, index + 64));
       if (!sep) break;
       const next = index + sep[0].length;
       const tokenEnd = scanSecretValueEnd(value, next);
@@ -138,10 +138,89 @@ function scanSecretValueEnd(
   return index;
 }
 
+function looksLikeTrailingCredential(token: string, mode: "basic" | "generic"): boolean {
+  const unwrapped =
+    (token.startsWith("<") && token.endsWith(">")) ||
+    (token.startsWith('"') && token.endsWith('"')) ||
+    (token.startsWith("'") && token.endsWith("'"))
+      ? token.slice(1, -1)
+      : token;
+  if (unwrapped.length === 0 || EXEMPT_AUTH_WORDS.test(unwrapped)) return false;
+  if (mode === "basic") {
+    return (
+      isShortBasicCredential(unwrapped) ||
+      (/^(?:(?:[A-Za-z0-9+/=_~-]|%[0-9A-Fa-f]{2}){8,}|[^:\s=]*:[^\s]+)$/.test(unwrapped) &&
+        !/^[A-Za-z]?[a-z]+$/.test(unwrapped))
+    );
+  }
+  return (
+    unwrapped.length >= 6 &&
+    !/^[A-Za-z]?[a-z]+$/.test(unwrapped) &&
+    /(?:[0-9_/:+=-]|^[A-Z]{2,}|[a-z][A-Z])/.test(unwrapped)
+  );
+}
+
+function scanTrailingCredential(
+  value: string,
+  start: number,
+  lineEnd: number,
+  mode: "basic" | "generic",
+  scanToken: (from: number) => number,
+): { start: number; end: number } | null {
+  let scan = start;
+  let steps = 0;
+  while (scan < lineEnd && steps < 6) {
+    steps += 1;
+    const gap = /^(?:[,:;]?[ \t]+)/.exec(value.slice(scan, Math.min(lineEnd, scan + 32)));
+    if (!gap) break;
+    const tokStart = scan + gap[0].length;
+    if (tokStart >= lineEnd) break;
+    const ch = value[tokStart]!;
+    const isQuoted =
+      ch === '"' ||
+      ch === "'" ||
+      (ch === "\\" && /^\\+"/.test(value.slice(tokStart, tokStart + 8)));
+    if (isQuoted) {
+      const tokEnd = Math.min(lineEnd, scanSecretValueEnd(value, tokStart));
+      if (tokEnd <= tokStart) break;
+      const rawTok = value.slice(tokStart, tokEnd).replace(/^\\+"|\\+"$/g, '"');
+      return looksLikeTrailingCredential(rawTok, mode) ? { start: tokStart, end: tokEnd } : null;
+    }
+    const peek = value.slice(tokStart, Math.min(lineEnd, tokStart + 64));
+    // Stop before another auth scheme or key=value auth parameter so dedicated passes handle them.
+    if (
+      /^(?:Bearer|ApiKey|Basic|Digest|Token)(?:\s|%20|%09|[:=]|%3A|%3D)/i.test(peek) ||
+      /^[A-Za-z_][A-Za-z0-9_-]*(?:[ \t]|%20|%09)*(?:=|%3D)/i.test(peek)
+    ) {
+      break;
+    }
+    const tokEnd = Math.min(lineEnd, scanToken(tokStart));
+    if (tokEnd <= tokStart) break;
+    const rawTok = value.slice(tokStart, tokEnd);
+    const cleanTok = rawTok.replace(/[.!?:]+$/, "");
+    if (EXEMPT_AUTH_WORDS.test(cleanTok)) {
+      scan = tokEnd;
+      continue;
+    }
+    return looksLikeTrailingCredential(cleanTok, mode) ? { start: tokStart, end: tokEnd } : null;
+  }
+  return null;
+}
+
 function scrubAuthSchemes(value: string): string {
   AUTH_SCHEME_PREFIX.lastIndex = 0;
   let out = "";
   let cursor = 0;
+  let cachedLineEnd = -1;
+  const getLineEnd = (pos: number): number => {
+    if (pos >= cachedLineEnd) {
+      const nl = value.indexOf("\n", pos);
+      const cr = value.indexOf("\r", pos);
+      cachedLineEnd =
+        nl === -1 ? (cr === -1 ? value.length : cr) : cr === -1 ? nl : Math.min(nl, cr);
+    }
+    return cachedLineEnd;
+  };
   let match: RegExpExecArray | null;
   while ((match = AUTH_SCHEME_PREFIX.exec(value)) !== null) {
     const scheme = match[1]!;
@@ -157,22 +236,21 @@ function scrubAuthSchemes(value: string): string {
     if (
       first === '"' ||
       first === "'" ||
-      (first === "\\" && /^\\+"/.test(value.slice(valueStart)))
+      (first === "\\" && /^\\+"/.test(value.slice(valueStart, valueStart + 8)))
     ) {
       valueEnd = scanSecretValueEnd(value, valueStart);
     } else if (lower === "digest") {
       const digestLead = /^([A-Za-z_][A-Za-z0-9_-]*)(?=$|[\s.!?:,;)}\]])/.exec(
-        value.slice(valueStart),
+        value.slice(valueStart, valueStart + 64),
       );
       if (
         digestLead &&
         EXEMPT_AUTH_WORDS.test(digestLead[1]!) &&
-        !/^(?:[ \t]*=|%3D)/i.test(value.slice(valueStart + digestLead[1]!.length))
+        !/^(?:[ \t]|%20|%09)*(?:=|%3D)/i.test(
+          value.slice(valueStart + digestLead[1]!.length, valueStart + digestLead[1]!.length + 16),
+        )
       ) {
-        const restLine = value.slice(valueStart).split(/[\r\n]/, 1)[0] ?? "";
-        if (!/\b(?:response|nonce|cnonce|opaque|username)(?:[ \t]*=|%3D)/i.test(restLine)) {
-          continue;
-        }
+        continue;
       }
       let inQuote: '"' | "'" | null = null;
       while (valueEnd < value.length) {
@@ -192,28 +270,37 @@ function scrubAuthSchemes(value: string): string {
           continue;
         }
         if (ch === " " || ch === "\t") {
-          if (/^[ \t]+(?:[a-z][a-z0-9+.-]{0,20}:\/\/|\[REDACTED\])/i.test(value.slice(valueEnd))) {
+          if (
+            /^[ \t]+(?:[a-z][a-z0-9+.-]{0,20}:\/\/|\[REDACTED\])/i.test(
+              value.slice(valueEnd, valueEnd + 48),
+            )
+          ) {
             break;
           }
         }
         if (ch === ";") {
-          if (/^;\s*[A-Za-z_][A-Za-z0-9_-]*[ \t]*=/.test(value.slice(valueEnd))) {
+          if (/^;\s*[A-Za-z_][A-Za-z0-9_-]*[ \t]*=/.test(value.slice(valueEnd, valueEnd + 64))) {
             valueEnd += 1;
             continue;
           }
           break;
         }
-        if (ch === "<" && valueEnd > valueStart && /^<\/[A-Za-z]/.test(value.slice(valueEnd))) {
+        if (
+          ch === "<" &&
+          valueEnd > valueStart &&
+          /^<\/[A-Za-z]/.test(value.slice(valueEnd, valueEnd + 8))
+        ) {
           break;
         }
         if (ch === "}" || ch === "]") break;
         if (ch === "\r" || ch === "\n") {
-          const cont = /^\r?\n[ \t]+/.exec(value.slice(valueEnd));
+          const slice = value.slice(valueEnd, valueEnd + 64);
+          const cont = /^\r?\n[ \t]+/.exec(slice);
           if (cont) {
             valueEnd += cont[0].length;
             continue;
           }
-          const paramCont = /^\r?\n\s*[A-Za-z_][A-Za-z0-9_-]*[ \t]*=/.test(value.slice(valueEnd));
+          const paramCont = /^\r?\n\s*[A-Za-z_][A-Za-z0-9_-]*[ \t]*=/.test(slice);
           if (paramCont) {
             valueEnd += ch === "\r" && value[valueEnd + 1] === "\n" ? 2 : 1;
             continue;
@@ -231,15 +318,19 @@ function scrubAuthSchemes(value: string): string {
           /[;,)}\]"'\\]/.test(ch) &&
           value.slice(from, idx).includes(":") &&
           idx + 1 < value.length &&
-          !/^(?:[\s<]|[,}\])]+(?=$|[\s<]))/.test(value.slice(idx + 1))
+          !/^(?:[\s<]|[,}\])]+(?=$|[\s<]))/.test(value.slice(idx + 1, idx + 16)) &&
+          !((ch === '"' || ch === "'") && /^,["'A-Za-z_]/.test(value.slice(idx + 1, idx + 8)))
         ) {
           return false;
         }
         if (/[\s"',;)}\]\\]/.test(ch)) return true;
-        if ((ch === "&" || ch === "?") && /^[&?][A-Za-z_][A-Za-z0-9_-]*=/.test(value.slice(idx))) {
+        if (
+          (ch === "&" || ch === "?") &&
+          /^[&?][A-Za-z_][A-Za-z0-9_-]*=/.test(value.slice(idx, idx + 64))
+        ) {
           return true;
         }
-        if (ch === "<" && idx > from && /^<\/[A-Za-z]/.test(value.slice(idx))) {
+        if (ch === "<" && idx > from && /^<\/[A-Za-z]/.test(value.slice(idx, idx + 8))) {
           return true;
         }
         return false;
@@ -247,7 +338,7 @@ function scrubAuthSchemes(value: string): string {
       const scanAuthParam = (from: number): number => {
         if (allowParams || lower === "basic") {
           const paramPrefix = /^([A-Za-z_][A-Za-z0-9_-]*)[ \t]*=(?!=)[ \t]*/.exec(
-            value.slice(from),
+            value.slice(from, from + 64),
           );
           if (paramPrefix && (allowParams || /^realm$/i.test(paramPrefix[1]!))) {
             const valStart = from + paramPrefix[0].length;
@@ -255,7 +346,7 @@ function scrubAuthSchemes(value: string): string {
               valStart < value.length &&
               (value[valStart] === '"' ||
                 value[valStart] === "'" ||
-                (value[valStart] === "\\" && /^\\+"/.test(value.slice(valStart))))
+                (value[valStart] === "\\" && /^\\+"/.test(value.slice(valStart, valStart + 8))))
             ) {
               return scanSecretValueEnd(value, valStart);
             }
@@ -273,7 +364,7 @@ function scrubAuthSchemes(value: string): string {
       valueEnd = scanAuthParam(valueStart);
       if (allowParams && value.slice(valueStart, valueEnd).includes("=")) {
         while (valueEnd < value.length) {
-          const rest = value.slice(valueEnd);
+          const rest = value.slice(valueEnd, valueEnd + 64);
           const sep =
             /^(?:[ \t]*[,;]\s*|\r?\n[ \t]*|[ \t]+)(?=[A-Za-z_][A-Za-z0-9_-]*[ \t]*=(?!=))/.exec(
               rest,
@@ -296,55 +387,17 @@ function scrubAuthSchemes(value: string): string {
                 /^[A-Za-z]?[a-z]+$/.test(basicWord))))) ||
         ((lower === "bearer" || lower === "token") && EXEMPT_AUTH_WORDS.test(word))
       ) {
-        const lineEndRaw = value.slice(valueEnd).search(/[\r\n]/);
-        const lineEnd = lineEndRaw === -1 ? value.length : valueEnd + lineEndRaw;
-        if (lower === "basic") {
-          const restLine = value.slice(valueEnd, lineEnd);
-          TRAILING_AUTH_PARAM.lastIndex = 0;
-          let paramHit: RegExpExecArray | null;
-          let matchedAny = false;
-          while ((paramHit = TRAILING_AUTH_PARAM.exec(restLine)) !== null) {
-            const paramValStart = valueEnd + paramHit.index + paramHit[0].length;
-            const paramValEnd = scanSecretValueEnd(value, paramValStart);
-            if (paramValEnd > paramValStart) {
-              out += `${value.slice(cursor, paramValStart)}[REDACTED]`;
-              cursor = paramValEnd;
-              matchedAny = true;
-              TRAILING_AUTH_PARAM.lastIndex = paramValEnd - valueEnd;
-            }
-          }
-          if (matchedAny) {
-            AUTH_SCHEME_PREFIX.lastIndex = cursor;
-            continue;
-          }
-        }
-        let scan = valueEnd;
-        while (scan < lineEnd) {
-          const gap = /^(?:[,:;]?[ \t]+)/.exec(value.slice(scan, lineEnd));
-          if (!gap) break;
-          const tokStart = scan + gap[0].length;
-          const tokEnd = scanAuthParam(tokStart);
-          if (tokEnd <= tokStart) break;
-          const rawTok = value.slice(tokStart, tokEnd);
-          const cleanTok = rawTok.replace(/[.!?:]+$/, "");
-          if (EXEMPT_AUTH_WORDS.test(cleanTok)) {
-            scan = tokEnd;
-            continue;
-          }
-          const looksCredential =
-            lower === "basic"
-              ? isShortBasicCredential(cleanTok) ||
-                (/^(?:(?:[A-Za-z0-9+/=_~-]|%[0-9A-Fa-f]{2}){8,}|[^:\s=]*:[^\s]+)$/.test(cleanTok) &&
-                  !/^[A-Za-z]?[a-z]+$/.test(cleanTok))
-              : cleanTok.length >= 6 &&
-                !/^[A-Za-z]?[a-z]+$/.test(cleanTok) &&
-                /(?:[0-9_/:+=-]|^[A-Z]{2,}|[a-z][A-Z])/.test(cleanTok);
-          if (looksCredential) {
-            out += `${value.slice(cursor, tokStart)}[REDACTED]`;
-            cursor = tokEnd;
-            AUTH_SCHEME_PREFIX.lastIndex = tokEnd;
-          }
-          break;
+        const trailing = scanTrailingCredential(
+          value,
+          valueEnd,
+          getLineEnd(valueEnd),
+          lower === "basic" ? "basic" : "generic",
+          scanAuthParam,
+        );
+        if (trailing) {
+          out += `${value.slice(cursor, trailing.start)}[REDACTED]`;
+          cursor = trailing.end;
+          AUTH_SCHEME_PREFIX.lastIndex = trailing.end;
         }
         continue;
       }
@@ -359,10 +412,41 @@ function scrubAuthSchemes(value: string): string {
   return cursor === 0 ? value : out + value.slice(cursor);
 }
 
+function scrubAuthParams(value: string): string {
+  AUTH_PARAM_PREFIX.lastIndex = 0;
+  let out = "";
+  let cursor = 0;
+  let match: RegExpExecArray | null;
+  while ((match = AUTH_PARAM_PREFIX.exec(value)) !== null) {
+    const valueStart = match.index + match[0].length;
+    if (valueStart >= value.length) break;
+    if (value.startsWith("[REDACTED]", valueStart)) {
+      AUTH_PARAM_PREFIX.lastIndex = valueStart + "[REDACTED]".length;
+      continue;
+    }
+    const valueEnd = scanSecretValueEnd(value, valueStart);
+    if (valueEnd <= valueStart) continue;
+    out += `${value.slice(cursor, valueStart)}[REDACTED]`;
+    cursor = valueEnd;
+    AUTH_PARAM_PREFIX.lastIndex = valueEnd;
+  }
+  return cursor === 0 ? value : out + value.slice(cursor);
+}
+
 function scrubInlineSecrets(value: string): string {
   INLINE_SECRET_PREFIX.lastIndex = 0;
   let out = "";
   let cursor = 0;
+  let cachedLineEnd = -1;
+  const getLineEnd = (pos: number): number => {
+    if (pos >= cachedLineEnd) {
+      const nl = value.indexOf("\n", pos);
+      const cr = value.indexOf("\r", pos);
+      cachedLineEnd =
+        nl === -1 ? (cr === -1 ? value.length : cr) : cr === -1 ? nl : Math.min(nl, cr);
+    }
+    return cachedLineEnd;
+  };
   let match: RegExpExecArray | null;
   while ((match = INLINE_SECRET_PREFIX.exec(value)) !== null) {
     const valueStart = match.index + match[0].length;
@@ -375,6 +459,8 @@ function scrubInlineSecrets(value: string): string {
     if (valueEnd === valueStart) continue;
     const rawVal = value.slice(valueStart, valueEnd);
     const quote = value[valueStart];
+    const cleanVal = rawVal.replace(/[.!?:]+$/, "");
+    const isBareSecretOrPassword = /^(?:secret|password)[ \t]+$/i.test(match[0]);
     if (
       quote !== '"' &&
       quote !== "'" &&
@@ -382,11 +468,24 @@ function scrubInlineSecrets(value: string): string {
       /^(?:token|authorization|pass|password|passwd|pwd|signature|credentials|jwt|secret)\s*(?:=|:|is\s+|\s+)\s*$/i.test(
         match[0],
       ) &&
-      (EXEMPT_AUTH_WORDS.test(rawVal.replace(/[.!?:]+$/, "")) ||
-        /^(?:bearer|basic|digest|apikey|token|key|keys|access)$/i.test(
-          rawVal.replace(/[.!?:]+$/, ""),
-        ))
+      (EXEMPT_AUTH_WORDS.test(cleanVal) ||
+        /^(?:bearer|basic|digest|apikey|token|key|keys|access)$/i.test(cleanVal) ||
+        (isBareSecretOrPassword && /^[A-Za-z]?[a-z]+$/.test(cleanVal)))
     ) {
+      if (EXEMPT_AUTH_WORDS.test(cleanVal)) {
+        const trailing = scanTrailingCredential(
+          value,
+          valueEnd,
+          getLineEnd(valueEnd),
+          "generic",
+          (from) => scanSecretValueEnd(value, from),
+        );
+        if (trailing) {
+          out += `${value.slice(cursor, trailing.start)}[REDACTED]`;
+          cursor = trailing.end;
+          INLINE_SECRET_PREFIX.lastIndex = trailing.end;
+        }
+      }
       continue;
     }
     const quotedJsonValue =
@@ -425,7 +524,7 @@ function scrubString(value: string, depth = 0): string {
         .replace(URL_USERINFO_SINGLE_QUOTED, scrubUserinfo)
         .replace(URL_USERINFO_BARE, scrubUserinfo)
     : value;
-  return scrubInlineSecrets(scrubAuthSchemes(withoutUserinfo));
+  return scrubInlineSecrets(scrubAuthParams(scrubAuthSchemes(withoutUserinfo)));
 }
 
 function safeRead(target: object, key: string): unknown {

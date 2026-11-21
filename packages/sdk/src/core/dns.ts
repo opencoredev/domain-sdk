@@ -847,7 +847,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         const preWantedLost = subtract(preExistingWanted, verified).length > 0;
         const foreignAdded = provider.capabilities.wholeZoneWrites
           ? subtract(
-              verified.filter((record) => record.editable && !isOwned(record)),
+              verified.filter((record) => !isOwned(record)),
               before,
             )
           : [];
@@ -880,6 +880,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           !replacedLost &&
           remainingUnexpected.length === 0 &&
           (!provider.capabilities.wholeZoneWrites || !preWantedLost);
+      } else {
+        const afterPartial = await provider.listRecords({ zone }, ctx);
+        remainingUnexpected = subtract(
+          subtract(sameKeyUnexpectedCandidates(afterPartial), beforeForUnexpected),
+          afterAcceptedWrite ? [] : foreignSameKey,
+        );
       }
     } catch {
       restored = false;
