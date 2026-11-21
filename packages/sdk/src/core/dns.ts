@@ -1006,6 +1006,14 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         // Best-effort post-failure classification; keep whatever externalChange was already observed.
       }
     }
+    const baseCauseDetails: Record<string, unknown> = {};
+    if (cause.details) {
+      for (const [key, value] of Object.entries(cause.details)) {
+        if (key === "externalChange" || key === "unexpected") continue;
+        baseCauseDetails[key] = value;
+      }
+    }
+
     throw new DomainSdkError(
       cause.code,
       restored
@@ -1020,7 +1028,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         retryAfter: cause.retryAfter,
         cause,
         details: {
-          ...cause.details,
+          ...baseCauseDetails,
           restored,
           replaced: replaced.map(({ type, name, value }) => ({ type, name, value })),
           ...(externalChange ? { externalChange: true } : {}),

@@ -3291,5 +3291,57 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       delete proto.restored;
       delete proto.externalChange;
     }
+
+    // 9. Spaced-colon quoted schemes, empty-username Basic credentials, and rollback stripping stale cause details.
+    for (const leaked of [
+      'ApiKey :"supersecret"',
+      "ApiKey :'supersecret'",
+      'ApiKey :\\"supersecret\\"',
+      'Bearer :"eyJhbGciOiJIUzI1NiJ9.payload.sig"',
+      'Token :"supersecret"',
+    ]) {
+      expect(String(redact(leaked))).not.toContain("supersecret");
+      expect(String(redact(leaked))).not.toContain("eyJhbGciOiJIUzI1NiJ9");
+    }
+    expect(String(redact("Basic :mysecret nextword"))).toBe("Basic [REDACTED] nextword");
+    expect(String(redact("ApiKey : invalid"))).toBe("ApiKey : invalid");
+
+    const staleDetailsErr = await createDnsClient({
+      provider: {
+        id: "stale-details",
+        capabilities: {
+          wholeZoneWrites: false,
+          recordTypes: ["A"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return [];
+        },
+        async createRecords() {
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "transient", {
+            provider: "stale-details",
+            retryable: true,
+            details: {
+              externalChange: true,
+              unexpected: [{ type: "A", name: "x", value: "1.1.1.1" }],
+            },
+          });
+        },
+        async deleteRecords() {},
+      },
+      retry: { maxAttempts: 1 },
+    })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(staleDetailsErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      retryable: true,
+      details: { restored: true, replaced: [] },
+    });
+    expect(Object.hasOwn(staleDetailsErr.details, "externalChange")).toBe(false);
+    expect(Object.hasOwn(staleDetailsErr.details, "unexpected")).toBe(false);
   });
 });

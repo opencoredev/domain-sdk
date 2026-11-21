@@ -253,7 +253,11 @@ function scrubAuthSchemes(value: string): string {
           (value[valueStart + 1] === "=" ||
             value[valueStart + 1] === " " ||
             value[valueStart + 1] === "\t" ||
-            /^:[A-Za-z]+[ \t]/.test(value.slice(valueStart, valueStart + 24)))) ||
+            (lower !== "basic" &&
+              (value[valueStart + 1] === '"' ||
+                value[valueStart + 1] === "'" ||
+                value[valueStart + 1] === "\\" ||
+                /^:[A-Za-z]+[ \t]/.test(value.slice(valueStart, valueStart + 24)))))) ||
         /^%(?:3A|3D)/i.test(value.slice(valueStart, valueStart + 3)))
     ) {
       continue;
