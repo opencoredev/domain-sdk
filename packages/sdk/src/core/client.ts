@@ -53,11 +53,22 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
   const context = (signal?: AbortSignal): ProviderContext => ({ signal, logger });
   const normalizeInput = (hostname: string) =>
     normalizeHostname(hostname, { allowWildcard: provider.capabilities.wildcardDomains });
+  const safeLog = (
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    meta?: Record<string, unknown>,
+  ) => {
+    try {
+      logger[level]?.(message, meta);
+    } catch {
+      // Logger failures must never turn committed domain operations into errors.
+    }
+  };
   const report = (event: DomainOperationEvent) => {
     try {
       options.onOperation?.(event);
     } catch {
-      logger.warn?.("Domain onOperation hook threw.", {
+      safeLog("warn", "Domain onOperation hook threw.", {
         provider: provider.id,
         operation: event.operation,
       });
@@ -70,7 +81,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
     signal?: AbortSignal,
     retry = options.retry,
   ): Promise<T> => {
-    logger.debug?.("Domain operation started.", {
+    safeLog("debug", "Domain operation started.", {
       provider: provider.id,
       operation: name,
       hostname,
@@ -97,7 +108,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
           signal,
           sleep: clock.sleep,
           onRetry: (error, attempt, delayMs) =>
-            logger.warn?.("Domain operation will be retried.", {
+            safeLog("warn", "Domain operation will be retried.", {
               provider: provider.id,
               operation: name,
               hostname,
@@ -107,7 +118,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
             }),
         },
       );
-      logger.info?.("Domain operation completed.", {
+      safeLog("info", "Domain operation completed.", {
         provider: provider.id,
         operation: name,
         hostname,
@@ -116,7 +127,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
       return result;
     } catch (error) {
       const normalized = normalizeUnknownError(error, provider.id);
-      logger.error?.("Domain operation failed.", {
+      safeLog("error", "Domain operation failed.", {
         provider: provider.id,
         operation: name,
         hostname,
@@ -291,7 +302,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
           try {
             polling.onStatus?.(domain);
           } catch {
-            logger.warn?.("Domain onStatus hook threw.", {
+            safeLog("warn", "Domain onStatus hook threw.", {
               provider: provider.id,
               hostname: normalized,
             });

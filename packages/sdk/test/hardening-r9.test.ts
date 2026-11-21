@@ -634,5 +634,124 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       "set_cookie: [REDACTED]",
     );
     expect(redact('Cookie: "prefs={}"; sid=secret')).toBe("Cookie: [REDACTED]");
+    expect(redact("https://u:p\\/w@h.com")).toBe("https://[REDACTED]:[REDACTED]@h.com");
+  });
+
+  test("whole-zone retries use fresh baselines across interleaved writes, add-only retries veto external wanted deletions, and throwing loggers do not fail committed ops", async () => {
+    // 1. Whole-zone retry with interleaved removeRecords & ensureRecords preserves concurrent mutations
+    const base = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          {
+            id: "r0",
+            type: "TXT",
+            name: "_r0.example.com",
+            value: "keep-initially",
+            editable: true,
+          },
+        ],
+      },
+    });
+    const origCreate = base.createRecords.bind(base);
+    let calls = 0;
+    const wholeProvider: DnsProvider = {
+      ...base,
+      capabilities: { ...base.capabilities, wholeZoneWrites: true },
+      async createRecords(input, ctx) {
+        if (++calls === 1) {
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "transient 503", {
+            provider: base.id,
+            statusCode: 503,
+            retryable: true,
+            retryAfter: 50,
+          });
+        }
+        return origCreate(input, ctx);
+      },
+    };
+    const wholeDns = createDnsClient({
+      provider: wholeProvider,
+      retry: { maxAttempts: 3, baseDelayMs: 50, maxDelayMs: 50 },
+    });
+    const pending = wholeDns.ensureRecords([
+      { type: "TXT", name: "_ra.example.com", value: "new-a" },
+    ]);
+    await new Promise((r) => setTimeout(r, 15));
+    await wholeDns.removeRecords([
+      { type: "TXT", name: "_r0.example.com", value: "keep-initially" },
+    ]);
+    await wholeDns.ensureRecords([{ type: "TXT", name: "_rb.example.com", value: "new-b" }]);
+    const created = await pending;
+    expect(created.map((r) => r.value)).toEqual(["new-a"]);
+    expect(
+      base
+        .records("example.com")
+        .map((r) => `${r.name}=${r.value}`)
+        .sort(),
+    ).toEqual(["_ra.example.com=new-a", "_rb.example.com=new-b"]);
+
+    // 2. Add-only retryable 503 does NOT retry and resurrect an externally deleted pre-existing wanted record
+    const basePer = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "t1", type: "TXT", name: "_a.example.com", value: "preexisting", editable: true },
+        ],
+      },
+    });
+    const origPerCreate = basePer.createRecords.bind(basePer);
+    const origPerDelete = basePer.deleteRecords.bind(basePer);
+    let perCalls = 0;
+    const perProvider: DnsProvider = {
+      ...basePer,
+      async createRecords(input, ctx) {
+        perCalls += 1;
+        if (perCalls === 1) {
+          const existingA = basePer.records("example.com").filter((r) => r.id === "t1");
+          if (existingA.length) await origPerDelete({ zone: input.zone, records: existingA }, ctx);
+          throw new DomainSdkError("PROVIDER_UNAVAILABLE", "transient 503", {
+            provider: basePer.id,
+            statusCode: 503,
+            retryable: true,
+          });
+        }
+        return origPerCreate(input, ctx);
+      },
+    };
+    const perDns = createDnsClient({
+      provider: perProvider,
+      retry: { maxAttempts: 3, baseDelayMs: 0 },
+    });
+    await expect(
+      perDns.ensureRecords([
+        { type: "TXT", name: "_a.example.com", value: "preexisting" },
+        { type: "TXT", name: "_b.example.com", value: "new" },
+      ]),
+    ).rejects.toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: { restored: true, externalChange: true },
+    });
+    expect(perCalls).toBe(1);
+    expect(basePer.records("example.com")).toEqual([]);
+
+    // 3. Throwing logger methods never break committed DNS writes
+    const throwingLogger = {
+      debug() {
+        throw new Error("debug boom");
+      },
+      info() {
+        throw new Error("info boom");
+      },
+      warn() {
+        throw new Error("warn boom");
+      },
+      error() {
+        throw new Error("error boom");
+      },
+    };
+    const loggedDns = createDnsClient({ provider: memoryDnsProvider(), logger: throwingLogger });
+    const res = await loggedDns.ensureRecords([
+      { type: "A", name: "app.example.com", value: "192.0.2.1" },
+    ]);
+    expect(res).toHaveLength(1);
   });
 });
