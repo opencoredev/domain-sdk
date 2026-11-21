@@ -171,11 +171,29 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
       return domainClient.waitUntilActive(toHostname(label), polling);
     },
     async list(listOptions) {
-      const page = await domainClient.list(listOptions);
       let domains: readonly Domain[];
+      let nextCursor: string | undefined;
       try {
-        domains = Array.from(page.domains);
+        const page = await domainClient.list(listOptions);
+        if (!page || typeof page !== "object") {
+          throw new DomainSdkError("REQUEST_FAILED", "Provider returned an invalid domain page.", {
+            provider: domainClient.provider,
+          });
+        }
+        const rawDomains = page.domains;
+        const rawCursor = page.nextCursor;
+        if (
+          !Array.isArray(rawDomains) ||
+          (rawCursor !== undefined && typeof rawCursor !== "string")
+        ) {
+          throw new DomainSdkError("REQUEST_FAILED", "Provider returned an invalid domain page.", {
+            provider: domainClient.provider,
+          });
+        }
+        domains = Array.from(rawDomains);
+        nextCursor = rawCursor;
       } catch (error) {
+        if (safeInstanceOf(error, DomainSdkError)) throw error;
         throw normalizeUnknownError(error, domainClient.provider);
       }
       const subdomains: TenantSubdomain[] = [];
@@ -189,7 +207,7 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
         }
         subdomains.push({ label, domain });
       }
-      return { subdomains, nextCursor: page.nextCursor };
+      return { subdomains, nextCursor };
     },
     async provisionWildcard(advanced) {
       return withWildcard((hostname) => domainClient.add(hostname, advanced));

@@ -6,10 +6,12 @@ description: User-visible Domain SDK releases and compatibility changes.
 ## Unreleased
 
 - Added the `domain-sdk` CLI (`add`, `get`, `list`, `verify`, `remove`, `wait`) with `--provider` and `--json` output.
-- Added `onOperation` hooks on `createDomainClient()` and `createDnsClient()`, `SubdomainClient.list()`, `shouldStop` on `waitUntilActive()`, `render({ apexAddress })`, and exported DNS record helpers.
+- Added `onOperation` hooks on `createDomainClient()` and `createDnsClient()`, `SubdomainClient.list()`, `shouldStop` on `waitUntilActive()` (which now rejects with `VERIFICATION_FAILED` when a domain reaches `failed`), `render({ apexAddress })`, and exported DNS record helpers.
 - `createSubdomainClient()` now reserves `www`, `api`, `admin`, and `mail` by default (`DEFAULT_RESERVED_LABELS`).
+- Async client methods now reject their promise instead of throwing synchronously (including invalid input and out-of-range `list()` limits, which reject with `INVALID_CONFIGURATION`).
 - `ensureRecords()` and `applyDomainRecords()` re-read the zone after writing, roll back failed writes while preserving foreign concurrent records, and report `details.restored`, `details.externalChange`, and `details.unexpected`.
-- Provider JSON responses are capped at 8 MiB by default (16 MiB for Porkbun and Spaceship zone reads); Namecheap XML responses are capped at 1 MiB.
+- Provider JSON responses are capped at 8 MiB by default (16 MiB for Porkbun and Spaceship responses); Namecheap XML responses are capped at 1 MiB.
+- Fixed Railway `tokenType` handling, Render wildcard support, Netlify concurrent alias serialization, and Spaceship `listRecords()` pagination drift.
 
 ## 0.3.0
 

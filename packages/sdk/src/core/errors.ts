@@ -96,10 +96,24 @@ function scanSecretValueEnd(
         index += 1;
       }
     } else {
-      while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
+      while (index < value.length) {
+        if (value.startsWith("[REDACTED]", index)) {
+          index += "[REDACTED]".length;
+          continue;
+        }
+        if (/[\s&,;)}\]]/.test(value[index]!)) break;
+        index += 1;
+      }
     }
   } else {
-    while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
+    while (index < value.length) {
+      if (value.startsWith("[REDACTED]", index)) {
+        index += "[REDACTED]".length;
+        continue;
+      }
+      if (/[\s&,;)}\]]/.test(value[index]!)) break;
+      index += 1;
+    }
   }
   if (options.allowSecondToken && index < value.length && /[ \t]/.test(value[index]!)) {
     while (index < value.length && /[ \t,;]/.test(value[index]!)) {
@@ -138,25 +152,44 @@ function scrubAuthSchemes(value: string): string {
     } else if (lower === "digest") {
       while (valueEnd < value.length && !/[\r\n;}\]]/.test(value[valueEnd]!)) valueEnd += 1;
     } else {
-      while (valueEnd < value.length && !/[\s"',;)}\]\\]/.test(value[valueEnd]!)) valueEnd += 1;
+      const scanAuthParam = (from: number): number => {
+        let end = from;
+        while (end < value.length && !/[\s"',;)}\]\\&]/.test(value[end]!)) end += 1;
+        if (
+          end > from &&
+          value[end - 1] === "=" &&
+          end < value.length &&
+          (value[end] === '"' ||
+            value[end] === "'" ||
+            (value[end] === "\\" && /^\\+"/.test(value.slice(end))))
+        ) {
+          end = scanSecretValueEnd(value, end);
+        }
+        return end;
+      };
+      valueEnd = scanAuthParam(valueStart);
       if (
-        valueEnd > valueStart &&
-        value[valueEnd - 1] === "=" &&
-        valueEnd < value.length &&
-        (value[valueEnd] === '"' ||
-          value[valueEnd] === "'" ||
-          (value[valueEnd] === "\\" && /^\\+"/.test(value.slice(valueEnd))))
+        (lower === "token" || lower === "apikey") &&
+        value.slice(valueStart, valueEnd).includes("=")
       ) {
-        valueEnd = scanSecretValueEnd(value, valueEnd);
+        while (valueEnd < value.length) {
+          const rest = value.slice(valueEnd);
+          const comma = /^,[ \t]+(?=[A-Za-z_][A-Za-z0-9_-]*=)/.exec(rest);
+          if (!comma) break;
+          const nextEnd = scanAuthParam(valueEnd + comma[0].length);
+          if (nextEnd <= valueEnd + comma[0].length) break;
+          valueEnd = nextEnd;
+        }
       }
       const token = value.slice(valueStart, valueEnd);
       const word = token.replace(/[.!?:]+$/, "");
       if (/^(?:bearer|basic|digest|apikey|token)$/i.test(word)) continue;
       if (
         (lower === "basic" &&
-          !isShortBasicCredential(token) &&
-          (!/^(?:[A-Za-z0-9+/=]{8,}|[^:]*:[^:]+)$/.test(token) ||
-            /^[A-Za-z]?[a-z]+$/.test(token))) ||
+          (/^realm=/i.test(token) ||
+            (!isShortBasicCredential(word) &&
+              (!/^(?:[A-Za-z0-9+/=]{8,}|[^:\s=]+:[^:\s]+)$/.test(word) ||
+                /^[A-Za-z]?[a-z]+$/.test(word))))) ||
         ((lower === "bearer" || lower === "token") && EXEMPT_AUTH_WORDS.test(word))
       ) {
         continue;
@@ -184,7 +217,17 @@ function scrubInlineSecrets(value: string): string {
       includeSemicolons: isCookieHeader,
     });
     if (valueEnd === valueStart) continue;
+    const rawVal = value.slice(valueStart, valueEnd);
     const quote = value[valueStart];
+    if (
+      quote !== '"' &&
+      quote !== "'" &&
+      quote !== "\\" &&
+      /^(?:token|authorization)\s*(?:=|:)\s*$/i.test(match[0]) &&
+      EXEMPT_AUTH_WORDS.test(rawVal.replace(/[.!?:]+$/, ""))
+    ) {
+      continue;
+    }
     const quotedJsonValue =
       (quote === '"' || quote === "'") &&
       value[valueEnd - 1] === quote &&

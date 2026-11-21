@@ -555,10 +555,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           );
           const expectedKept = provider.capabilities.wholeZoneWrites
             ? snapshot.filter(
-                (item) =>
-                  item.editable &&
-                  !isWanted(item) &&
-                  !wanted.some((record) => conflictsWith(item, record)),
+                (item) => !isWanted(item) && !wanted.some((record) => conflictsWith(item, record)),
               )
             : [];
           const verifyAfterWrite = (after: ZoneRecord[]): DomainSdkError | undefined => {
@@ -648,9 +645,11 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             const committedWrite = (err: unknown): boolean =>
               safeInstanceOf(err, DomainSdkError) && err.details?.committed === true;
             let creating = false;
+            let writeCommitted = false;
             let after: ZoneRecord[];
             try {
               await provider.deleteRecords({ zone, records: conflicts }, ctx);
+              writeCommitted = true;
               creating = true;
               if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
               after = await provider.listRecords({ zone }, ctx);
@@ -663,7 +662,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 error,
                 snapshot,
                 existing.filter(isWanted),
-                committedWrite(error),
+                writeCommitted || committedWrite(error),
               );
             }
             const verificationError = verifyAfterWrite(after);
@@ -683,9 +682,11 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           if (!missing.length) return existing.filter(isWanted);
           const committedWrite = (err: unknown): boolean =>
             safeInstanceOf(err, DomainSdkError) && err.details?.committed === true;
+          let writeCommitted = false;
           let after: ZoneRecord[];
           try {
             await provider.createRecords({ zone, records: missing }, ctx);
+            writeCommitted = true;
             // A DNS host can accept a write and still drop, rewrite, or leave a conflict, so check the result.
             after = await provider.listRecords({ zone }, ctx);
           } catch (error) {
@@ -696,7 +697,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               error,
               snapshot,
               existing.filter(isWanted),
-              committedWrite(error),
+              writeCommitted || committedWrite(error),
             );
           }
           const verificationError = verifyAfterWrite(after);

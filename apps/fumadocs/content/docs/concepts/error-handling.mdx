@@ -17,7 +17,7 @@ try {
 
 Errors normalize authentication, permission, conflict, not-found, rate-limit, provider availability, timeout, and cancellation states. Response details are bounded and recursively redact credential-shaped fields.
 
-Every client method returns a promise and reports failures by rejecting it, including invalid input, so `await` with `try`/`catch` or `.catch()` handles every case. Creating a client throws synchronously.
+Every async client method returns a promise and reports failures by rejecting it, including invalid input, so `await` with `try`/`catch` or `.catch()` handles every case. Creating a client and the synchronous `SubdomainClient.toHostname()` / `fromHostname()` helpers throw synchronously.
 
 | Code                    | When                                                                                                                                                                           |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

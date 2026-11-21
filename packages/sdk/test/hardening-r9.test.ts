@@ -1632,5 +1632,135 @@ describe("hardening regressions (DNS rollback, cancellation, redaction, CLI)", (
       },
     });
     await expect(hostileSub.list()).rejects.toBeInstanceOf(DomainSdkError);
+
+    // 11. R21: subdomains.list rejects non-array domains & normalizes throwing nextCursor getter
+    const badDomainsSub = createSubdomainClient({
+      baseDomain: "app.example.com",
+      domainClient: {
+        ...baseDomClient,
+        async list() {
+          return { domains: {} as unknown as Domain[] };
+        },
+      },
+    });
+    await expect(badDomainsSub.list()).rejects.toMatchObject({ code: "REQUEST_FAILED" });
+
+    const hostileCursorSub = createSubdomainClient({
+      baseDomain: "app.example.com",
+      domainClient: {
+        ...baseDomClient,
+        async list() {
+          return {
+            domains: [],
+            get nextCursor(): string {
+              throw new Error("cursor Bearer SUPERSECRET_CURSOR");
+            },
+          };
+        },
+      },
+    });
+    const cursorErr = await hostileCursorSub.list().catch((e) => e);
+    expect(cursorErr).toBeInstanceOf(DomainSdkError);
+    expect(JSON.stringify(cursorErr)).not.toContain("SUPERSECRET_CURSOR");
+
+    // 12. R21: Basic punctuation scrubbing, multi-param Token/ApiKey scrubbing, URL-after-auth intact, benign token: required preserved
+    const scrubMsg = (msg: string) => new DomainSdkError("REQUEST_FAILED", msg).message;
+    expect(scrubMsg("Invalid credentials: Basic dXNlcjpwYXNz.")).toBe(
+      "Invalid credentials: Basic [REDACTED]",
+    );
+    expect(scrubMsg("Basic dXNlcjpwYXNz&x=1")).toBe("Basic [REDACTED]&x=1");
+    expect(scrubMsg('Token realm="api", key="SECRET123"')).toBe("Token [REDACTED]");
+    expect(scrubMsg('ApiKey id="pub", sig="SECRET123"')).toBe("ApiKey [REDACTED]");
+    expect(scrubMsg('WWW-Authenticate: Basic realm="https://api.example.com"')).toBe(
+      'WWW-Authenticate: Basic realm="https://api.example.com"',
+    );
+    expect(scrubMsg("token: required")).toBe("token: required");
+    expect(scrubMsg('Authorization: Token token="S" for https://u:p@api.vercel.com')).not.toContain(
+      "]:[REDACTED]",
+    );
+
+    // 13. R21: whole-zone ensureRecords catches dropped locked NS record & tracks committed writes across post-write listRecords failure
+    let wzLockedState: ZoneRecord[] = [
+      {
+        id: "ns1",
+        type: "NS",
+        name: "example.com",
+        value: "ns1.host.test",
+        ttl: 3600,
+        editable: false,
+      },
+    ];
+    const droppedLockedErr = await createDnsClient({
+      provider: {
+        id: "wz-drop-locked",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["A"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          return [...wzLockedState];
+        },
+        async createRecords({ records }) {
+          wzLockedState = records.map((r, i) => ({ id: `c${i}`, editable: true, ttl: 1800, ...r }));
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(droppedLockedErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { restored: false },
+    });
+
+    let postWriteReads = 0;
+    let wzRewriteState: ZoneRecord[] = [];
+    const postReadFailErr = await createDnsClient({
+      retry: { maxAttempts: 1 },
+      provider: {
+        id: "wz-post-read-fail",
+        capabilities: {
+          wholeZoneWrites: true,
+          recordTypes: ["A"],
+          ttl: { min: 60, max: 86400 },
+          zoneInfo: false,
+        },
+        async listRecords() {
+          postWriteReads += 1;
+          if (postWriteReads === 2) {
+            throw new DomainSdkError("PROVIDER_UNAVAILABLE", "post-write read failed");
+          }
+          return [...wzRewriteState];
+        },
+        async createRecords() {
+          wzRewriteState = [
+            {
+              id: "rewritten",
+              type: "A",
+              name: "example.com",
+              value: "9.9.9.9",
+              ttl: 1800,
+              editable: true,
+            },
+          ];
+        },
+        async deleteRecords() {},
+      },
+    })
+      .ensureRecords([{ type: "A", name: "example.com", value: "1.2.3.4" }], {
+        zone: "example.com",
+      })
+      .catch((e) => e);
+    expect(postReadFailErr).toMatchObject({
+      code: "PROVIDER_UNAVAILABLE",
+      details: {
+        restored: false,
+        unexpected: [expect.objectContaining({ value: "9.9.9.9" })],
+      },
+    });
   });
 });

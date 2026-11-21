@@ -10,9 +10,9 @@ packages:
 - `waitUntilActive()` stops as soon as the provider reports `failed` and rejects with `VERIFICATION_FAILED` (status and issues in `details`) instead of polling until `TIMEOUT`. Pass `shouldStop` to also stop on `misconfigured`, or `() => false` for the old behavior.
 - `ensureRecords()` and `applyDomainRecords()` re-read the zone after writing, roll back failed replacements and failed add-only creates (preserving the original error code such as `REQUEST_FAILED`, `RATE_LIMITED`, or `PROVIDER_UNAVAILABLE` with `details.restored`, `details.replaced`, `details.externalChange` when records changed concurrently, and `details.unexpected` when concurrent or locked records remain), and on whole-zone hosts restore owned pre-write editable records while leaving foreign concurrent records untouched and vetoing automatic retries when external changes occur. Cleanly rolled-back add-only failures without external changes remain retryable; rolled-back replacements are not automatically retried. Verification failures report `details.missing` / `details.remaining` / `details.collateralMissing`.
 - `createSubdomainClient()` reserves `www`, `api`, `admin`, and `mail` by default. A `reservedLabels` list replaces the defaults; pass `[]` to reserve none or `[...DEFAULT_RESERVED_LABELS, "billing"]` to extend them.
-- Every client method rejects its promise instead of throwing synchronously, including `list()` and `verify()` on unsupported providers and invalid hostnames.
+- Every async client method rejects its promise instead of throwing synchronously, including `list()` and `verify()` on unsupported providers and invalid hostnames (the synchronous `SubdomainClient.toHostname()` and `fromHostname()` helpers still throw synchronously).
 - A `list()` limit outside 1 to 100 and invalid `waitUntilActive()` options reject with `INVALID_CONFIGURATION` instead of `REQUEST_FAILED`. Creating a client in a browser throws a `DomainSdkError` with `INVALID_CONFIGURATION` instead of a plain `Error`.
-- Provider JSON responses are capped at 8 MiB (16 MiB for Porkbun and Spaceship zone reads) and rejected with `REQUEST_FAILED` instead of being buffered without limit.
+- Provider JSON responses are capped at 8 MiB (16 MiB for Porkbun and Spaceship responses) and rejected with `REQUEST_FAILED` instead of being buffered without limit.
 
 ## Fixes
 
