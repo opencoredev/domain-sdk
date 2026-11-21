@@ -485,11 +485,24 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               return restore(zone, conflicts, creating ? missing : [], error);
             }
           } else if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
-          const after =
-            missing.length || conflicts.length
-              ? await provider.listRecords({ zone }, ctx)
-              : existing;
-          return after.filter((item) => wanted.some((record) => sameRecord(item, record)));
+          if (!missing.length && !conflicts.length) return existing.filter(isWanted);
+          const after = await provider.listRecords({ zone }, ctx);
+          // A DNS host can accept a write and still drop or rewrite a record, so check the result.
+          const dropped = wanted.filter(
+            (record) => !after.some((item) => sameRecord(item, record)),
+          );
+          if (dropped.length)
+            throw new DomainSdkError(
+              "REQUEST_FAILED",
+              `${provider.id} accepted the write but ${dropped.length} DNS record(s) are missing from ${zone}. Re-read the zone before retrying.`,
+              {
+                provider: provider.id,
+                details: {
+                  missing: dropped.map(({ type, name, value }) => ({ type, name, value })),
+                },
+              },
+            );
+          return after.filter(isWanted);
         }),
       options.signal,
     );

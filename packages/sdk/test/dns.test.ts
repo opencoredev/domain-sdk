@@ -409,3 +409,43 @@ describe("createDnsClient", () => {
     });
   });
 });
+
+describe("ensureRecords write verification", () => {
+  test("fails when the DNS host silently drops a created record", async () => {
+    const provider = memoryDnsProvider();
+    const { createRecords } = provider;
+    // Accept the request but only keep the first record, as a lossy host might.
+    provider.createRecords = (input, context) =>
+      createRecords({ ...input, records: input.records.slice(0, 1) }, context);
+    const dns = createDnsClient({ provider });
+    const error = await dns
+      .ensureRecords([
+        { type: "A", name: "app.example.com", value: "192.0.2.1" },
+        { type: "TXT", name: "_verify.example.com", value: "token" },
+      ])
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DomainSdkError);
+    expect(error).toMatchObject({
+      code: "REQUEST_FAILED",
+      retryable: false,
+      details: { missing: [{ type: "TXT", name: "_verify.example.com", value: "token" }] },
+    });
+  });
+
+  test("fails when the DNS host rewrites a value after accepting it", async () => {
+    const provider = memoryDnsProvider();
+    const { createRecords } = provider;
+    provider.createRecords = (input, context) =>
+      createRecords(
+        { ...input, records: input.records.map((record) => ({ ...record, value: "192.0.2.99" })) },
+        context,
+      );
+    const dns = createDnsClient({ provider });
+    await expect(
+      dns.ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.1" }]),
+    ).rejects.toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { missing: [{ type: "A", name: "app.example.com", value: "192.0.2.1" }] },
+    });
+  });
+});
