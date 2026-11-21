@@ -106,4 +106,11 @@ export interface WaitUntilActiveOptions extends RequestOptions {
   /** Randomize each delay between half and all of its value. Defaults to false. */
   jitter?: boolean;
   onStatus?(domain: Domain): void;
+  /**
+   * Return `true` to stop polling a domain that will not become active on its own. Polling then
+   * rejects with `VERIFICATION_FAILED`, whose `details` carry the status and issues. Defaults to
+   * stopping on `failed`. Pass `(domain) => ["failed", "misconfigured"].includes(domain.status)`
+   * to also stop on `misconfigured`, or `() => false` to keep polling until the timeout.
+   */
+  shouldStop?(domain: Domain): boolean;
 }

@@ -285,3 +285,72 @@ describe("createDnsClient retries and locking", () => {
     expect(reads).toBe(3);
   });
 });
+
+describe("waitUntilActive terminal states", () => {
+  test("stops on a failed domain instead of polling until the timeout", async () => {
+    const memory = memoryProvider();
+    const { sleeps, clock } = fakeClock();
+    const client = createDomainClient({ provider: memory, clock });
+    await client.add("app.customer.com");
+    let polls = 0;
+    const error = await client
+      .waitUntilActive("app.customer.com", {
+        onStatus: () => {
+          if (++polls === 2) memory.transition("app.customer.com", "failed", "failed");
+        },
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DomainSdkError);
+    expect(error).toMatchObject({
+      code: "VERIFICATION_FAILED",
+      retryable: false,
+      details: { hostname: "app.customer.com", status: "failed" },
+    });
+    // Two pending polls, then the failed one: no further waits and no TIMEOUT after 5 minutes.
+    expect(sleeps).toEqual([5_000, 7_500]);
+    expect(memory.calls.filter((call) => call.operation === "get")).toHaveLength(3);
+  });
+
+  test("keeps polling a misconfigured domain by default", async () => {
+    const memory = memoryProvider();
+    const { clock } = fakeClock();
+    const client = createDomainClient({ provider: memory, clock });
+    await client.add("app.customer.com");
+    memory.transition("app.customer.com", "misconfigured");
+    let polls = 0;
+    const active = await client.waitUntilActive("app.customer.com", {
+      onStatus: () => {
+        if (++polls === 3) memory.activate("app.customer.com");
+      },
+    });
+    expect(active.status).toBe("active");
+  });
+
+  test("shouldStop can also stop on misconfigured", async () => {
+    const memory = memoryProvider();
+    const { sleeps, clock } = fakeClock();
+    const client = createDomainClient({ provider: memory, clock });
+    await client.add("app.customer.com");
+    memory.transition("app.customer.com", "misconfigured");
+    await expect(
+      client.waitUntilActive("app.customer.com", {
+        shouldStop: (domain) => ["failed", "misconfigured"].includes(domain.status),
+      }),
+    ).rejects.toMatchObject({
+      code: "VERIFICATION_FAILED",
+      details: { status: "misconfigured" },
+    });
+    expect(sleeps).toEqual([]);
+  });
+
+  test("shouldStop can opt out of stopping on failed", async () => {
+    const memory = memoryProvider();
+    const { clock } = fakeClock();
+    const client = createDomainClient({ provider: memory, clock });
+    await client.add("app.customer.com");
+    memory.transition("app.customer.com", "failed");
+    await expect(
+      client.waitUntilActive("app.customer.com", { timeoutMs: 20_000, shouldStop: () => false }),
+    ).rejects.toMatchObject({ code: "TIMEOUT" });
+  });
+});

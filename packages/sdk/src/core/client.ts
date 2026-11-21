@@ -5,6 +5,23 @@ import type { DomainClient, DomainClientOptions, ProviderContext } from "./provi
 import type { Domain, DomainLogger, WaitUntilActiveOptions } from "./types";
 
 const silentLogger: DomainLogger = {};
+const stopOnFailed = (domain: Domain): boolean => domain.status === "failed";
+
+/** The error `waitUntilActive()` throws when `shouldStop` ends polling before activation. */
+function stoppedError(domain: Domain, provider: string): DomainSdkError {
+  return new DomainSdkError(
+    "VERIFICATION_FAILED",
+    `${domain.hostname} stopped at status ${domain.status} before becoming active.`,
+    {
+      provider,
+      details: {
+        hostname: domain.hostname,
+        status: domain.status,
+        issues: domain.issues.map(({ code, message, retryable }) => ({ code, message, retryable })),
+      },
+    },
+  );
+}
 const defaultClock = { now: () => Date.now(), sleep };
 
 export function assertServerEnvironment(): void {
@@ -169,6 +186,7 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
           "Polling timeout must be non-negative, interval must be at least 250ms, backoffFactor at least 1, and maxIntervalMs at least intervalMs.",
           { provider: provider.id },
         );
+      const shouldStop = polling.shouldStop ?? stopOnFailed;
       const deadline = clock.now() + timeoutMs;
       for (let poll = 0; ; poll += 1) {
         if (polling.signal?.aborted) throw abortedError(provider.id, polling.signal.reason);
@@ -180,6 +198,8 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
           const domain = await get(normalized, polling.signal, { maxAttempts: 1 });
           polling.onStatus?.(domain);
           if (domain.status === "active") return domain;
+          // A non-retryable error, so the catch below rethrows it instead of polling again.
+          if (shouldStop(domain)) throw stoppedError(domain, provider.id);
         } catch (error) {
           const normalizedError = normalizeUnknownError(error, provider.id);
           if (!normalizedError.retryable) throw normalizedError;
