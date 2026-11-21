@@ -104,7 +104,7 @@ export function bunny(options: BunnyOptions): BunnyProvider {
       });
     }
 
-    const body = await readJson(response, undefined, "bunny");
+    const body = await readJson(response, undefined, "bunny", context.signal);
     if (!response.ok) {
       if (notFoundOkay && response.status === 404) return undefined;
       const failure = body && typeof body === "object" ? (body as BunnyApiError) : undefined;

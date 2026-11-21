@@ -69,7 +69,7 @@ export async function readJson(
   } catch (error) {
     if (error instanceof DomainSdkError) throw error;
     if (signal?.aborted) throw abortedError(provider, signal.reason ?? error);
-    if (error instanceof Error && error.name === "AbortError") throw error;
+    if (error instanceof Error && error.name === "AbortError") throw abortedError(provider, error);
     throw new DomainSdkError("PROVIDER_UNAVAILABLE", "The provider response was interrupted.", {
       provider,
       retryable: true,
@@ -132,20 +132,29 @@ export function requireString(value: string | undefined, name: string, provider:
 
 export type Sleep = (ms: number, signal?: AbortSignal) => Promise<void>;
 
-/** Wait `ms`, rejecting with `ABORTED` as soon as `signal` aborts. */
-export const sleep: Sleep = (ms, signal) =>
-  new Promise<void>((resolve, reject) => {
-    if (signal?.aborted) return reject(abortedError(undefined, signal.reason));
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(abortedError(undefined, signal?.reason));
-    };
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** Wait `ms`, rejecting with `ABORTED` as soon as `signal` aborts. Splits waits above the 32-bit timer cap. */
+export const sleep: Sleep = async (ms, signal) => {
+  if (signal?.aborted) throw abortedError(undefined, signal.reason);
+  let remaining = Math.max(0, ms);
+  while (remaining > 0) {
+    const step = Math.min(remaining, MAX_TIMER_MS);
+    await new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) return reject(abortedError(undefined, signal.reason));
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(abortedError(undefined, signal?.reason));
+      };
+      const timer = setTimeout(() => {
+        signal?.removeEventListener("abort", onAbort);
+        resolve();
+      }, step);
+      signal?.addEventListener("abort", onAbort, { once: true });
+    });
+    remaining -= step;
+  }
+};
 
 const RETRYABLE_STATUS = new Set([502, 503, 504]);
 

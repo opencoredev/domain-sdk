@@ -82,7 +82,7 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
       });
     }
 
-    const body = await readJson(response, undefined, "netlify");
+    const body = await readJson(response, undefined, "netlify", context.signal);
     if (!response.ok) {
       if (notFoundOkay && response.status === 404) return undefined;
       throw httpError("netlify", response, body, "Netlify rejected the request.");

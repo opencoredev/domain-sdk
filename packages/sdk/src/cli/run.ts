@@ -71,6 +71,18 @@ function parseArgs(argv: readonly string[]): ParsedArgs {
       parsed.json = true;
       continue;
     }
+    if (argument.startsWith("--json=")) {
+      const value = argument.slice("--json=".length);
+      if (value === "true") {
+        parsed.json = true;
+        continue;
+      }
+      if (value === "false") {
+        parsed.json = false;
+        continue;
+      }
+      throw new UsageError("--json takes no value, or true/false.");
+    }
     if (argument.startsWith("--")) {
       const [name = "", inline] = argument.slice(2).split(/=(.*)/s, 2);
       if (!isValueFlag(name)) throw new UsageError(`Unknown option --${name}.`);
@@ -125,7 +137,7 @@ function createClient(args: ParsedArgs, io: CliIo): DomainClient {
     throw new UsageError(
       `Unknown provider ${name}. Choose one of: ${Object.keys(providers).join(", ")}.`,
     );
-  const missing = factory.required.filter((variable) => !io.env[variable]);
+  const missing = factory.required.filter((variable) => !io.env[variable]?.trim());
   if (missing.length)
     throw new UsageError(
       `The ${name} provider needs these environment variables: ${missing.join(", ")}.`,
@@ -254,7 +266,9 @@ export async function runCli(argv: readonly string[], io: CliIo): Promise<CliExi
     return 0;
   } catch (error) {
     const jsonRequested =
-      args?.json === true || argv.some((arg) => arg === "--json" || arg.startsWith("--json="));
+      args !== undefined
+        ? args.json
+        : argv.some((arg) => arg === "--json" || arg === "--json=true");
     if (error instanceof UsageError) {
       if (jsonRequested) {
         io.stderr(toJson({ error: { code: "USAGE", message: error.message } }));

@@ -25,13 +25,14 @@ export interface DomainSdkErrorOptions {
 
 const SECRET_KEYS =
   /^(?:[a-z0-9]+[_-]){0,4}(?:x-)?(token|auth[_-]?token|auth[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|access[_-]?token|access[_-]?key|client[_-]?secret|refresh[_-]?token|authorization|secret|password|private[_-]?key)$/i;
-const BEARER = /\b(Bearer|Basic|Token|ApiKey)\s+[A-Za-z0-9._~+/=:-]+/gi;
+const BEARER =
+  /\b(?:(Bearer|ApiKey)\s+[^\s"',;)}\]]+|(Basic)\s+(?:[A-Za-z0-9+/=]{8,}|[^\s"',;)}\]]*:[^\s"',;)}\]]+)|(Token)\s+(?=[A-Za-z0-9._~+/=:-]*[\d_.:/+-])[^\s"',;)}\]]+)/gi;
 const INLINE_SECRET_PREFIX =
   /(?<![A-Za-z0-9])(?:x-)?(?:access[_-]?token|access[_-]?key|api[_-]?token|api[_-]?key|api[_-]?secret|secret[_-]?key|secret[_-]?api[_-]?key|secretapikey|project[_-]?access[_-]?token|client[_-]?secret|refresh[_-]?token|auth[_-]?token|auth[_-]?key|authorization|password|private[_-]?key|token|secret)\\*["']?\s*(?:=|:)\s*/gi;
 const MAX_STRING = 1_000;
 const MAX_REDACT_DEPTH = 32;
 
-function scanSecretValueEnd(value: string, start: number): number {
+function scanSecretValueEnd(value: string, start: number, allowSecondToken = false): number {
   if (start >= value.length) return start;
   if (value.startsWith("[REDACTED]", start)) return start + "[REDACTED]".length;
   const first = value[start];
@@ -52,11 +53,13 @@ function scanSecretValueEnd(value: string, start: number): number {
     while (value[start + slashes] === "\\") slashes += 1;
     if (value[start + slashes] === '"') {
       let index = start + slashes + 1;
+      const step = (slashes + 1) * 2;
       while (index < value.length) {
         if (value[index] === "\\") {
           let run = 0;
           while (value[index + run] === "\\") run += 1;
-          if (value[index + run] === '"' && run <= slashes) return index + run + 1;
+          if (value[index + run] === '"' && (run < slashes || (run - slashes) % step === 0))
+            return index + run + 1;
           index += run + (value[index + run] === '"' ? 1 : 0);
           continue;
         }
@@ -67,6 +70,13 @@ function scanSecretValueEnd(value: string, start: number): number {
   }
   let index = start;
   while (index < value.length && !/[\s&,;)}\]]/.test(value[index]!)) index += 1;
+  if (allowSecondToken && index < value.length && /[ \t]/.test(value[index]!)) {
+    let next = index;
+    while (next < value.length && /[ \t]/.test(value[next]!)) next += 1;
+    const tokenStart = next;
+    while (next < value.length && !/[\s"',;)}\]]/.test(value[next]!)) next += 1;
+    if (next > tokenStart) index = next;
+  }
   return index;
 }
 
@@ -77,7 +87,8 @@ function scrubInlineSecrets(value: string): string {
   let match: RegExpExecArray | null;
   while ((match = INLINE_SECRET_PREFIX.exec(value)) !== null) {
     const valueStart = match.index + match[0].length;
-    const valueEnd = scanSecretValueEnd(value, valueStart);
+    const isAuthHeader = /^authorization\b/i.test(match[0]);
+    const valueEnd = scanSecretValueEnd(value, valueStart, isAuthHeader);
     if (valueEnd === valueStart) continue;
     out += value.slice(cursor, valueStart) + "[REDACTED]";
     cursor = valueEnd;
@@ -87,7 +98,12 @@ function scrubInlineSecrets(value: string): string {
 }
 
 function scrubString(value: string): string {
-  return scrubInlineSecrets(value.replace(BEARER, "$1 [REDACTED]"));
+  return scrubInlineSecrets(
+    value.replace(
+      BEARER,
+      (_match, a?: string, b?: string, c?: string) => `${a ?? b ?? c} [REDACTED]`,
+    ),
+  );
 }
 
 export function redact(value: unknown, seen = new WeakSet<object>(), depth = 0): unknown {
@@ -167,7 +183,7 @@ export function abortedError(provider?: string, cause?: unknown) {
 
 export function normalizeUnknownError(error: unknown, provider?: string): DomainSdkError {
   if (error instanceof DomainSdkError) return error;
-  if (error instanceof DOMException && error.name === "AbortError")
+  if ((error instanceof DOMException || error instanceof Error) && error.name === "AbortError")
     return abortedError(provider, error);
   return new DomainSdkError("UNKNOWN_ERROR", "The domain operation failed unexpectedly.", {
     provider,

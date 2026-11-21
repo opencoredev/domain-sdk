@@ -313,10 +313,12 @@ export function createDomainClient(options: DomainClientOptions): DomainClient {
             { provider: provider.id, retryable: true },
           );
         }
-        await clock.sleep(
-          Math.min(Math.max(delay, retryAfter), remaining, maxTimerMs),
-          polling.signal,
-        );
+        let waitRemaining = Math.min(Math.max(delay, retryAfter), remaining);
+        while (waitRemaining > 0) {
+          const step = Math.min(waitRemaining, maxTimerMs);
+          await clock.sleep(step, polling.signal);
+          waitRemaining -= step;
+        }
       }
     },
   };
