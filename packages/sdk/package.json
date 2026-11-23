@@ -105,11 +105,11 @@
     "test": "bun test"
   },
   "dependencies": {
-    "tldts": "^7.5.4"
+    "tldts": "^7.5.5"
   },
   "devDependencies": {
     "@domain-sdk/config": "workspace:*",
-    "@types/bun": "^1.4.4",
+    "@types/bun": "^1.4.5",
     "@types/node": "^22.20.5",
     "oxlint": "^1.72.0",
     "typescript": "^6.0.0"
