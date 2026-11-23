@@ -7,8 +7,16 @@ import {
   type DnsProviderContext,
   type ZoneRecord,
 } from "../../core/dns";
-import { DomainSdkError, type DomainSdkErrorCode } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import { DomainSdkError, safeInstanceOf, type DomainSdkErrorCode } from "../../core/errors";
+import {
+  httpError,
+  isAbortError,
+  isResponseTooLarge,
+  readJson,
+  rejectedByHost,
+  requireString,
+  type Fetch,
+} from "../../core/http";
 
 export interface PorkbunOptions {
   apiKey: string;
@@ -20,6 +28,8 @@ export interface PorkbunOptions {
 
 interface PorkbunResponse {
   status: string;
+  /** Set locally when Porkbun reported the record already exists, so this call created nothing. */
+  duplicate?: boolean;
   message?: string;
   code?: string;
   records?: PorkbunRecord[];
@@ -35,6 +45,8 @@ interface PorkbunRecord {
   prio?: string | number | null;
 }
 
+/** Porkbun returns a whole zone in one response, so allow more than the 8 MiB default. */
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
 const normalizeNameserver = (name: string) => name.toLowerCase().replace(/\.$/, "");
 const isPorkbunNameserver = (name: string) => normalizeNameserver(name).endsWith(".porkbun.com");
 
@@ -60,6 +72,9 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
       provider: "porkbun",
     });
 
+  // Errors built from a readable Porkbun error reply, which means the request applied nothing.
+  const errorReplies = new WeakSet<DomainSdkError>();
+
   const request = async (
     path: string,
     context: DnsProviderContext,
@@ -78,8 +93,8 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
         },
         body: JSON.stringify({ ...fields, apikey: apiKey, secretapikey: secretApiKey }),
       });
-    } catch {
-      if (context.signal?.aborted)
+    } catch (error) {
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {
           provider: "porkbun",
         });
@@ -89,22 +104,30 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
       });
     }
 
-    // Porkbun returns a whole zone in one response, so never truncate it before parsing.
     let body: PorkbunResponse | undefined;
     try {
-      body = (await readJson(response, Number.POSITIVE_INFINITY)) as PorkbunResponse | undefined;
-    } catch {
-      if (context.signal?.aborted)
+      body = (await readJson(response, MAX_RESPONSE_BYTES, "porkbun", context.signal)) as
+        | PorkbunResponse
+        | undefined;
+    } catch (error) {
+      if (isResponseTooLarge(error)) throw error;
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {
           provider: "porkbun",
         });
+      // An error answer whose body broke off still carries its status and Retry-After.
+      if (
+        error instanceof DomainSdkError &&
+        (error.code === "ABORTED" || (error.code === "PROVIDER_UNAVAILABLE" && response.ok))
+      )
+        throw error;
       if (!response.ok)
         throw httpError("porkbun", response, undefined, "porkbun rejected the request.");
       throw malformedResponse();
     }
     if (!response.ok || body?.status === "ERROR") {
       if (idempotencyKey && response.status === 400 && body?.code === "DUPLICATE_RECORD")
-        return { status: "SUCCESS" };
+        return { status: "SUCCESS", duplicate: true };
       const failure = httpError("porkbun", response, undefined, "porkbun rejected the request.");
       const reason = `${body?.code ?? ""} ${body?.message ?? ""}`.toLowerCase();
       let code: DomainSdkErrorCode = failure.code;
@@ -125,12 +148,14 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
         code === "PERMISSION_DENIED"
           ? "Enable API Access for this domain in Porkbun's dashboard and check key permissions."
           : "porkbun rejected the request.";
-      throw new DomainSdkError(code, message, {
+      const rejection = new DomainSdkError(code, message, {
         provider: "porkbun",
         statusCode: response.status,
         retryable: failure.retryable || code === "RATE_LIMITED",
         retryAfter: failure.retryAfter,
       });
+      if (response.status < 500) errorReplies.add(rejection);
+      throw rejection;
     }
     if (body?.status !== "SUCCESS") throw malformedResponse();
     return body;
@@ -178,23 +203,44 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
       });
     },
     async createRecords({ zone, records }, context) {
-      for (const record of records) {
+      for (const [index, record] of records.entries()) {
         const relativeName = relativeRecordName(record.name, zone);
-        await request(
-          `/dns/create/${encodeURIComponent(zone)}`,
-          context,
-          {
-            name: relativeName === "@" ? "" : relativeName,
-            type: record.type,
-            content: record.value,
-            ttl: record.ttl ?? ttl,
-          },
-          crypto.randomUUID(),
-        );
+        try {
+          const result = await request(
+            `/dns/create/${encodeURIComponent(zone)}`,
+            context,
+            {
+              name: relativeName === "@" ? "" : relativeName,
+              type: record.type,
+              content: record.value,
+              ttl: record.ttl ?? ttl,
+            },
+            crypto.randomUUID(),
+          );
+          // Another writer's identical record already existed; this call created nothing.
+          if (result.duplicate) context.onNotCreated?.(record);
+        } catch (error) {
+          // After a 4xx, or a 200 whose readable body says ERROR, Porkbun created nothing for this
+          // record, and later records were never sent. A failure with no answer, a 5xx, or a
+          // reply that could not be read may still have created it.
+          const rejected =
+            rejectedByHost(error) ||
+            (safeInstanceOf(error, DomainSdkError) && errorReplies.has(error));
+          for (const skipped of records.slice(rejected ? index : index + 1))
+            context.onNotCreated?.(skipped);
+          throw error;
+        }
       }
     },
     async deleteRecords({ zone, records }, context) {
-      for (const record of records) requireString(record.id, "a record id for deletion", "porkbun");
+      for (const record of records) {
+        const id = requireString(record.id, "a record id for deletion", "porkbun");
+        if (id === "." || id === "..") {
+          throw new DomainSdkError("REQUEST_FAILED", "Invalid Porkbun record id.", {
+            provider: "porkbun",
+          });
+        }
+      }
       for (const record of records)
         await request(
           `/dns/delete/${encodeURIComponent(zone)}/${encodeURIComponent(record.id!)}`,

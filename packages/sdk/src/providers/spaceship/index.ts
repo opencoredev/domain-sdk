@@ -8,7 +8,15 @@ import {
   type ZoneRecord,
 } from "../../core/dns";
 import { DomainSdkError } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import {
+  httpError,
+  isAbortError,
+  isResponseTooLarge,
+  readJson,
+  rejectedByHost,
+  requireString,
+  type Fetch,
+} from "../../core/http";
 
 export interface SpaceshipOptions {
   apiKey: string;
@@ -62,7 +70,9 @@ function recordFields(record: SpaceshipRecord): Record<string, unknown> {
 
 // A full page holds 100 records whose values may reach 65,535 characters each, and JSON escaping
 // can double quotes and backslashes.
-const MAX_RESPONSE_LENGTH = 16_000_000;
+const MAX_RESPONSE_BYTES = 16 * 1024 * 1024;
+/** Times `listRecords()` starts over when the zone changes between pages. */
+const MAX_LIST_RESTARTS = 3;
 /** Spaceship accepts at most 500 records per save or delete request. */
 const MAX_BATCH = 500;
 
@@ -160,8 +170,7 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
         },
       });
     } catch (error) {
-      const aborted =
-        context.signal?.aborted || (error instanceof Error && error.name === "AbortError");
+      const aborted = context.signal?.aborted || isAbortError(error);
       throw new DomainSdkError(
         aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",
         aborted ? "The Spaceship request was cancelled." : "Could not reach Spaceship.",
@@ -170,12 +179,19 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
     }
     let body: unknown;
     try {
-      body = await readJson(response, MAX_RESPONSE_LENGTH);
+      body = await readJson(response, MAX_RESPONSE_BYTES, "spaceship", context.signal);
     } catch (error) {
-      if (context.signal?.aborted || (error instanceof Error && error.name === "AbortError"))
+      if (isResponseTooLarge(error)) throw error;
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The Spaceship request was cancelled.", {
           provider: "spaceship",
         });
+      // An error answer whose body broke off still carries its status and Retry-After.
+      if (
+        error instanceof DomainSdkError &&
+        (error.code === "ABORTED" || (error.code === "PROVIDER_UNAVAILABLE" && response.ok))
+      )
+        throw error;
       if (response.ok)
         throw new DomainSdkError("REQUEST_FAILED", "Spaceship returned malformed JSON.", {
           provider: "spaceship",
@@ -217,21 +233,37 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
       zoneInfo: true,
     },
     async listRecords({ zone }, context) {
-      const records: ZoneRecord[] = [];
+      let records: ZoneRecord[] = [];
+      let previousPages = new Set<string>();
+      let passSnapshot: string[] = [];
+      let sawCrossPageDuplicate = false;
+      let pagesInPass = 0;
+      let lastPassSnapshot: string[] | undefined;
       let skip = 0;
+      let expectedTotal: number | undefined;
+      let restarts = 0;
+      const restart = (clearSnapshot = false) => {
+        if (++restarts > MAX_LIST_RESTARTS)
+          throw new DomainSdkError(
+            "PROVIDER_UNAVAILABLE",
+            "Spaceship records kept changing while they were listed. Try again.",
+            { provider: "spaceship", retryable: true },
+          );
+        records = [];
+        previousPages = new Set<string>();
+        passSnapshot = [];
+        sawCrossPageDuplicate = false;
+        pagesInPass = 0;
+        if (clearSnapshot) lastPassSnapshot = undefined;
+        skip = 0;
+        expectedTotal = undefined;
+      };
       while (true) {
         const page = await request<{ items: SpaceshipRecord[]; total: number }>(
           `${recordsPath(zone)}?take=100&skip=${skip}`,
           context,
         );
-        if (
-          !page ||
-          !Array.isArray(page.items) ||
-          !Number.isInteger(page.total) ||
-          page.total < 0 ||
-          (!page.items.length && skip < page.total) ||
-          skip + page.items.length > page.total
-        )
+        if (!page || !Array.isArray(page.items) || !Number.isInteger(page.total) || page.total < 0)
           throw new DomainSdkError(
             "REQUEST_FAILED",
             "Spaceship returned an invalid records page.",
@@ -239,6 +271,21 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
               provider: "spaceship",
             },
           );
+        // Pages are offsets, so a record added or deleted between pages shifts every later
+        // page and would skip or repeat a record. Start over to get a consistent snapshot.
+        if (expectedTotal !== undefined && page.total !== expectedTotal) {
+          restart(true);
+          continue;
+        }
+        if ((!page.items.length && skip < page.total) || skip + page.items.length > page.total)
+          throw new DomainSdkError(
+            "REQUEST_FAILED",
+            "Spaceship returned an invalid records page.",
+            {
+              provider: "spaceship",
+            },
+          );
+        const pageKeys: string[] = [];
         for (const item of page.items) {
           if (
             !item ||
@@ -261,25 +308,60 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
             editable: item.group?.type === "custom",
           };
           if (record.type === "MX") record.priority = item.preference;
-          identities.set(record, { type: item.type, name: item.name, ...recordFields(item) });
+          const identity = { type: item.type, name: item.name, ...recordFields(item) };
+          const key = JSON.stringify(identity);
+          // Even when total is unchanged, a record repeating across pages can indicate an
+          // offset shift between requests or a static zone with duplicate records. Re-read
+          // once and accept the snapshot only if two consecutive full passes match.
+          if (previousPages.has(key)) sawCrossPageDuplicate = true;
+          pageKeys.push(key);
+          passSnapshot.push(JSON.stringify([key, item.ttl, item.group?.type ?? null]));
+          identities.set(record, identity);
           records.push(record);
         }
+        for (const key of pageKeys) previousPages.add(key);
+        pagesInPass += 1;
+        expectedTotal = page.total;
         skip += page.items.length;
-        if (skip >= page.total) return records;
+        if (skip >= page.total) {
+          // A delete and an add between pages keep the total and can skip one record while
+          // repeating none, so any read spanning pages is only trusted once two full passes match.
+          if (sawCrossPageDuplicate || pagesInPass > 1) {
+            const matchesPrevious =
+              lastPassSnapshot !== undefined &&
+              lastPassSnapshot.length === passSnapshot.length &&
+              passSnapshot.every((entry, index) => entry === lastPassSnapshot?.[index]);
+            if (matchesPrevious) return records;
+            lastPassSnapshot = passSnapshot;
+            restart();
+            continue;
+          }
+          return records;
+        }
       }
     },
     async createRecords({ zone, records }, context) {
-      const items = records.map((record) => ({
-        type: record.type,
-        name: relativeRecordName(record.name, zone),
-        ttl: record.ttl ?? ttl,
-        ...inputFields(record),
-      }));
-      for (const batch of batches(items))
-        await request(recordsPath(zone), context, {
-          method: "PUT",
-          body: JSON.stringify({ force: false, items: batch }),
-        });
+      const groups = batches(records);
+      for (const [index, group] of groups.entries()) {
+        const items = group.map((record) => ({
+          type: record.type,
+          name: relativeRecordName(record.name, zone),
+          ttl: record.ttl ?? ttl,
+          ...inputFields(record),
+        }));
+        try {
+          await request(recordsPath(zone), context, {
+            method: "PUT",
+            body: JSON.stringify({ force: false, items }),
+          });
+        } catch (error) {
+          // After a 4xx Spaceship created nothing in this batch, and later batches were never
+          // sent. A failure with no answer or a 5xx may still have created the batch.
+          for (const skipped of groups.slice(rejectedByHost(error) ? index : index + 1).flat())
+            context.onNotCreated?.(skipped);
+          throw error;
+        }
+      }
     },
     async deleteRecords({ zone, records }, context) {
       const items = records

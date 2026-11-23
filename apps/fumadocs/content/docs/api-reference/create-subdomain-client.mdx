@@ -11,19 +11,24 @@ createSubdomainClient(options: {
 }): SubdomainClient
 ```
 
-| Member                                               | Returns   | Behavior                                                      |
-| ---------------------------------------------------- | --------- | ------------------------------------------------------------- |
-| `baseDomain`                                         | `string`  | Normalized parent hostname.                                   |
-| `wildcardHostname`                                   | `string`  | Normalized `*.baseDomain` hostname.                           |
-| `supportsWildcard`                                   | `boolean` | Selected provider's wildcard capability.                      |
-| `toHostname(label)`                                  | `string`  | Normalize and constrain a direct-child label.                 |
-| `fromHostname(hostname)`                             | `string`  | Validate the parent boundary and return its normalized label. |
-| `add/get/refresh/verify/remove(label)`               | lifecycle | Run the matching operation for one tenant hostname.           |
-| `waitUntilActive(label)`                             | `Domain`  | Poll one tenant hostname until active.                        |
-| `provisionWildcard()` and wildcard lifecycle methods | lifecycle | Add, get, refresh, verify, or remove the wildcard hostname.   |
-| `waitUntilWildcardActive()`                          | `Domain`  | Poll the wildcard hostname until active.                      |
+| Member                                               | Returns   | Behavior                                                                                           |
+| ---------------------------------------------------- | --------- | -------------------------------------------------------------------------------------------------- |
+| `baseDomain`                                         | `string`  | Normalized parent hostname.                                                                        |
+| `wildcardHostname`                                   | `string`  | Normalized `*.baseDomain` hostname.                                                                |
+| `supportsWildcard`                                   | `boolean` | Selected provider's wildcard capability.                                                           |
+| `toHostname(label)`                                  | `string`  | Normalize and constrain a direct-child label.                                                      |
+| `fromHostname(hostname)`                             | `string`  | Validate the parent boundary and return its normalized label.                                      |
+| `add/get/refresh/verify/remove(label)`               | lifecycle | Run the matching operation for one tenant hostname.                                                |
+| `waitUntilActive(label)`                             | `Domain`  | Poll one tenant hostname until active.                                                             |
+| `list({ limit, cursor })`                            | page      | One provider page filtered to tenant labels, as `{ subdomains: { label, domain }[], nextCursor }`. |
+| `provisionWildcard()` and wildcard lifecycle methods | lifecycle | Add, get, refresh, verify, or remove the wildcard hostname.                                        |
+| `waitUntilWildcardActive()`                          | `Domain`  | Poll the wildcard hostname until active.                                                           |
 
 Labels must contain exactly one DNS label. Reserved labels, wildcards, nested subdomains, and hostnames outside `baseDomain` are rejected before any provider request.
+
+`reservedLabels` defaults to `DEFAULT_RESERVED_LABELS`: `www`, `api`, `admin`, and `mail`. A list you pass replaces the defaults, so `[]` reserves nothing and `[...DEFAULT_RESERVED_LABELS, "billing"]` extends them. Underscore labels such as `_acme-challenge` are always rejected as malformed.
+
+`list()` reads one page from the domain client and keeps direct children of `baseDomain` that are not reserved or the wildcard. A page can hold fewer than `limit` subdomains, or none, while `nextCursor` is still set, so keep paging until `nextCursor` is undefined. The provider must support listing.
 
 The client does not allocate labels or store tenant ownership. Claim the normalized label with a unique database constraint and authorize all changes in the application layer.
 

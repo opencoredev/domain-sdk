@@ -28,3 +28,14 @@ jobs:
       - run: bun run release:build
       - run: bun run test:registry
       - run: bun run registry:validate
+      - run: bun run registry:build
+      - name: Check the committed registry build is current
+        run: |
+          if ! git diff --exit-code -- apps/fumadocs/public/r; then
+            echo "::error::apps/fumadocs/public/r is out of date. Run bun run registry:build and commit the result."
+            exit 1
+          fi
+          if [[ -n "$(git ls-files --others --exclude-standard -- apps/fumadocs/public/r)" ]]; then
+            echo "::error::registry:build produced files that are not committed. Run bun run registry:build and commit them."
+            exit 1
+          fi

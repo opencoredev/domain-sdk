@@ -1,14 +1,17 @@
 import { getDomain } from "tldts";
 
 import { assertServerEnvironment } from "./client";
-import { DomainSdkError, normalizeUnknownError } from "./errors";
+import { DomainSdkError, normalizeUnknownError, safeInstanceOf } from "./errors";
 import { normalizeHostname } from "./hostname";
 import { withRetry } from "./http";
 import type {
+  DnsOperation,
+  DnsOperationEvent,
   DnsRecord,
   DnsRecordType,
   Domain,
   DomainLogger,
+  OperationOutcome,
   RequestOptions,
   RetryOptions,
 } from "./types";
@@ -66,6 +69,19 @@ export interface DnsProviderCapabilities {
 export interface DnsProviderContext {
   signal?: AbortSignal;
   logger: DomainLogger;
+  /**
+   * Whole-zone adapters that read the zone again before writing call this with that read, as
+   * `listRecords()` would return it, before sending the write. The DNS client then checks and
+   * rolls back against the zone the write was built from, so edits made elsewhere between its
+   * own read and the adapter's are neither restored nor reported as lost.
+   */
+  onWriteBase?(records: readonly ZoneRecord[]): void;
+  /**
+   * Adapters call this for each requested record the host definitely did not create: one it
+   * rejected with a 4xx response, one it reported as already existing, or one never sent after an
+   * earlier failure. Rollback then never deletes a matching record, which another writer added.
+   */
+  onNotCreated?(record: DnsRecordInput): void;
 }
 
 export interface DnsProviderZoneInput {
@@ -133,6 +149,11 @@ export interface DnsClientOptions {
    * workers or serverless instances write to the same zones.
    */
   lock?: DnsZoneLock;
+  /**
+   * Called once when each operation finishes, with its duration, attempt count, and outcome.
+   * Errors thrown by the hook are logged with `logger.warn` and never change the result.
+   */
+  onOperation?(event: DnsOperationEvent): void;
 }
 
 export interface DnsClient {
@@ -163,6 +184,10 @@ const RECORD_NAME_LABEL = /^(?:\*|_?[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?|_[a-z0
 
 function invalidRecord(message: string, details: Record<string, unknown>): never {
   throw new DomainSdkError("INVALID_HOSTNAME", message, { details });
+}
+
+function invalidRecordValue(message: string, details: Record<string, unknown>): never {
+  throw new DomainSdkError("INVALID_CONFIGURATION", message, { details });
 }
 
 /** Convert one internationalized label to its punycode form. */
@@ -217,10 +242,10 @@ export function absoluteRecordName(name: string, zone: string): string {
 
 /** Split a presentation-format CAA value into its parts. */
 export function parseCaaValue(value: string): { flag: number; tag: string; value: string } {
-  const match = /^\s*(\d{1,3})\s+([a-z0-9]+)\s+(?:"((?:[^"\\]|\\.)*)"|(\S+))\s*$/i.exec(value);
+  const match = /^\s*(\d{1,3})\s+([a-z0-9]+)\s+(?:"((?:[^"\\]|\\.)*)"|([^"\s]+))\s*$/i.exec(value);
   const flag = Number(match?.[1]);
   if (!match || flag > 255)
-    invalidRecord(`CAA value ${value} must look like 0 issue "letsencrypt.org".`, { value });
+    invalidRecordValue(`CAA value ${value} must look like 0 issue "letsencrypt.org".`, { value });
   return { flag, tag: match[2]!.toLowerCase(), value: match[3] ?? match[4]! };
 }
 
@@ -243,20 +268,22 @@ export function canonicalRecordValue(type: string, value: string): string {
   return trimmed.toLowerCase();
 }
 
+const normalizeOwnerName = (name: string): string => name.trim().toLowerCase().replace(/\.$/, "");
+
 /** Whether a zone record and an input record describe the same DNS data, ignoring TTL. */
 export function sameRecord(
   existing: Pick<ZoneRecord, "type" | "name" | "value">,
   wanted: Pick<DnsRecordInput, "type" | "name" | "value">,
 ): boolean {
-  if (existing.type.toUpperCase() !== wanted.type) return false;
-  if (existing.name.toLowerCase() !== wanted.name.toLowerCase()) return false;
+  if (existing.type.toUpperCase() !== wanted.type.toUpperCase()) return false;
+  if (normalizeOwnerName(existing.name) !== normalizeOwnerName(wanted.name)) return false;
   try {
     return (
       canonicalRecordValue(existing.type, existing.value) ===
       canonicalRecordValue(wanted.type, wanted.value)
     );
   } catch {
-    return false;
+    return existing.value.trim().toLowerCase() === wanted.value.trim().toLowerCase();
   }
 }
 
@@ -270,14 +297,18 @@ function mixedRouting(a: string, b: string): boolean {
 
 /** Whether two requested records can never coexist, such as a CNAME beside any other type. */
 function incompatible(a: DnsRecordInput, b: DnsRecordInput): boolean {
-  if (a.name !== b.name || sameRecord(a, b)) return false;
+  if (normalizeOwnerName(a.name) !== normalizeOwnerName(b.name) || sameRecord(a, b)) return false;
   if (a.type === "CNAME" || b.type === "CNAME") return true;
   if (mixedRouting(a.type, b.type)) return true;
   return SINGLETON_TYPES.has(a.type) && SINGLETON_TYPES.has(b.type);
 }
 
 function conflictsWith(existing: ZoneRecord, wanted: DnsRecordInput): boolean {
-  if (existing.name !== wanted.name || sameRecord(existing, wanted)) return false;
+  if (
+    normalizeOwnerName(existing.name) !== normalizeOwnerName(wanted.name) ||
+    sameRecord(existing, wanted)
+  )
+    return false;
   const type = existing.type.toUpperCase();
   if (type === "CNAME" || wanted.type === "CNAME") return true;
   if (type === wanted.type) return ROUTING_TYPES.has(type);
@@ -292,7 +323,24 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     throw new DomainSdkError("INVALID_CONFIGURATION", "A DNS provider is required.");
   const { provider } = options;
   const logger = options.logger ?? {};
-  const context = (signal?: AbortSignal): DnsProviderContext => ({ signal, logger });
+  const safeLog = (
+    level: "debug" | "info" | "warn" | "error",
+    message: string,
+    meta?: Record<string, unknown>,
+  ) => {
+    try {
+      logger[level]?.(message, meta);
+    } catch {
+      // Logger failures must never turn committed DNS operations into errors.
+    }
+  };
+  const safeLogger = {
+    debug: (message: string, meta?: Record<string, unknown>) => safeLog("debug", message, meta),
+    info: (message: string, meta?: Record<string, unknown>) => safeLog("info", message, meta),
+    warn: (message: string, meta?: Record<string, unknown>) => safeLog("warn", message, meta),
+    error: (message: string, meta?: Record<string, unknown>) => safeLog("error", message, meta),
+  };
+  const context = (signal?: AbortSignal): DnsProviderContext => ({ signal, logger: safeLogger });
   const queues = new Map<string, Promise<unknown>>();
 
   /** Run read-then-write operations on one zone one at a time, so each sees the last write. */
@@ -308,40 +356,95 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
   };
   const lock = options.lock ?? memoryLock;
 
+  const report = (event: DnsOperationEvent) => {
+    const logHookFailure = () =>
+      safeLog("warn", "DNS onOperation hook threw.", {
+        provider: provider.id,
+        operation: event.operation,
+      });
+    try {
+      const result: unknown = options.onOperation?.(event);
+      if (
+        result !== null &&
+        (typeof result === "object" || typeof result === "function") &&
+        typeof (result as PromiseLike<unknown>).then === "function"
+      ) {
+        void Promise.resolve(result).catch(logHookFailure);
+      }
+    } catch {
+      logHookFailure();
+    }
+  };
+
   const run = async <T>(
-    name: string,
+    name: DnsOperation,
     zone: string,
     operation: () => Promise<T>,
     signal?: AbortSignal,
   ): Promise<T> => {
-    logger.debug?.("DNS operation started.", { provider: provider.id, operation: name, zone });
-    try {
-      const result = await withRetry(operation, {
-        retry: options.retry,
-        signal,
-        // A failed replacement was already rolled back; the caller decides whether to try again.
-        shouldRetry: (error) => error.details?.restored === undefined,
-        onRetry: (error, attempt, delayMs) =>
-          logger.warn?.("DNS operation will be retried.", {
-            provider: provider.id,
-            operation: name,
-            zone,
-            code: error.code,
-            attempt,
-            delayMs,
-          }),
+    safeLog("debug", "DNS operation started.", { provider: provider.id, operation: name, zone });
+    const started = performance.now();
+    let attempts = 0;
+    const finish = (outcome: OperationOutcome) =>
+      report({
+        operation: name,
+        provider: provider.id,
+        zone,
+        durationMs: performance.now() - started,
+        attempts,
+        ...outcome,
       });
-      logger.info?.("DNS operation completed.", { provider: provider.id, operation: name, zone });
+    try {
+      const result = await withRetry(
+        () => {
+          attempts += 1;
+          return operation();
+        },
+        {
+          retry: options.retry,
+          signal,
+          // A failed replacement was already rolled back; the caller decides whether to try again.
+          // An add-only write that rolled back cleanly with nothing replaced and no external deletion is safe to retry.
+          shouldRetry: (error) => {
+            const details = error.details;
+            if (details === undefined || !Object.hasOwn(details, "restored")) return true;
+            const restored = details.restored;
+            if (restored === undefined) return true;
+            const externalChange = Object.hasOwn(details, "externalChange")
+              ? details.externalChange
+              : undefined;
+            const replaced = Object.hasOwn(details, "replaced") ? details.replaced : undefined;
+            return (
+              restored === true &&
+              externalChange !== true &&
+              Array.isArray(replaced) &&
+              replaced.length === 0
+            );
+          },
+          onRetry: (error, attempt, delayMs) =>
+            safeLog("warn", "DNS operation will be retried.", {
+              provider: provider.id,
+              operation: name,
+              zone,
+              code: error.code,
+              attempt,
+              delayMs,
+            }),
+        },
+      );
+      safeLog("info", "DNS operation completed.", { provider: provider.id, operation: name, zone });
+      finish({ outcome: "success" });
       return result;
     } catch (error) {
       const normalized = normalizeUnknownError(error, provider.id);
-      logger.error?.("DNS operation failed.", {
+      safeLog("error", "DNS operation failed.", {
         provider: provider.id,
         operation: name,
         zone,
         code: normalized.code,
         retryable: normalized.retryable,
       });
+      finish({ outcome: "failure", error: normalized });
       throw normalized;
     }
   };
@@ -405,13 +508,54 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     return normalized;
   };
 
-  const ensure = (
+  function failEarly(name: DnsOperation, zone: string, error: unknown): never {
+    const normalized = normalizeUnknownError(error, provider.id);
+    report({
+      operation: name,
+      provider: provider.id,
+      zone,
+      durationMs: 0,
+      attempts: 0,
+      outcome: "failure",
+      error: normalized,
+    });
+    throw normalized;
+  }
+
+  const ensure = async (
     records: readonly DnsRecordInput[],
     optional: readonly DnsRecordInput[],
     options: EnsureRecordsOptions,
   ): Promise<ZoneRecord[]> => {
-    if (!records.length && !optional.length) return Promise.resolve([]);
-    const zone = resolveZone(records.length ? records : optional, options.zone);
+    const rawOnConflict = Object.hasOwn(options, "onConflict")
+      ? (options.onConflict ?? "error")
+      : "error";
+    if (rawOnConflict !== "error" && rawOnConflict !== "replace") {
+      failEarly(
+        "ensureRecords",
+        options.zone ?? "",
+        new DomainSdkError("INVALID_CONFIGURATION", 'onConflict must be "error" or "replace".', {
+          provider: provider.id,
+        }),
+      );
+    }
+    if (!records.length && !optional.length) {
+      report({
+        operation: "ensureRecords",
+        provider: provider.id,
+        zone: options.zone ?? "",
+        durationMs: 0,
+        attempts: 0,
+        outcome: "success",
+      });
+      return [];
+    }
+    let zone: string;
+    try {
+      zone = resolveZone(records.length ? records : optional, options.zone);
+    } catch (error) {
+      failEarly("ensureRecords", options.zone ?? "", error);
+    }
     return run(
       "ensureRecords",
       zone,
@@ -430,12 +574,25 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           }
           const alternatives = normalizeRecords(optional, zone);
           if (!wanted.length && !alternatives.length) return [];
-          const ctx = context(options.signal);
+          // Adapters fill these in during the writes below; see DnsProviderContext.
+          let writeBase: ZoneRecord[] | undefined;
+          const notCreated: DnsRecordInput[] = [];
+          const ctx: DnsProviderContext = {
+            ...context(options.signal),
+            onWriteBase: (records) => {
+              writeBase = Array.from(records, (record) => ({ ...record }));
+            },
+            onNotCreated: ({ type, name, value, ttl }) => {
+              notCreated.push({ type, name, value, ttl });
+            },
+          };
           const existing = await provider.listRecords({ zone }, ctx);
+          // Each attempt acquires the lock afresh, so its own detached copy is the only safe baseline.
+          const snapshot = existing.map((record) => ({ ...record }));
           // Optional records are often alternatives. Prefer ones already in the zone, then keep only
           // those that fit the records chosen so far.
           const present = (record: DnsRecordInput) =>
-            existing.some((item) => sameRecord(item, record));
+            snapshot.some((item) => sameRecord(item, record));
           for (const record of [
             ...alternatives.filter(present),
             ...alternatives.filter((record) => !present(record)),
@@ -444,22 +601,132 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               wanted.push(record);
           const isWanted = (item: ZoneRecord) => wanted.some((record) => sameRecord(item, record));
           const missing = wanted.filter(
-            (record) => !existing.some((item) => sameRecord(item, record)),
+            (record) => !snapshot.some((item) => sameRecord(item, record)),
           );
           // Records that are already part of the requested set are never conflicts. Every requested
           // record is checked, so a stale address beside a requested one is still reported.
+          // Keep original `existing` entries for provider.deleteRecords (adapters like Spaceship
+          // track provider-issued record identities), while rollback compares detached `snapshot` entries.
           const conflicts = existing.filter(
             (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
           );
+          const snapshotConflicts = snapshot.filter(
+            (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
+          );
+          const preExistingWanted = snapshot.filter(isWanted);
+          // The zone a whole-zone write was built from: the adapter's own latest read, reusing the
+          // first read's entries where they match, plus the conflicts the SDK itself removed.
+          const baseline = (): ZoneRecord[] => {
+            const base = writeBase;
+            if (!provider.capabilities.wholeZoneWrites || !base) return snapshot;
+            const pool = [...snapshot];
+            const merged = base.map((record) => {
+              const index = pool.findIndex(
+                (item) =>
+                  item.editable === record.editable &&
+                  item.ttl === record.ttl &&
+                  sameRecord(item, {
+                    type: record.type.toUpperCase() as DnsRecordType,
+                    name: normalizeOwnerName(record.name),
+                    value: record.value,
+                  }),
+              );
+              return index >= 0 ? (pool.splice(index, 1)[0] ?? record) : record;
+            });
+            for (const conflict of snapshotConflicts)
+              if (!merged.includes(conflict)) merged.push(conflict);
+            return merged;
+          };
+          // Records another writer changed between the SDK's read and the adapter's.
+          const baseDrift = () => {
+            const base = baseline();
+            return (
+              base.some((record) => !snapshot.includes(record)) ||
+              snapshot.some((record) => !base.includes(record))
+            );
+          };
+          const restoreExtras = () => ({ notCreated, baseDrift: baseDrift() });
+          const verifyAfterWrite = (after: ZoneRecord[]): DomainSdkError | undefined => {
+            const dropped = wanted.filter(
+              (record) => !after.some((item) => sameRecord(item, record)),
+            );
+            const remaining = after.filter(
+              (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
+            );
+            const expectedKept = provider.capabilities.wholeZoneWrites
+              ? baseline().filter(
+                  (item) =>
+                    !isWanted(item) && !wanted.some((record) => conflictsWith(item, record)),
+                )
+              : [];
+            const pool = [...after];
+            const collateral = expectedKept.filter((record) => {
+              const index = pool.findIndex((item) =>
+                sameRecord(item, {
+                  type: record.type.toUpperCase() as DnsRecordType,
+                  name: normalizeOwnerName(record.name),
+                  value: record.value,
+                }),
+              );
+              if (index >= 0) pool.splice(index, 1);
+              return index < 0;
+            });
+            if (!dropped.length && !remaining.length && !collateral.length) return undefined;
+            const parts: string[] = [];
+            if (dropped.length) parts.push(`${dropped.length} DNS record(s) are missing`);
+            if (remaining.length) parts.push(`${remaining.length} conflicting record(s) remain`);
+            if (collateral.length)
+              parts.push(`${collateral.length} unrelated existing record(s) disappeared`);
+            const summary = `${parts.join(" and ")} in ${zone}`;
+            return new DomainSdkError(
+              "REQUEST_FAILED",
+              `${provider.id} accepted the write but ${summary}. Re-read the zone before retrying.`,
+              {
+                provider: provider.id,
+                details: {
+                  ...(dropped.length
+                    ? { missing: dropped.map(({ type, name, value }) => ({ type, name, value })) }
+                    : {}),
+                  ...(remaining.length
+                    ? {
+                        remaining: remaining.map(({ type, name, value }) => ({
+                          type,
+                          name,
+                          value,
+                        })),
+                      }
+                    : {}),
+                  ...(collateral.length
+                    ? {
+                        collateralMissing: collateral.map(({ type, name, value }) => ({
+                          type,
+                          name,
+                          value,
+                        })),
+                      }
+                    : {}),
+                },
+              },
+            );
+          };
+
+          const committedWrite = (err: unknown): boolean =>
+            safeInstanceOf(err, DomainSdkError) &&
+            err.details !== undefined &&
+            Object.hasOwn(err.details, "committed") &&
+            err.details.committed === true;
+
           if (conflicts.length) {
             // A record the provider cannot create again could not be restored if the replacement
             // failed, so it blocks replacement just like a record the host manages.
             const locked = conflicts.filter(
               (item) =>
                 !item.editable ||
-                !provider.capabilities.recordTypes.includes(item.type as DnsRecordType),
+                !provider.capabilities.recordTypes.includes(
+                  item.type.toUpperCase() as DnsRecordType,
+                ),
             );
-            if (locked.length || (options.onConflict ?? "error") === "error")
+            if (locked.length || rawOnConflict === "error")
               throw new DomainSdkError(
                 "DOMAIN_CONFLICT",
                 `Existing DNS records in ${zone} conflict with the records being written.`,
@@ -476,20 +743,78 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 },
               );
             let creating = false;
+            let writeCommitted = false;
+            let after: ZoneRecord[];
             try {
               await provider.deleteRecords({ zone, records: conflicts }, ctx);
+              writeCommitted = true;
               creating = true;
               if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
+              after = await provider.listRecords({ zone }, ctx);
             } catch (error) {
               // Nothing was created when the delete failed, so leave every requested record alone.
-              return restore(zone, conflicts, creating ? missing : [], error);
+              return restore(
+                zone,
+                snapshotConflicts,
+                creating ? missing : [],
+                error,
+                baseline(),
+                preExistingWanted,
+                writeCommitted || committedWrite(error),
+                restoreExtras(),
+              );
             }
-          } else if (missing.length) await provider.createRecords({ zone, records: missing }, ctx);
-          const after =
-            missing.length || conflicts.length
-              ? await provider.listRecords({ zone }, ctx)
-              : existing;
-          return after.filter((item) => wanted.some((record) => sameRecord(item, record)));
+            const verificationError = verifyAfterWrite(after);
+            if (verificationError)
+              return restore(
+                zone,
+                snapshotConflicts,
+                missing,
+                verificationError,
+                baseline(),
+                preExistingWanted,
+                true,
+                restoreExtras(),
+              );
+            return after.filter(isWanted);
+          }
+
+          if (!missing.length) return snapshot.filter(isWanted);
+          let writeCommitted = false;
+          let after: ZoneRecord[];
+          try {
+            await provider.createRecords({ zone, records: missing }, ctx);
+            writeCommitted = true;
+            // A DNS host can accept a write and still drop, rewrite, or leave a conflict, so check the result.
+            after = await provider.listRecords({ zone }, ctx);
+          } catch (error) {
+            return restore(
+              zone,
+              [],
+              missing,
+              error,
+              baseline(),
+              preExistingWanted,
+              writeCommitted || committedWrite(error),
+              restoreExtras(),
+            );
+          }
+          const verificationError = verifyAfterWrite(after);
+          if (verificationError) {
+            if (provider.capabilities.wholeZoneWrites)
+              return restore(
+                zone,
+                [],
+                missing,
+                verificationError,
+                baseline(),
+                preExistingWanted,
+                true,
+                restoreExtras(),
+              );
+            throw verificationError;
+          }
+          return after.filter(isWanted);
         }),
       options.signal,
     );
@@ -497,66 +822,306 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
 
   /**
    * Roll back a failed replacement, then report the original failure. Deletes and creates may
-   * have partly succeeded, so the zone is read again: requested records that now exist are
-   * removed, and replaced records that are gone are created again.
+   * have partly succeeded (or a provider may have rewritten a value or dropped another editable
+   * record), so the zone is compared against the pre-write editable snapshot, cleaned up,
+   * restored, and verified with a re-read.
    */
   const restore = async (
     zone: string,
     replaced: ZoneRecord[],
     requested: DnsRecordInput[],
     error: unknown,
+    before: ZoneRecord[],
+    preExistingWanted: ZoneRecord[] = [],
+    afterAcceptedWrite = false,
+    extras: { notCreated?: readonly DnsRecordInput[]; baseDrift?: boolean } = {},
   ): Promise<never> => {
     const cause = normalizeUnknownError(error, provider.id);
     // Roll back even when the caller's signal aborted the replacement.
-    const ctx: DnsProviderContext = { logger };
-    let restored = false;
-    try {
-      const current = await provider.listRecords({ zone }, ctx);
-      const created = current.filter(
-        (item) => item.editable && requested.some((record) => sameRecord(item, record)),
-      );
-      if (created.length) await provider.deleteRecords({ zone, records: created }, ctx);
-      const unmatched = [...current];
-      const asInput = ({ type, name, value, ttl }: ZoneRecord): DnsRecordInput => ({
-        type: type as DnsRecordType,
-        name,
-        value,
-        ttl,
-      });
-      // Match one for one, exact TTL matches first, so a deleted copy of an identical record is
-      // restored with its own TTL. Ids are not used because whole-zone hosts reissue them.
-      let pending = replaced;
-      for (const exact of [true, false])
+    const ctx: DnsProviderContext = { logger: safeLogger };
+    const asInput = ({ type, name, value, ttl }: ZoneRecord): DnsRecordInput => ({
+      type: type.toUpperCase() as DnsRecordType,
+      name: normalizeOwnerName(name),
+      value,
+      ttl,
+    });
+    const recordKey = (record: { name: string; type: string }) =>
+      `${normalizeOwnerName(record.name)}\0${record.type.toUpperCase()}`;
+    const replacedSet = new Set(replaced);
+    const preWantedSet = new Set(preExistingWanted);
+    const requestedKeys = new Set(requested.map(recordKey));
+    // A whole-zone write that failed without any HTTP response (a dropped connection, a timeout)
+    // may still have applied, so the records it was replacing are recreated if they are gone.
+    // After a definite rejection a missing record was deleted elsewhere and is left alone.
+    const writeMayHaveApplied = afterAcceptedWrite || cause.statusCode === undefined;
+    const beforeEditable = provider.capabilities.wholeZoneWrites
+      ? afterAcceptedWrite
+        ? before.filter((record) => record.editable)
+        : writeMayHaveApplied
+          ? before.filter((record) => record.editable && replacedSet.has(record))
+          : []
+      : before.filter((record) => record.editable && replacedSet.has(record));
+    const beforeLocked = provider.capabilities.wholeZoneWrites
+      ? before.filter((record) => !record.editable && !preWantedSet.has(record))
+      : [];
+    const ownedKeys = new Set([
+      ...requestedKeys,
+      ...replaced.map(recordKey),
+      ...preExistingWanted.map(recordKey),
+    ]);
+    const isOwned = (record: ZoneRecord) => ownedKeys.has(recordKey(record));
+    const touchedBystanders = provider.capabilities.wholeZoneWrites
+      ? []
+      : before.filter(
+          (record) =>
+            record.editable &&
+            !replacedSet.has(record) &&
+            !preWantedSet.has(record) &&
+            requestedKeys.has(recordKey(record)),
+        );
+    const beforeForUnexpected = provider.capabilities.wholeZoneWrites
+      ? before
+      : before.filter((record) => requestedKeys.has(recordKey(record)));
+    // Only a record whose value the SDK itself requested is safe to delete. A whole-zone host
+    // that accepted the write but dropped it leaves another writer's record at the same key,
+    // which is indistinguishable from a host rewrite of our value.
+    // A record the adapter reported it did not create was added by another writer.
+    const notCreated = extras.notCreated ?? [];
+    const isNotCreated = (record: ZoneRecord) =>
+      notCreated.some((input) => sameRecord(record, input));
+    const deletableUnexpectedCandidates = (records: ZoneRecord[]) =>
+      requested.length
+        ? records.filter(
+            (record) =>
+              record.editable &&
+              !isNotCreated(record) &&
+              requested.some((wanted) => sameRecord(record, wanted)),
+          )
+        : [];
+    const sameKeyUnexpectedCandidates = (records: ZoneRecord[]) =>
+      provider.capabilities.wholeZoneWrites
+        ? records.filter(isOwned)
+        : requested.length
+          ? records.filter((record) => requestedKeys.has(recordKey(record)))
+          : [];
+    const subtract = (expected: ZoneRecord[], actual: ZoneRecord[], exactTtlOnly = false) => {
+      const pool = [...actual];
+      let pending = expected;
+      for (const exact of exactTtlOnly ? [true] : [true, false])
         pending = pending.filter((record) => {
-          const index = unmatched.findIndex(
-            (item) => sameRecord(item, asInput(record)) && (!exact || item.ttl === record.ttl),
+          const index = pool.findIndex(
+            (item) =>
+              sameRecord(item, asInput(record)) &&
+              (!exact || record.ttl === undefined || item.ttl === record.ttl),
           );
-          if (index >= 0) unmatched.splice(index, 1);
+          if (index >= 0) pool.splice(index, 1);
           return index < 0;
         });
-      const gone = pending.map(asInput);
+      return pending;
+    };
+    let restored = false;
+    let externalChange = extras.baseDrift === true;
+    const withoutForeign = (records: ZoneRecord[]) => {
+      const own = records.filter((record) => !isNotCreated(record));
+      if (own.length !== records.length) externalChange = true;
+      return own;
+    };
+    let remainingUnexpected: ZoneRecord[] = [];
+    let foreignSameKey: ZoneRecord[] = [];
+    try {
+      const current = await provider.listRecords({ zone }, ctx);
+      externalChange ||=
+        (!afterAcceptedWrite || !provider.capabilities.wholeZoneWrites) &&
+        subtract(preExistingWanted, current).length > 0;
+      const unexpected = subtract(deletableUnexpectedCandidates(current), beforeForUnexpected);
+      const isRequested = (record: ZoneRecord) =>
+        requested.some((wanted) => sameRecord(record, wanted));
+      if (provider.capabilities.wholeZoneWrites) {
+        // A new same-key record with a value the SDK never requested is either the host's rewrite
+        // of our value or another writer's record. The zone cannot tell them apart, so keep it
+        // and report the concurrent change instead of risking deleting foreign data.
+        foreignSameKey = subtract(
+          current.filter((record) => isOwned(record) && !isRequested(record)),
+          before,
+        );
+        const initialForeignAdded = subtract(
+          current.filter((record) => !isOwned(record)),
+          before,
+        );
+        if (foreignSameKey.length || initialForeignAdded.length) externalChange = true;
+      } else if (requested.length) {
+        foreignSameKey = subtract(
+          current.filter((record) => requestedKeys.has(recordKey(record)) && !isRequested(record)),
+          beforeForUnexpected,
+        );
+        if (foreignSameKey.length) externalChange = true;
+      }
+      if (unexpected.length) await provider.deleteRecords({ zone, records: unexpected }, ctx);
+      // Match one for one, exact TTL matches first, so every pre-write editable record that
+      // disappeared is restored with its own TTL. Ids are not used because whole-zone hosts reissue them.
+      const gone = subtract(beforeEditable, current).map(asInput);
       const records = gone.filter((record) =>
         provider.capabilities.recordTypes.includes(record.type),
       );
       if (records.length) await provider.createRecords({ zone, records }, ctx);
-      restored = records.length === gone.length;
+      if (records.length === gone.length) {
+        const verified = await provider.listRecords({ zone }, ctx);
+        const stillGone = subtract(beforeEditable, verified, true);
+        const bystandersLost = subtract(touchedBystanders, verified);
+        const lockedLost = subtract(beforeLocked, verified).length > 0;
+        const preWantedLost = subtract(preExistingWanted, verified).length > 0;
+        const foreignAdded = provider.capabilities.wholeZoneWrites
+          ? subtract(
+              verified.filter((record) => !isOwned(record)),
+              before,
+            )
+          : [];
+        const unrelatedRemoved =
+          provider.capabilities.wholeZoneWrites && !afterAcceptedWrite
+            ? subtract(
+                before.filter((record) => record.editable && !preWantedSet.has(record)),
+                verified,
+              )
+            : [];
+        const replacedLost =
+          provider.capabilities.wholeZoneWrites && !afterAcceptedWrite && replaced.length > 0
+            ? subtract(replaced, verified).length > 0
+            : false;
+        externalChange ||=
+          ((!afterAcceptedWrite || !provider.capabilities.wholeZoneWrites) && preWantedLost) ||
+          (!afterAcceptedWrite && lockedLost) ||
+          foreignAdded.length > 0 ||
+          unrelatedRemoved.length > 0;
+        // A kept unrequested same-key record means rollback is incomplete when the write was
+        // accepted or committed (it may be the host's rewrite of our value). When the write threw
+        // before committing, the record is purely another writer's and our own writes are clean.
+        remainingUnexpected = withoutForeign(
+          subtract(
+            subtract(sameKeyUnexpectedCandidates(verified), beforeForUnexpected),
+            afterAcceptedWrite ? [] : foreignSameKey,
+          ),
+        );
+        restored =
+          stillGone.length === 0 &&
+          bystandersLost.length === 0 &&
+          !lockedLost &&
+          !replacedLost &&
+          remainingUnexpected.length === 0 &&
+          (!provider.capabilities.wholeZoneWrites || !preWantedLost);
+      } else {
+        const afterPartial = await provider.listRecords({ zone }, ctx);
+        const partialForeignAdded = provider.capabilities.wholeZoneWrites
+          ? subtract(
+              afterPartial.filter((record) => !isOwned(record)),
+              before,
+            )
+          : [];
+        if (partialForeignAdded.length > 0) externalChange = true;
+        remainingUnexpected = withoutForeign(
+          subtract(
+            subtract(sameKeyUnexpectedCandidates(afterPartial), beforeForUnexpected),
+            afterAcceptedWrite ? [] : foreignSameKey,
+          ),
+        );
+      }
     } catch {
       restored = false;
+      try {
+        const afterFailure = await provider.listRecords({ zone }, ctx);
+        const lockedLost = subtract(beforeLocked, afterFailure).length > 0;
+        const preWantedLost = subtract(preExistingWanted, afterFailure).length > 0;
+        if (
+          ((!afterAcceptedWrite || !provider.capabilities.wholeZoneWrites) && preWantedLost) ||
+          (!afterAcceptedWrite && lockedLost)
+        ) {
+          externalChange = true;
+        }
+        const isRequested = (record: ZoneRecord) =>
+          requested.some((wanted) => sameRecord(record, wanted));
+        if (provider.capabilities.wholeZoneWrites) {
+          const failureForeignAdded = subtract(
+            afterFailure.filter((record) => !isOwned(record)),
+            before,
+          );
+          const failureForeignSameKey = subtract(
+            afterFailure.filter((record) => isOwned(record) && !isRequested(record)),
+            before,
+          );
+          const failureLockedOwnedAdded = subtract(
+            afterFailure.filter((record) => isOwned(record) && !record.editable),
+            before,
+          );
+          const failureUnrelatedRemoved = !afterAcceptedWrite
+            ? subtract(
+                before.filter((record) => record.editable && !preWantedSet.has(record)),
+                afterFailure,
+              )
+            : [];
+          if (
+            failureForeignAdded.length > 0 ||
+            failureForeignSameKey.length > 0 ||
+            failureLockedOwnedAdded.length > 0 ||
+            failureUnrelatedRemoved.length > 0
+          ) {
+            externalChange = true;
+          }
+        } else if (requested.length) {
+          const failureForeignSameKey = subtract(
+            afterFailure.filter(
+              (record) => requestedKeys.has(recordKey(record)) && !isRequested(record),
+            ),
+            beforeForUnexpected,
+          );
+          const failureLockedOwnedAdded = subtract(
+            afterFailure.filter(
+              (record) => requestedKeys.has(recordKey(record)) && !record.editable,
+            ),
+            beforeForUnexpected,
+          );
+          if (failureForeignSameKey.length > 0 || failureLockedOwnedAdded.length > 0) {
+            externalChange = true;
+          }
+        }
+        remainingUnexpected = withoutForeign(
+          subtract(
+            subtract(sameKeyUnexpectedCandidates(afterFailure), beforeForUnexpected),
+            afterAcceptedWrite ? [] : foreignSameKey,
+          ),
+        );
+      } catch {
+        // Best-effort post-failure classification; keep whatever externalChange was already observed.
+      }
     }
+    // Rollback fields go first: error details keep only their first 50 keys, and `run` decides
+    // whether to retry from `restored`, `replaced`, and `externalChange`.
+    const rollbackKeys = new Set(["restored", "replaced", "externalChange", "unexpected"]);
+    const baseCauseDetails: Record<string, unknown> = {};
+    if (cause.details) {
+      for (const [key, value] of Object.entries(cause.details)) {
+        if (rollbackKeys.has(key)) continue;
+        baseCauseDetails[key] = value;
+      }
+    }
+
     throw new DomainSdkError(
       cause.code,
       restored
-        ? `${cause.message} The zone was rolled back to its previous records.`
+        ? externalChange
+          ? `${cause.message} The zone was rolled back, but records outside the SDK's own writes changed concurrently.`
+          : `${cause.message} The zone was rolled back to its previous records.`
         : `${cause.message} The zone could not be fully rolled back.`,
       {
         provider: provider.id,
         statusCode: cause.statusCode,
-        retryable: cause.retryable,
+        retryable: restored && !externalChange ? cause.retryable : false,
         retryAfter: cause.retryAfter,
         cause,
         details: {
           restored,
           replaced: replaced.map(({ type, name, value }) => ({ type, name, value })),
+          ...(externalChange ? { externalChange: true } : {}),
+          ...(remainingUnexpected.length ? { unexpected: remainingUnexpected.map(asInput) } : {}),
+          ...baseCauseDetails,
         },
       },
     );
@@ -568,25 +1133,38 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
   return {
     provider: provider.id,
     capabilities: provider.capabilities,
-    getZone(zone, request) {
-      const normalized = normalizeZone(zone);
+    async getZone(zone, request) {
       if (!provider.getZone || !provider.capabilities.zoneInfo)
-        return Promise.reject(
+        failEarly(
+          "getZone",
+          zone,
           new DomainSdkError(
             "UNSUPPORTED_OPERATION",
             `${provider.id} does not report zone delegation.`,
             { provider: provider.id },
           ),
         );
+      const getZone = provider.getZone.bind(provider);
+      let normalized: string;
+      try {
+        normalized = normalizeZone(zone);
+      } catch (error) {
+        failEarly("getZone", zone, error);
+      }
       return run(
         "getZone",
         normalized,
-        () => provider.getZone!({ zone: normalized }, context(request?.signal)),
+        () => getZone({ zone: normalized }, context(request?.signal)),
         request?.signal,
       );
     },
-    listRecords(zone, request) {
-      const normalized = normalizeZone(zone);
+    async listRecords(zone, request) {
+      let normalized: string;
+      try {
+        normalized = normalizeZone(zone);
+      } catch (error) {
+        failEarly("listRecords", zone, error);
+      }
       return run(
         "listRecords",
         normalized,
@@ -595,9 +1173,24 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       );
     },
     ensureRecords,
-    removeRecords(records, remove = {}) {
-      if (!records.length) return Promise.resolve();
-      const zone = resolveZone(records, remove.zone);
+    async removeRecords(records, remove = {}) {
+      if (!records.length) {
+        report({
+          operation: "removeRecords",
+          provider: provider.id,
+          zone: remove.zone ?? "",
+          durationMs: 0,
+          attempts: 0,
+          outcome: "success",
+        });
+        return;
+      }
+      let zone: string;
+      try {
+        zone = resolveZone(records, remove.zone);
+      } catch (error) {
+        failEarly("removeRecords", remove.zone ?? "", error);
+      }
       return run(
         "removeRecords",
         zone,
@@ -615,7 +1208,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         remove.signal,
       );
     },
-    applyDomainRecords(domain, apply = {}) {
+    async applyDomainRecords(domain, apply = {}) {
       const all = [...domain.records, ...domain.verification.records];
       const input = ({ type, name, value, ttl }: DnsRecord) => ({ type, name, value, ttl });
       const required = all.filter((record) => record.required).map(input);
