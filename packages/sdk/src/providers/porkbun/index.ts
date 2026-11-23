@@ -7,7 +7,7 @@ import {
   type DnsProviderContext,
   type ZoneRecord,
 } from "../../core/dns";
-import { DomainSdkError, type DomainSdkErrorCode } from "../../core/errors";
+import { DomainSdkError, safeInstanceOf, type DomainSdkErrorCode } from "../../core/errors";
 import {
   httpError,
   isAbortError,
@@ -71,6 +71,9 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
     new DomainSdkError("REQUEST_FAILED", "porkbun returned an invalid response.", {
       provider: "porkbun",
     });
+
+  // Errors built from a readable Porkbun error reply, which means the request applied nothing.
+  const errorReplies = new WeakSet<DomainSdkError>();
 
   const request = async (
     path: string,
@@ -145,12 +148,14 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
         code === "PERMISSION_DENIED"
           ? "Enable API Access for this domain in Porkbun's dashboard and check key permissions."
           : "porkbun rejected the request.";
-      throw new DomainSdkError(code, message, {
+      const rejection = new DomainSdkError(code, message, {
         provider: "porkbun",
         statusCode: response.status,
         retryable: failure.retryable || code === "RATE_LIMITED",
         retryAfter: failure.retryAfter,
       });
+      if (response.status < 500) errorReplies.add(rejection);
+      throw rejection;
     }
     if (body?.status !== "SUCCESS") throw malformedResponse();
     return body;
@@ -215,9 +220,13 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
           // Another writer's identical record already existed; this call created nothing.
           if (result.duplicate) context.onNotCreated?.(record);
         } catch (error) {
-          // After a 4xx Porkbun created nothing for this record, and later records were never
-          // sent. A failure with no answer or a 5xx may still have created it.
-          for (const skipped of records.slice(rejectedByHost(error) ? index : index + 1))
+          // After a 4xx, or a 200 whose readable body says ERROR, Porkbun created nothing for this
+          // record, and later records were never sent. A failure with no answer, a 5xx, or a
+          // reply that could not be read may still have created it.
+          const rejected =
+            rejectedByHost(error) ||
+            (safeInstanceOf(error, DomainSdkError) && errorReplies.has(error));
+          for (const skipped of records.slice(rejected ? index : index + 1))
             context.onNotCreated?.(skipped);
           throw error;
         }

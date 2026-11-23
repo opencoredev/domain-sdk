@@ -206,6 +206,36 @@ describe("DNS rollback only deletes records the SDK created", () => {
     expect(mock.calls.some((call) => call.url.includes("/dns/delete/"))).toBe(false);
   });
 
+  test("a Porkbun HTTP 200 error reply never deletes another writer's identical record", async () => {
+    const records: { id: string; name: string; type: string; content: string; ttl: string }[] = [];
+    const mock = mockFetch((url) => {
+      const path = url.pathname.replace("/api/json/v3", "");
+      if (path === "/dns/retrieve/example.com") return json({ status: "SUCCESS", records });
+      if (path === "/dns/create/example.com") {
+        records.push({
+          id: "other",
+          name: "app.example.com",
+          type: "CNAME",
+          content: "target.example.net",
+          ttl: "600",
+        });
+        return json({ status: "ERROR", message: "Could not create record" });
+      }
+      if (path.startsWith("/dns/delete/example.com/")) return json({ status: "SUCCESS" });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    await createDnsClient({
+      provider: porkbun({ apiKey: "pk1_test", secretApiKey: "sk1_test", fetch: mock.fetch }),
+      retry: { maxAttempts: 1 },
+    })
+      .ensureRecords([{ type: "CNAME", name: "app.example.com", value: "target.example.net" }], {
+        zone: "example.com",
+      })
+      .catch(() => undefined);
+    expect(records.map((record) => record.id)).toEqual(["other"]);
+    expect(mock.calls.some((call) => call.url.includes("/dns/delete/"))).toBe(false);
+  });
+
   test("a Porkbun batch that fails partway deletes only the records it created", async () => {
     const records: { id: string; name: string; type: string; content: string; ttl: string }[] = [];
     let creates = 0;
