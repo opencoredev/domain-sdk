@@ -7,7 +7,7 @@ import {
   type DnsProviderContext,
   type ZoneRecord,
 } from "../../core/dns";
-import { DomainSdkError, type DomainSdkErrorCode } from "../../core/errors";
+import { DomainSdkError, safeInstanceOf, type DomainSdkErrorCode } from "../../core/errors";
 import {
   httpError,
   isAbortError,
@@ -194,19 +194,30 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
       });
     },
     async createRecords({ zone, records }, context) {
-      for (const record of records) {
+      for (const [index, record] of records.entries()) {
         const relativeName = relativeRecordName(record.name, zone);
-        await request(
-          `/dns/create/${encodeURIComponent(zone)}`,
-          context,
-          {
-            name: relativeName === "@" ? "" : relativeName,
-            type: record.type,
-            content: record.value,
-            ttl: record.ttl ?? ttl,
-          },
-          crypto.randomUUID(),
-        );
+        try {
+          await request(
+            `/dns/create/${encodeURIComponent(zone)}`,
+            context,
+            {
+              name: relativeName === "@" ? "" : relativeName,
+              type: record.type,
+              content: record.value,
+              ttl: record.ttl ?? ttl,
+            },
+            crypto.randomUUID(),
+          );
+        } catch (error) {
+          // An error answer below 500 (a 4xx, or a 200 whose body says ERROR) means Porkbun
+          // created nothing for this record, and later records were never sent. A failure with no
+          // answer (a dropped connection) or a 5xx may still have created it.
+          const status = safeInstanceOf(error, DomainSdkError) ? error.statusCode : undefined;
+          const rejected = status !== undefined && status < 500;
+          for (const skipped of records.slice(rejected ? index : index + 1))
+            context.onNotCreated?.(skipped);
+          throw error;
+        }
       }
     },
     async deleteRecords({ zone, records }, context) {

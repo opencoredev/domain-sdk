@@ -227,7 +227,12 @@ export function createSubdomainClient(options: SubdomainClientOptions): Subdomai
             Object.getOwnPropertyDescriptors(domain);
           snapshot = Object.create(Object.getPrototypeOf(domain), {
             ...restDescriptors,
-            hostname: { value: hostname, enumerable: true, writable: true, configurable: true },
+            hostname: {
+              value: toHostname(label),
+              enumerable: true,
+              writable: true,
+              configurable: true,
+            },
           }) as Domain;
         } catch (error) {
           if (safeInstanceOf(error, DomainSdkError) && error.code === "INVALID_HOSTNAME") continue;

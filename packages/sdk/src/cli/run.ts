@@ -161,10 +161,12 @@ function formatDomain(domain: Domain): string {
   const records = deduplicateRecords([...domain.records, ...domain.verification.records]);
   if (records.length) {
     lines.push("", "  DNS records:");
-    for (const record of records)
+    for (const record of records) {
       lines.push(
         `    ${record.type.padEnd(6)} ${record.name}  ${record.value}  (${record.required ? "required" : "optional"}, ${record.status})`,
       );
+      if (record.description) lines.push(`           ${record.description}`);
+    }
   }
   if (domain.issues.length) {
     lines.push("", "  Issues:");
@@ -173,11 +175,17 @@ function formatDomain(domain: Domain): string {
   return `${lines.join("\n")}\n`;
 }
 
+/** Quote a value for POSIX shells unless it only holds characters that never need quoting. */
+const shellQuote = (value: string) =>
+  /^[\w@%+=:,./-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+
 function formatPage(page: DomainPage): string {
-  if (!page.domains.length) return "No domains.\n";
-  const width = Math.max(...page.domains.map((domain) => domain.hostname.length));
-  const lines = page.domains.map((domain) => `${domain.hostname.padEnd(width)}  ${domain.status}`);
-  if (page.nextCursor) lines.push("", `More results: --cursor ${page.nextCursor}`);
+  const width = Math.max(0, ...page.domains.map((domain) => domain.hostname.length));
+  const lines = page.domains.length
+    ? page.domains.map((domain) => `${domain.hostname.padEnd(width)}  ${domain.status}`)
+    : ["No domains."];
+  // The equals form keeps a cursor that starts with "--" from being read as another option.
+  if (page.nextCursor) lines.push("", `More results: --cursor=${shellQuote(page.nextCursor)}`);
   return `${lines.join("\n")}\n`;
 }
 

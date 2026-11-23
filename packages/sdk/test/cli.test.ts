@@ -246,6 +246,81 @@ describe("domain-sdk CLI commands", () => {
   });
 });
 
+describe("domain-sdk CLI human output", () => {
+  const pagedCli = (nextCursor: string, hostnames: string[] = []) => {
+    const base = memoryProvider();
+    return harness({
+      providers: {
+        memory: {
+          required: [],
+          create: () => ({
+            ...base,
+            list: async () => ({
+              domains: await Promise.all(
+                hostnames.map((hostname) => base.add({ hostname }, { logger: {} })),
+              ),
+              nextCursor,
+            }),
+          }),
+        },
+      },
+    });
+  };
+
+  test("an empty page still prints the continuation cursor", async () => {
+    const cli = pagedCli("abc123");
+    expect(await cli.run("list", "--provider", "memory")).toBe(0);
+    expect(cli.stdout()).toBe("No domains.\n\nMore results: --cursor=abc123\n");
+  });
+
+  test("prints a cursor that the CLI parses back exactly", async () => {
+    for (const cursor of ["--opaque", "a b'c", "x;$(y)"]) {
+      const cli = pagedCli(cursor, ["app.example.com"]);
+      expect(await cli.run("list", "--provider", "memory")).toBe(0);
+      const hint = /More results: (.*)\n$/.exec(cli.stdout())?.[1] ?? "";
+      expect(hint.startsWith("--cursor=")).toBe(true);
+      const quoted = hint.slice("--cursor=".length);
+      const unquoted = quoted.startsWith("'")
+        ? quoted.slice(1, -1).replaceAll("'\\''", "'")
+        : quoted;
+      expect(unquoted).toBe(cursor);
+    }
+  });
+
+  test("prints a DNS record's description under it", async () => {
+    const base = memoryProvider();
+    const cli = harness({
+      providers: {
+        memory: {
+          required: [],
+          create: () => ({
+            ...base,
+            get: async (input, context) => {
+              const domain = await base.add(input, context);
+              return {
+                ...domain,
+                records: [
+                  {
+                    type: "ALIAS",
+                    name: "example.com",
+                    value: "apex.netlify.com",
+                    purpose: "routing",
+                    required: true,
+                    status: "pending",
+                    description: "Or use an A record pointing to 75.2.60.5.",
+                  },
+                ],
+              };
+            },
+          }),
+        },
+      },
+    });
+    expect(await cli.run("get", "example.com", "--provider", "memory")).toBe(0);
+    expect(cli.stdout()).toContain("Or use an A record pointing to 75.2.60.5.");
+  });
+});
+
 describe("built domain-sdk bin", () => {
   const bin = join(import.meta.dir, "..", "dist", "cli.js");
 

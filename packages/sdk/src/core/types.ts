@@ -123,7 +123,7 @@ interface OperationEventBase {
   provider: string;
   /** Wall time including retries and their waits. */
   durationMs: number;
-  /** Provider attempts made, including the first. */
+  /** Times the operation ran, including the first; one run can make several provider calls. */
   attempts: number;
 }
 

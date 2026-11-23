@@ -164,7 +164,8 @@ describe("spaceship DNS", () => {
     const records = await fake.provider.listRecords({ zone: "example.com" }, context);
     expect(records).toHaveLength(208);
     expect(fake.calls.map(({ url }) => url)).toEqual(
-      [0, 100, 200].map(
+      // A read spanning pages is only trusted once two full passes match.
+      [0, 100, 200, 0, 100, 200].map(
         (skip) => `https://spaceship.dev/api/v1/dns/records/example.com?take=100&skip=${skip}`,
       ),
     );
@@ -537,6 +538,8 @@ describe("spaceship DNS", () => {
       "100",
       "0",
       "100",
+      "0",
+      "100",
     ]);
   });
 
@@ -591,7 +594,37 @@ describe("spaceship DNS", () => {
       "100",
       "0",
       "100",
+      "0",
+      "100",
     ]);
+  });
+
+  test("re-reads when a delete and an append between pages keep the total without repeats", async () => {
+    const record = (index: number) => ({
+      type: "TXT",
+      name: `r${index}`,
+      value: "x",
+      ttl: 300,
+      group: { type: "custom" },
+    });
+    let zone = Array.from({ length: 150 }, (_, index) => record(index));
+    let pages = 0;
+    const mock = mockFetch((url) => {
+      const skip = Number(url.searchParams.get("skip"));
+      const page = { items: zone.slice(skip, skip + 100), total: zone.length };
+      // r0 is deleted and r150 appended after the first page: page two then skips r100.
+      if (++pages === 1) zone = [...zone.slice(1), record(150)];
+      return json(page);
+    });
+    const records = await spaceship({ ...credentials, fetch: mock.fetch }).listRecords(
+      { zone: "example.com" },
+      context,
+    );
+    const names = records.map((item) => item.name);
+    expect(records).toHaveLength(150);
+    expect(names).not.toContain("r0.example.com");
+    expect(names).toContain("r100.example.com");
+    expect(names).toContain("r150.example.com");
   });
 
   test("returns all records for a static zone with duplicate records across a page boundary", async () => {

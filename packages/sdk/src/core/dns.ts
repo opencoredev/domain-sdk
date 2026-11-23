@@ -69,6 +69,20 @@ export interface DnsProviderCapabilities {
 export interface DnsProviderContext {
   signal?: AbortSignal;
   logger: DomainLogger;
+  /**
+   * Whole-zone adapters that read the zone again before writing call this with that read, as
+   * `listRecords()` would return it, before sending the write. The DNS client then checks and
+   * rolls back against the zone the write was built from, so edits made elsewhere between its
+   * own read and the adapter's are neither restored nor reported as lost.
+   */
+  onWriteBase?(records: readonly ZoneRecord[]): void;
+  /**
+   * Adapters that create records one at a time call this for each requested record the host
+   * definitely did not create, such as one it rejected with a 4xx response or one never sent
+   * after an earlier failure. Rollback then never deletes a matching record, which another
+   * writer must have added.
+   */
+  onNotCreated?(record: DnsRecordInput): void;
 }
 
 export interface DnsProviderZoneInput {
@@ -561,7 +575,18 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
           }
           const alternatives = normalizeRecords(optional, zone);
           if (!wanted.length && !alternatives.length) return [];
-          const ctx = context(options.signal);
+          // Adapters fill these in during the writes below; see DnsProviderContext.
+          let writeBase: ZoneRecord[] | undefined;
+          const notCreated: DnsRecordInput[] = [];
+          const ctx: DnsProviderContext = {
+            ...context(options.signal),
+            onWriteBase: (records) => {
+              writeBase = Array.from(records, (record) => ({ ...record }));
+            },
+            onNotCreated: ({ type, name, value, ttl }) => {
+              notCreated.push({ type, name, value, ttl });
+            },
+          };
           const existing = await provider.listRecords({ zone }, ctx);
           // Each attempt acquires the lock afresh, so its own detached copy is the only safe baseline.
           const snapshot = existing.map((record) => ({ ...record }));
@@ -590,11 +615,38 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
           );
           const preExistingWanted = snapshot.filter(isWanted);
-          const expectedKept = provider.capabilities.wholeZoneWrites
-            ? snapshot.filter(
-                (item) => !isWanted(item) && !wanted.some((record) => conflictsWith(item, record)),
-              )
-            : [];
+          // The zone a whole-zone write was built from: the adapter's own latest read, reusing the
+          // first read's entries where they match, plus the conflicts the SDK itself removed.
+          const baseline = (): ZoneRecord[] => {
+            const base = writeBase;
+            if (!provider.capabilities.wholeZoneWrites || !base) return snapshot;
+            const pool = [...snapshot];
+            const merged = base.map((record) => {
+              const index = pool.findIndex(
+                (item) =>
+                  item.editable === record.editable &&
+                  item.ttl === record.ttl &&
+                  sameRecord(item, {
+                    type: record.type.toUpperCase() as DnsRecordType,
+                    name: normalizeOwnerName(record.name),
+                    value: record.value,
+                  }),
+              );
+              return index >= 0 ? (pool.splice(index, 1)[0] ?? record) : record;
+            });
+            for (const conflict of snapshotConflicts)
+              if (!merged.includes(conflict)) merged.push(conflict);
+            return merged;
+          };
+          // Records another writer changed between the SDK's read and the adapter's.
+          const baseDrift = () => {
+            const base = baseline();
+            return (
+              base.some((record) => !snapshot.includes(record)) ||
+              snapshot.some((record) => !base.includes(record))
+            );
+          };
+          const restoreExtras = () => ({ notCreated, baseDrift: baseDrift() });
           const verifyAfterWrite = (after: ZoneRecord[]): DomainSdkError | undefined => {
             const dropped = wanted.filter(
               (record) => !after.some((item) => sameRecord(item, record)),
@@ -602,6 +654,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             const remaining = after.filter(
               (item) => !isWanted(item) && wanted.some((record) => conflictsWith(item, record)),
             );
+            const expectedKept = provider.capabilities.wholeZoneWrites
+              ? baseline().filter(
+                  (item) =>
+                    !isWanted(item) && !wanted.some((record) => conflictsWith(item, record)),
+                )
+              : [];
             const pool = [...after];
             const collateral = expectedKept.filter((record) => {
               const index = pool.findIndex((item) =>
@@ -701,9 +759,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 snapshotConflicts,
                 creating ? missing : [],
                 error,
-                snapshot,
+                baseline(),
                 preExistingWanted,
                 writeCommitted || committedWrite(error),
+                restoreExtras(),
               );
             }
             const verificationError = verifyAfterWrite(after);
@@ -713,9 +772,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 snapshotConflicts,
                 missing,
                 verificationError,
-                snapshot,
+                baseline(),
                 preExistingWanted,
                 true,
+                restoreExtras(),
               );
             return after.filter(isWanted);
           }
@@ -734,9 +794,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
               [],
               missing,
               error,
-              snapshot,
+              baseline(),
               preExistingWanted,
               writeCommitted || committedWrite(error),
+              restoreExtras(),
             );
           }
           const verificationError = verifyAfterWrite(after);
@@ -747,9 +808,10 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
                 [],
                 missing,
                 verificationError,
-                snapshot,
+                baseline(),
                 preExistingWanted,
                 true,
+                restoreExtras(),
               );
             throw verificationError;
           }
@@ -773,6 +835,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     before: ZoneRecord[],
     preExistingWanted: ZoneRecord[] = [],
     afterAcceptedWrite = false,
+    extras: { notCreated?: readonly DnsRecordInput[]; baseDrift?: boolean } = {},
   ): Promise<never> => {
     const cause = normalizeUnknownError(error, provider.id);
     // Roll back even when the caller's signal aborted the replacement.
@@ -788,10 +851,16 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     const replacedSet = new Set(replaced);
     const preWantedSet = new Set(preExistingWanted);
     const requestedKeys = new Set(requested.map(recordKey));
+    // A whole-zone write that failed without any HTTP response (a dropped connection, a timeout)
+    // may still have applied, so the records it was replacing are recreated if they are gone.
+    // After a definite rejection a missing record was deleted elsewhere and is left alone.
+    const writeMayHaveApplied = afterAcceptedWrite || cause.statusCode === undefined;
     const beforeEditable = provider.capabilities.wholeZoneWrites
       ? afterAcceptedWrite
         ? before.filter((record) => record.editable)
-        : []
+        : writeMayHaveApplied
+          ? before.filter((record) => record.editable && replacedSet.has(record))
+          : []
       : before.filter((record) => record.editable && replacedSet.has(record));
     const beforeLocked = provider.capabilities.wholeZoneWrites
       ? before.filter((record) => !record.editable && !preWantedSet.has(record))
@@ -817,10 +886,17 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     // Only a record whose value the SDK itself requested is safe to delete. A whole-zone host
     // that accepted the write but dropped it leaves another writer's record at the same key,
     // which is indistinguishable from a host rewrite of our value.
+    // A record the adapter reported it did not create was added by another writer.
+    const notCreated = extras.notCreated ?? [];
+    const isNotCreated = (record: ZoneRecord) =>
+      notCreated.some((input) => sameRecord(record, input));
     const deletableUnexpectedCandidates = (records: ZoneRecord[]) =>
       requested.length
         ? records.filter(
-            (record) => record.editable && requested.some((wanted) => sameRecord(record, wanted)),
+            (record) =>
+              record.editable &&
+              !isNotCreated(record) &&
+              requested.some((wanted) => sameRecord(record, wanted)),
           )
         : [];
     const sameKeyUnexpectedCandidates = (records: ZoneRecord[]) =>
@@ -845,7 +921,12 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
       return pending;
     };
     let restored = false;
-    let externalChange = false;
+    let externalChange = extras.baseDrift === true;
+    const withoutForeign = (records: ZoneRecord[]) => {
+      const own = records.filter((record) => !isNotCreated(record));
+      if (own.length !== records.length) externalChange = true;
+      return own;
+    };
     let remainingUnexpected: ZoneRecord[] = [];
     let foreignSameKey: ZoneRecord[] = [];
     try {
@@ -915,9 +996,11 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         // A kept unrequested same-key record means rollback is incomplete when the write was
         // accepted or committed (it may be the host's rewrite of our value). When the write threw
         // before committing, the record is purely another writer's and our own writes are clean.
-        remainingUnexpected = subtract(
-          subtract(sameKeyUnexpectedCandidates(verified), beforeForUnexpected),
-          afterAcceptedWrite ? [] : foreignSameKey,
+        remainingUnexpected = withoutForeign(
+          subtract(
+            subtract(sameKeyUnexpectedCandidates(verified), beforeForUnexpected),
+            afterAcceptedWrite ? [] : foreignSameKey,
+          ),
         );
         restored =
           stillGone.length === 0 &&
@@ -935,9 +1018,11 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             )
           : [];
         if (partialForeignAdded.length > 0) externalChange = true;
-        remainingUnexpected = subtract(
-          subtract(sameKeyUnexpectedCandidates(afterPartial), beforeForUnexpected),
-          afterAcceptedWrite ? [] : foreignSameKey,
+        remainingUnexpected = withoutForeign(
+          subtract(
+            subtract(sameKeyUnexpectedCandidates(afterPartial), beforeForUnexpected),
+            afterAcceptedWrite ? [] : foreignSameKey,
+          ),
         );
       }
     } catch {
@@ -998,18 +1083,23 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
             externalChange = true;
           }
         }
-        remainingUnexpected = subtract(
-          subtract(sameKeyUnexpectedCandidates(afterFailure), beforeForUnexpected),
-          afterAcceptedWrite ? [] : foreignSameKey,
+        remainingUnexpected = withoutForeign(
+          subtract(
+            subtract(sameKeyUnexpectedCandidates(afterFailure), beforeForUnexpected),
+            afterAcceptedWrite ? [] : foreignSameKey,
+          ),
         );
       } catch {
         // Best-effort post-failure classification; keep whatever externalChange was already observed.
       }
     }
+    // Rollback fields go first: error details keep only their first 50 keys, and `run` decides
+    // whether to retry from `restored`, `replaced`, and `externalChange`.
+    const rollbackKeys = new Set(["restored", "replaced", "externalChange", "unexpected"]);
     const baseCauseDetails: Record<string, unknown> = {};
     if (cause.details) {
       for (const [key, value] of Object.entries(cause.details)) {
-        if (key === "externalChange" || key === "unexpected") continue;
+        if (rollbackKeys.has(key)) continue;
         baseCauseDetails[key] = value;
       }
     }
@@ -1028,11 +1118,11 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
         retryAfter: cause.retryAfter,
         cause,
         details: {
-          ...baseCauseDetails,
           restored,
           replaced: replaced.map(({ type, name, value }) => ({ type, name, value })),
           ...(externalChange ? { externalChange: true } : {}),
           ...(remainingUnexpected.length ? { unexpected: remainingUnexpected.map(asInput) } : {}),
+          ...baseCauseDetails,
         },
       },
     );

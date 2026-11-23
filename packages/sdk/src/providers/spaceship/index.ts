@@ -235,7 +235,8 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
       let previousPages = new Set<string>();
       let passSnapshot: string[] = [];
       let sawCrossPageDuplicate = false;
-      let lastDuplicateSnapshot: string[] | undefined;
+      let pagesInPass = 0;
+      let lastPassSnapshot: string[] | undefined;
       let skip = 0;
       let expectedTotal: number | undefined;
       let restarts = 0;
@@ -250,7 +251,8 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
         previousPages = new Set<string>();
         passSnapshot = [];
         sawCrossPageDuplicate = false;
-        if (clearSnapshot) lastDuplicateSnapshot = undefined;
+        pagesInPass = 0;
+        if (clearSnapshot) lastPassSnapshot = undefined;
         skip = 0;
         expectedTotal = undefined;
       };
@@ -316,16 +318,19 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
           records.push(record);
         }
         for (const key of pageKeys) previousPages.add(key);
+        pagesInPass += 1;
         expectedTotal = page.total;
         skip += page.items.length;
         if (skip >= page.total) {
-          if (sawCrossPageDuplicate) {
+          // A delete and an add between pages keep the total and can skip one record while
+          // repeating none, so any read spanning pages is only trusted once two full passes match.
+          if (sawCrossPageDuplicate || pagesInPass > 1) {
             const matchesPrevious =
-              lastDuplicateSnapshot !== undefined &&
-              lastDuplicateSnapshot.length === passSnapshot.length &&
-              passSnapshot.every((entry, index) => entry === lastDuplicateSnapshot?.[index]);
+              lastPassSnapshot !== undefined &&
+              lastPassSnapshot.length === passSnapshot.length &&
+              passSnapshot.every((entry, index) => entry === lastPassSnapshot?.[index]);
             if (matchesPrevious) return records;
-            lastDuplicateSnapshot = passSnapshot;
+            lastPassSnapshot = passSnapshot;
             restart();
             continue;
           }

@@ -296,6 +296,8 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
       .catch(() => {})
       .then(async () => {
         const snapshot = await readHosts(zone, context);
+        // Let the DNS client check the result against the zone this write is built from.
+        context.onWriteBase?.(snapshot.hosts.map((host) => zoneRecord(host, zone)));
         const hosts = change(snapshot.hosts);
         const parameters: Record<string, string> = {};
         if (snapshot.emailType !== undefined) parameters.EmailType = snapshot.emailType;

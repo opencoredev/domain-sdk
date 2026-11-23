@@ -1,6 +1,6 @@
 import { getDomain } from "tldts";
 
-import { DomainSdkError } from "../../core/errors";
+import { abortedError, DomainSdkError } from "../../core/errors";
 import { httpError, isAbortError, readJson, requireString, type Fetch } from "../../core/http";
 import type {
   DomainProvider,
@@ -229,14 +229,27 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
   // Netlify stores aliases as one array that add and remove read, change, and PATCH back whole.
   // Run those read-modify-writes one at a time so concurrent calls on this instance do not
   // overwrite each other's aliases.
+  // A caller that aborts while waiting is released at once and its task is skipped; the
+  // mutation already running is left to finish.
   let queue: Promise<unknown> = Promise.resolve();
-  const serialize = <T>(task: () => Promise<T>): Promise<T> => {
-    const pending = queue.catch(() => {}).then(task);
-    queue = pending.then(
+  const serialize = <T>(task: () => Promise<T>, signal: AbortSignal | undefined): Promise<T> => {
+    if (signal?.aborted) return Promise.reject(abortedError("netlify", signal.reason));
+    const run = queue
+      .catch(() => {})
+      .then(() => {
+        if (signal?.aborted) throw abortedError("netlify", signal.reason);
+        return task();
+      });
+    queue = run.then(
       () => {},
       () => {},
     );
-    return pending;
+    if (!signal) return run;
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(abortedError("netlify", signal.reason));
+      signal.addEventListener("abort", onAbort, { once: true });
+      run.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
+    });
   };
 
   return {
@@ -254,7 +267,7 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
         if (hasAlias(state.site, hostname)) return normalize(hostname, state);
         const aliases = [...(state.site.domain_aliases ?? []), hostname];
         return normalize(hostname, { ...state, site: await updateAliases(aliases, context) });
-      });
+      }, context.signal);
     },
     get,
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
@@ -284,7 +297,7 @@ export function netlify(options: NetlifyOptions): NetlifyProvider {
           (state.site.domain_aliases ?? []).filter((alias) => alias.toLowerCase() !== hostname),
           context,
         );
-      });
+      }, context.signal);
     },
   };
 }

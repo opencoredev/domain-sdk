@@ -190,5 +190,9 @@ describe("subdomain client", () => {
     });
     const page = await subdomains.list();
     expect(page.subdomains.map((entry) => entry.label)).toEqual(["acme", "ok"]);
+    expect(page.subdomains.map((entry) => entry.domain.hostname)).toEqual([
+      "acme.example.com",
+      "ok.example.com",
+    ]);
   });
 });
