@@ -77,10 +77,9 @@ export interface DnsProviderContext {
    */
   onWriteBase?(records: readonly ZoneRecord[]): void;
   /**
-   * Adapters that create records one at a time call this for each requested record the host
-   * definitely did not create, such as one it rejected with a 4xx response or one never sent
-   * after an earlier failure. Rollback then never deletes a matching record, which another
-   * writer must have added.
+   * Adapters call this for each requested record the host definitely did not create: one it
+   * rejected with a 4xx response, one it reported as already existing, or one never sent after an
+   * earlier failure. Rollback then never deletes a matching record, which another writer added.
    */
   onNotCreated?(record: DnsRecordInput): void;
 }
@@ -931,7 +930,7 @@ export function createDnsClient(options: DnsClientOptions): DnsClient {
     let foreignSameKey: ZoneRecord[] = [];
     try {
       const current = await provider.listRecords({ zone }, ctx);
-      externalChange =
+      externalChange ||=
         (!afterAcceptedWrite || !provider.capabilities.wholeZoneWrites) &&
         subtract(preExistingWanted, current).length > 0;
       const unexpected = subtract(deletableUnexpectedCandidates(current), beforeForUnexpected);

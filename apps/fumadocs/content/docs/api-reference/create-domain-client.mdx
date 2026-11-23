@@ -30,6 +30,6 @@ const domains = createDomainClient({
 });
 ```
 
-`attempts` counts how many times the operation ran, including retries. One attempt can make several provider calls, such as a DNS write and the read that checks it, and input rejected before any call still counts as one. `durationMs` includes retry waits. `refresh()` and each `waitUntilActive()` poll report `get`. A hook that throws is logged with `logger.warn` and does not change the result.
+`attempts` counts how many times the operation ran, including retries. One attempt can make several provider calls, such as a DNS write and the read that checks it. A call rejected before it runs, such as one with an invalid hostname, reports `0`. `durationMs` includes retry waits. `refresh()` and each `waitUntilActive()` poll report `get`. A hook that throws is logged with `logger.warn` and does not change the result.
 
 Read next: [`DomainClient`](./domain-client.mdx).

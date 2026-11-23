@@ -13,6 +13,7 @@ import {
   isAbortError,
   isResponseTooLarge,
   readJson,
+  rejectedByHost,
   requireString,
   type Fetch,
 } from "../../core/http";
@@ -185,9 +186,10 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
         throw new DomainSdkError("ABORTED", "The Spaceship request was cancelled.", {
           provider: "spaceship",
         });
+      // An error answer whose body broke off still carries its status and Retry-After.
       if (
         error instanceof DomainSdkError &&
-        (error.code === "PROVIDER_UNAVAILABLE" || error.code === "ABORTED")
+        (error.code === "ABORTED" || (error.code === "PROVIDER_UNAVAILABLE" && response.ok))
       )
         throw error;
       if (response.ok)
@@ -339,17 +341,27 @@ export function spaceship(options: SpaceshipOptions): DnsProvider {
       }
     },
     async createRecords({ zone, records }, context) {
-      const items = records.map((record) => ({
-        type: record.type,
-        name: relativeRecordName(record.name, zone),
-        ttl: record.ttl ?? ttl,
-        ...inputFields(record),
-      }));
-      for (const batch of batches(items))
-        await request(recordsPath(zone), context, {
-          method: "PUT",
-          body: JSON.stringify({ force: false, items: batch }),
-        });
+      const groups = batches(records);
+      for (const [index, group] of groups.entries()) {
+        const items = group.map((record) => ({
+          type: record.type,
+          name: relativeRecordName(record.name, zone),
+          ttl: record.ttl ?? ttl,
+          ...inputFields(record),
+        }));
+        try {
+          await request(recordsPath(zone), context, {
+            method: "PUT",
+            body: JSON.stringify({ force: false, items }),
+          });
+        } catch (error) {
+          // After a 4xx Spaceship created nothing in this batch, and later batches were never
+          // sent. A failure with no answer or a 5xx may still have created the batch.
+          for (const skipped of groups.slice(rejectedByHost(error) ? index : index + 1).flat())
+            context.onNotCreated?.(skipped);
+          throw error;
+        }
+      }
     },
     async deleteRecords({ zone, records }, context) {
       const items = records

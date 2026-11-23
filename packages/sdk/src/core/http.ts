@@ -170,6 +170,16 @@ export const sleep: Sleep = async (ms, signal) => {
 
 const RETRYABLE_STATUS = new Set([502, 503, 504]);
 
+/**
+ * Whether the host answered a write with a 4xx status, so it definitely applied nothing. A
+ * failure with no answer, a 5xx, or a 2xx whose body could not be read may still have applied.
+ */
+export function rejectedByHost(error: unknown): boolean {
+  if (!safeInstanceOf(error, DomainSdkError)) return false;
+  const status = error.statusCode;
+  return status !== undefined && status >= 400 && status < 500;
+}
+
 /** Whether an error is a transient rate limit or outage worth retrying. */
 export function isTransientError(error: unknown): error is DomainSdkError {
   if (!safeInstanceOf(error, DomainSdkError) || !error.retryable) return false;

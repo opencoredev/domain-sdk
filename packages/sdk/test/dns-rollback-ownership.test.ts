@@ -4,6 +4,7 @@ import { createDnsClient, type DnsProvider, type ZoneRecord } from "../src/core/
 import { DomainSdkError } from "../src/core/errors";
 import { namecheap } from "../src/providers/namecheap";
 import { porkbun } from "../src/providers/porkbun";
+import { spaceship } from "../src/providers/spaceship";
 import { json, mockFetch } from "./helpers/fetch";
 
 interface NamecheapHost {
@@ -23,6 +24,7 @@ function namecheapApi(initial: Omit<NamecheapHost, "HostId">[]) {
   let nextId = hosts.length + 1;
   let reads = 0;
   let afterFirstRead: ((current: NamecheapHost[]) => NamecheapHost[]) | undefined;
+  let failSetHosts = false;
   const escape = (value: string) => value.replaceAll("&", "&amp;").replaceAll('"', "&quot;");
   const xml = (content: string) =>
     new Response(
@@ -46,6 +48,7 @@ function namecheapApi(initial: Omit<NamecheapHost, "HostId">[]) {
       return body;
     }
     if (command === "namecheap.domains.dns.setHosts") {
+      if (failSetHosts) return new Response("unavailable", { status: 503 });
       const next: NamecheapHost[] = [];
       for (let index = 1; form.has(`HostName${index}`); index++)
         next.push({
@@ -70,6 +73,9 @@ function namecheapApi(initial: Omit<NamecheapHost, "HostId">[]) {
     hosts: () => hosts.map(({ Name, Type, Address }) => `${Type} ${Name} ${Address}`).sort(),
     editAfterFirstRead(edit: (current: NamecheapHost[]) => NamecheapHost[]) {
       afterFirstRead = edit;
+    },
+    failWrites() {
+      failSetHosts = true;
     },
   };
 }
@@ -102,6 +108,23 @@ describe("DNS rollback uses the zone the write was built from", () => {
       { zone: "example.com", onConflict: "replace" },
     );
     expect(api.hosts()).toEqual(["A app 192.0.2.2", "A shop 192.0.2.20"]);
+  });
+
+  test("a record added elsewhere before Namecheap's read vetoes the retry of a failed write", async () => {
+    const api = namecheapApi([{ Name: "app", Type: "A", Address: "192.0.2.1", TTL: "1800" }]);
+    api.editAfterFirstRead((hosts) => [
+      ...hosts,
+      { HostId: "99", Name: "app", Type: "A", Address: "192.0.2.9", TTL: "1800" },
+    ]);
+    api.failWrites();
+    const error = await createDnsClient({ provider: api.provider })
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.2" }], {
+        zone: "example.com",
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ retryable: false, details: { externalChange: true } });
+    expect(api.hosts()).toEqual(["A app 192.0.2.1", "A app 192.0.2.9"]);
   });
 
   test("a whole-zone delete that applied but lost its response restores the old route", async () => {
@@ -280,5 +303,88 @@ describe("DNS rollback control fields survive large provider details", () => {
     // One failed replacement create plus the rollback's restore; no second replacement attempt.
     expect(creates).toBe(2);
     expect(zone.map((record) => record.value)).toEqual(["192.0.2.1"]);
+  });
+});
+
+describe("DNS rollback leaves records the host reports it did not create", () => {
+  test("a Spaceship batch rejected with 422 never deletes another writer's identical record", async () => {
+    let zone: Record<string, unknown>[] = [];
+    const mock = mockFetch((url, init) => {
+      if (!init?.method || init.method === "GET")
+        return json({
+          items: zone.slice(Number(url.searchParams.get("skip"))),
+          total: zone.length,
+        });
+      if (init.method === "PUT") {
+        // Another writer adds the same TXT, so Spaceship rejects this batch.
+        zone = [
+          { type: "TXT", name: "_verify", value: "token", ttl: 3600, group: { type: "custom" } },
+        ];
+        return json({ detail: "Record already exists" }, 422);
+      }
+      zone = [];
+      return new Response(null, { status: 204 });
+    });
+    const error = await createDnsClient({
+      provider: spaceship({ apiKey: "key", apiSecret: "secret", fetch: mock.fetch }),
+      retry: { maxAttempts: 1 },
+    })
+      .ensureRecords([{ type: "TXT", name: "_verify.example.com", value: "token" }], {
+        zone: "example.com",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ details: { externalChange: true } });
+    expect(zone).toHaveLength(1);
+    expect(mock.calls.some((call) => call.init?.method === "DELETE")).toBe(false);
+  });
+
+  test("a Porkbun duplicate reported as success is not deleted when a later create fails", async () => {
+    const records = [
+      { id: "other", name: "a.example.com", type: "TXT", content: "one", ttl: "600" },
+    ];
+    let reads = 0;
+    const mock = mockFetch((url, init) => {
+      const path = url.pathname.replace("/api/json/v3", "");
+      const body = JSON.parse(String(init?.body));
+      if (path === "/dns/retrieve/example.com")
+        // The first read misses the record another writer is adding.
+        return json({ status: "SUCCESS", records: ++reads === 1 ? [] : records });
+      if (path === "/dns/create/example.com") {
+        if (body.content === "one")
+          return json({ status: "ERROR", code: "DUPLICATE_RECORD", message: "exists" }, 400);
+        return json({ status: "ERROR", message: "Rate limit" }, 429);
+      }
+      if (path.startsWith("/dns/delete/example.com/")) return json({ status: "SUCCESS" });
+      throw new Error(`Unexpected request: ${path}`);
+    });
+    await createDnsClient({
+      provider: porkbun({ apiKey: "pk1_test", secretApiKey: "sk1_test", fetch: mock.fetch }),
+      retry: { maxAttempts: 1 },
+    })
+      .ensureRecords(
+        [
+          { type: "TXT", name: "a.example.com", value: "one" },
+          { type: "TXT", name: "b.example.com", value: "two" },
+        ],
+        { zone: "example.com" },
+      )
+      .catch(() => undefined);
+    expect(mock.calls.some((call) => call.url.includes("/dns/delete/"))).toBe(false);
+  });
+
+  test("a Porkbun 429 whose body breaks off keeps its status and Retry-After", async () => {
+    const mock = mockFetch(() => {
+      const body = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode('{"status":"ERR'));
+          controller.error(new Error("connection reset"));
+        },
+      });
+      return new Response(body, { status: 429, headers: { "retry-after": "60" } });
+    });
+    const error = await porkbun({ apiKey: "pk1_test", secretApiKey: "sk1_test", fetch: mock.fetch })
+      .listRecords({ zone: "example.com" }, { logger: {} })
+      .catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "RATE_LIMITED", statusCode: 429, retryAfter: 60_000 });
   });
 });

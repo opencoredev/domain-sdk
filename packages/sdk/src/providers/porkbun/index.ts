@@ -7,12 +7,13 @@ import {
   type DnsProviderContext,
   type ZoneRecord,
 } from "../../core/dns";
-import { DomainSdkError, safeInstanceOf, type DomainSdkErrorCode } from "../../core/errors";
+import { DomainSdkError, type DomainSdkErrorCode } from "../../core/errors";
 import {
   httpError,
   isAbortError,
   isResponseTooLarge,
   readJson,
+  rejectedByHost,
   requireString,
   type Fetch,
 } from "../../core/http";
@@ -27,6 +28,8 @@ export interface PorkbunOptions {
 
 interface PorkbunResponse {
   status: string;
+  /** Set locally when Porkbun reported the record already exists, so this call created nothing. */
+  duplicate?: boolean;
   message?: string;
   code?: string;
   records?: PorkbunRecord[];
@@ -109,9 +112,10 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
         throw new DomainSdkError("ABORTED", "The porkbun request was cancelled.", {
           provider: "porkbun",
         });
+      // An error answer whose body broke off still carries its status and Retry-After.
       if (
         error instanceof DomainSdkError &&
-        (error.code === "PROVIDER_UNAVAILABLE" || error.code === "ABORTED")
+        (error.code === "ABORTED" || (error.code === "PROVIDER_UNAVAILABLE" && response.ok))
       )
         throw error;
       if (!response.ok)
@@ -120,7 +124,7 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
     }
     if (!response.ok || body?.status === "ERROR") {
       if (idempotencyKey && response.status === 400 && body?.code === "DUPLICATE_RECORD")
-        return { status: "SUCCESS" };
+        return { status: "SUCCESS", duplicate: true };
       const failure = httpError("porkbun", response, undefined, "porkbun rejected the request.");
       const reason = `${body?.code ?? ""} ${body?.message ?? ""}`.toLowerCase();
       let code: DomainSdkErrorCode = failure.code;
@@ -197,7 +201,7 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
       for (const [index, record] of records.entries()) {
         const relativeName = relativeRecordName(record.name, zone);
         try {
-          await request(
+          const result = await request(
             `/dns/create/${encodeURIComponent(zone)}`,
             context,
             {
@@ -208,13 +212,12 @@ export function porkbun(options: PorkbunOptions): DnsProvider {
             },
             crypto.randomUUID(),
           );
+          // Another writer's identical record already existed; this call created nothing.
+          if (result.duplicate) context.onNotCreated?.(record);
         } catch (error) {
-          // An error answer below 500 (a 4xx, or a 200 whose body says ERROR) means Porkbun
-          // created nothing for this record, and later records were never sent. A failure with no
-          // answer (a dropped connection) or a 5xx may still have created it.
-          const status = safeInstanceOf(error, DomainSdkError) ? error.statusCode : undefined;
-          const rejected = status !== undefined && status < 500;
-          for (const skipped of records.slice(rejected ? index : index + 1))
+          // After a 4xx Porkbun created nothing for this record, and later records were never
+          // sent. A failure with no answer or a 5xx may still have created it.
+          for (const skipped of records.slice(rejectedByHost(error) ? index : index + 1))
             context.onNotCreated?.(skipped);
           throw error;
         }
