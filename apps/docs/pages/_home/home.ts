@@ -9,7 +9,7 @@ gsap.registerPlugin(ScrollTrigger);
 
 const initialized = new WeakSet<HTMLElement>();
 
-function trackSections(root: HTMLElement): void {
+function trackSections(root: HTMLElement): IntersectionObserver {
   const seen = new Set<string>();
   const observer = new IntersectionObserver(
     (entries) => {
@@ -26,6 +26,7 @@ function trackSections(root: HTMLElement): void {
   for (const section of root.querySelectorAll<HTMLElement>("[data-section]")) {
     observer.observe(section);
   }
+  return observer;
 }
 
 function trackClicks(root: HTMLElement): void {
@@ -117,13 +118,30 @@ function animate(root: HTMLElement): void {
   );
 }
 
+let teardown: (() => void) | undefined;
+
 /** Wires up the landing page once per page view; safe to call again. */
 export function initHome(): void {
   const root = document.querySelector<HTMLElement>("[data-domain-home]");
   if (root === null || initialized.has(root)) return;
+  teardownHome();
   initialized.add(root);
-  trackSections(root);
+  const observer = trackSections(root);
   trackClicks(root);
   setUpCopy(root);
-  animate(root);
+  // The context records every tween and ScrollTrigger so teardown can kill them.
+  const motion = gsap.context(() => animate(root));
+  teardown = () => {
+    observer.disconnect();
+    motion.revert();
+  };
+}
+
+/**
+ * Releases the homepage's ScrollTriggers and section observer. Astro's client
+ * router swaps pages without unloading this module, so call it before a swap.
+ */
+export function teardownHome(): void {
+  teardown?.();
+  teardown = undefined;
 }

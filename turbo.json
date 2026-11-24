@@ -8,6 +8,11 @@
       "outputs": ["dist/**", ".vercel/output/**"],
       "env": ["VERCEL_PROJECT_PRODUCTION_URL", "PUBLIC_POSTHOG_KEY", "NEXT_PUBLIC_POSTHOG_KEY"]
     },
+    "@domain-sdk/docs#build": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "env": ["VERCEL_PROJECT_PRODUCTION_URL", "PUBLIC_POSTHOG_KEY", "NEXT_PUBLIC_POSTHOG_KEY"]
+    },
     "lint": {
       "dependsOn": ["^lint"]
     },

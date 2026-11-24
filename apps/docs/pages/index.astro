@@ -464,8 +464,9 @@ const heroLines = heroExample.split("\n").map((line) => highlight(line) || " ");
 </PageLayout>
 
 <script>
-  import { initHome } from "./_home/home";
+  import { initHome, teardownHome } from "./_home/home";
 
   initHome();
   document.addEventListener("astro:page-load", initHome);
+  document.addEventListener("astro:before-swap", teardownHome);
 </script>

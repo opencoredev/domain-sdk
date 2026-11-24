@@ -802,7 +802,7 @@ html:has([data-domain-home]) {
   background: #171714;
   color: #fff;
 }
-.architecture-providers a > span {
+.architecture-providers a > span:not(.provider-mark) {
   flex: 1;
 }
 .architecture-providers .provider-mark {

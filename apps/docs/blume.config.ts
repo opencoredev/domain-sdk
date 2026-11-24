@@ -214,7 +214,8 @@ export default defineConfig({
     : [],
 
   // Server output on Vercel, so /mcp runs, the /ingest proxy answers, and
-  // every page answers `Accept: text/markdown` at its own URL.
+  // every docs page, blog post, and the homepage answer `Accept: text/markdown`
+  // at their own URL. The /blog and /sitemap index pages have no Markdown version.
   deployment: vercel({ site }),
 
   // URLs from before the docs were consolidated and former Fumadocs Markdown

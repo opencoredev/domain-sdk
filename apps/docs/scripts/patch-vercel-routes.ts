@@ -240,8 +240,18 @@ export function createGitDateResolver(docsDir: string): (pathname: string) => st
     return undefined;
   };
 
+  // The sitemap, page index, page details, and MCP data all ask for the same
+  // routes; cache each answer, including a missing date, so git runs once per route.
+  const cache = new Map<string, string | undefined>();
   return (pathname: string): string | undefined => {
     const clean = pathname === "/" ? "/" : pathname.replace(/\/+$/, "");
+    if (cache.has(clean)) return cache.get(clean);
+    const date = resolveRouteDate(clean);
+    cache.set(clean, date);
+    return date;
+  };
+
+  function resolveRouteDate(clean: string): string | undefined {
     if (clean === "/") {
       const current = "apps/docs/pages/index.astro";
       return (
@@ -269,7 +279,7 @@ export function createGitDateResolver(docsDir: string): (pathname: string) => st
     const rel = contentRelForRoute(clean);
     if (!rel) return undefined;
     return resolveContentDate(rel);
-  };
+  }
 }
 
 export function rewriteHtmlModifiedDates(html: string, date: string | undefined): string {
