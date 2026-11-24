@@ -1,0 +1,73 @@
+---
+title: "Vercel custom domains: DNS records, limits, and the API"
+description: "Add a custom domain to Vercel: an A record for the apex (76.76.21.21 or your project's value), a CNAME for subdomains, the _vercel TXT check, limits, and the API."
+---
+
+To add a custom domain to a Vercel project by hand, open the project's **Settings**, then **Domains**, click **Add Existing** and enter the hostname. An apex domain like `customer.com` uses an **A** record, and a subdomain like `app.customer.com` uses a **CNAME** to the project's own target. If the domain is already used by another Vercel account or team, Vercel also asks for a **TXT** record at `_vercel.<apex domain>` to prove access. From code, `POST` the hostname to `/v10/projects/{projectId}/domains`, read the recommended records from `/v6/domains/{domain}/config`, and call `/v9/projects/{projectId}/domains/{domain}/verify` once DNS is in place. This adapter wraps those calls and returns the exact records your customer needs.
+
+These are the records Vercel asks for at an external DNS provider ([add a domain](https://vercel.com/docs/domains/working-with-domains/add-a-domain) and [domain troubleshooting](https://vercel.com/docs/domains/troubleshooting), checked 2026-11-17):
+
+| Hostname                                     | Record                      | Value                                                                                                                       |
+| -------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| Apex domain, like `customer.com`             | `A`                         | The IP shown in **Settings > Domains**: `76.76.21.21` on many projects, or a newer value like `216.198.79.1`                |
+| Subdomain, like `www` or `app.customer.com`  | `CNAME`                     | The project's own target, like `d1d4fc829fe7bc7c.vercel-dns-017.com`                                                        |
+| A domain another Vercel account or team uses | `TXT` at `_vercel.<apex>`   | The value Vercel shows; each domain on the same apex gets its own record                                                    |
+| Wildcard, like `*.customer.com`              | Vercel nameservers, or `NS` | Delegate `_acme-challenge` to `ns1.vercel-dns.com` and `ns2.vercel-dns.com`, plus a `*` `CNAME` to `cname.vercel-dns-0.com` |
+
+Use the values your project shows rather than copying them from another project or an older guide: Vercel assigns anycast IPs and CNAME targets per project, and a stale value leaves the domain at **DNS Change Recommended** or **Invalid Configuration**. Remove any other `A` or `AAAA` records for the hostname first. Hobby teams can add 50 custom domains per project; Pro and Enterprise have no fixed cap, with soft limits of 100,000 and 1,000,000 domains per project that Vercel raises on request ([limits](https://vercel.com/docs/limits)).
+
+## Scope and credentials
+
+The adapter adds, retrieves, lists, verifies, and removes domains for one Vercel project. It does not deploy applications, edit customer DNS, register domains, or move a domain from another project. Set `VERCEL_TOKEN`, `VERCEL_PROJECT_ID`, and optional `VERCEL_TEAM_ID`. Give the token only the project/team access required for domain management.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { vercel } from "@opencoredev/domain-sdk/vercel";
+
+export const domains = createDomainClient({
+  provider: vercel({
+    token: process.env.VERCEL_TOKEN!,
+    projectId: process.env.VERCEL_PROJECT_ID!,
+    teamId: process.env.VERCEL_TEAM_ID,
+  }),
+});
+const domain = await domains.add("app.customer.com");
+```
+
+## DNS, verification, and certificates
+
+Routing records come from Vercel's domain-configuration recommendations; ownership challenges become `ownership` records. `verify()` calls the project-domain verification endpoint. The adapter reports active configuration without inventing certificate issuer or expiration metadata unavailable from the project-domain API.
+
+## Errors and limitations
+
+Expired tokens map to `AUTHENTICATION_FAILED`; inaccessible resources map to `PERMISSION_DENIED`; another project/account maps to `DOMAIN_CONFLICT`; rate limits preserve `retryAfter`. Duplicate adds return current state only when `projectId` matches. Wildcard hostnames such as `*.customer.com` are attached like any other domain, but A/CNAME routing alone is insufficient for wildcard TLS.
+
+Vercel's [SSL documentation](https://vercel.com/docs/domains/working-with-ssl) requires DNS-01 validation for wildcard certificates, normally using Vercel nameservers. If you can't change nameservers, Vercel's [wildcard domain docs](https://vercel.com/docs/domains/working-with-domains/add-a-domain#use-wildcard-domains-with-an-external-dns-provider) (checked 2026-11-03) describe enabling Vercel DNS, delegating `_acme-challenge` to `ns1.vercel-dns.com` and `ns2.vercel-dns.com` with NS records, and adding a wildcard CNAME, for both `*.example.com` and deeper wildcards. Vercel recommends this only when nameservers can't move, because the delegation can stop other providers from issuing certificates that use the same challenge name. The adapter does not configure this delegation; certificate validation is separate from project ownership verification. [Wildcard subdomains for multi-tenant apps](/blog/wildcard-subdomains) compares these records with the other platforms'.
+
+`configuredBy: A/CNAME` indicates routing, not successful certificate validation. `acceptedChallenges` lists available certificate challenge types (`dns-01` / `http-01`), not DNS records or tokens. `misconfigured` covers both domain configuration and automatic TLS certificate generation; an empty challenge list is not solely a different-project signal.
+
+Official references: [project domains](https://vercel.com/docs/rest-api/projects/add-a-domain-to-a-project), [verification](https://vercel.com/docs/rest-api/projects/verify-project-domain), and [domain configuration](https://vercel.com/docs/rest-api/domains/get-a-domain-s-configuration).
+
+## Common questions
+
+### What A record does Vercel use for an apex domain?
+
+The one shown for that domain in your project's **Settings > Domains**. Many projects show `76.76.21.21`, and newer projects can show an address such as `216.198.79.1`; both are anycast IPs, so traffic still goes to the nearest Vercel region. The adapter returns the recommended value from Vercel's configuration endpoint as an `A` record with `purpose: "routing"`, so show your customer that value instead of a hard-coded IP.
+
+### How many custom domains can a Vercel project have?
+
+50 on Hobby. Pro and Enterprise projects have no fixed limit, but Vercel applies soft limits of 100,000 and 1,000,000 domains per project to prevent abuse and raises them on request. [Vercel Platforms Starter Kit: add customer custom domains](/blog/vercel-platforms-custom-domains) shows a multi-tenant flow built on one project.
+
+### Why does Vercel ask for a TXT record?
+
+Because the domain, or its apex, is already linked to another Vercel account or team. Vercel asks for a `TXT` record at `_vercel.<apex domain>` to prove you can use it; this doesn't move the domain into your account. Each domain on the same apex gets its own value, and removing and re-adding a domain generates a new one. The adapter returns the challenge as a record with `purpose: "ownership"` and sets the domain to `pending_verification` until Vercel accepts it; call `verify()` after the customer adds it.
+
+### Why isn't Vercel issuing an SSL certificate for my domain?
+
+For a normal hostname, Vercel gets a Let's Encrypt certificate through an HTTP-01 challenge, so requests to `/.well-known/acme-challenge/*` must reach Vercel. A proxy in front, such as Cloudflare's orange cloud, can block that: switch the record to DNS only, or route that path to Vercel uncached. If the domain has a `CAA` record, it must allow `letsencrypt.org`. Wildcards only work with DNS-01, which is why they need Vercel nameservers or the `_acme-challenge` delegation above. Vercel renews certificates 14 to 30 days before they expire. See [Troubleshoot custom domain SSL certificates](/docs/guides/troubleshoot-certificates) for what the adapter reports meanwhile.
+
+### Can I buy a domain on Vercel?
+
+Yes, at [vercel.com/domains](https://vercel.com/domains). Vercel sets the nameservers for a domain bought there, so it needs no DNS records, and Vercel also has a registrar API for buying and renewing domains. Domain SDK doesn't buy or register domains: it attaches domains your customers already own to your project and returns the records they need to add.
+
+Read next: [Troubleshoot pending DNS](../guides/troubleshoot-dns.mdx). Building on the Vercel Platforms Starter Kit? [Add customer custom domains to it](/blog/vercel-platforms-custom-domains) on the blog.

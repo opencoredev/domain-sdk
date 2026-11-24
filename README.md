@@ -71,7 +71,7 @@ bun run lint
 bun run build
 ```
 
-The docs run at `http://domain-sdk.localhost:1355` through the sudo-free Portless proxy. Use `PORTLESS=0 bun run dev` to bypass the proxy.
+The docs run at `http://localhost:4321` (`bun run --filter @domain-sdk/docs dev`).
 
 ## Releasing
 

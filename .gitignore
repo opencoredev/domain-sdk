@@ -7,8 +7,7 @@ node_modules
 dist
 build
 out
-.next
-.source
+.blume
 *.tsbuildinfo
 
 # Generated files

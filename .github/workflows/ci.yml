@@ -14,6 +14,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The docs read each page's last-modified date from git history.
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.3.14
@@ -31,11 +34,16 @@ jobs:
       - run: bun run registry:build
       - name: Check the committed registry build is current
         run: |
-          if ! git diff --exit-code -- apps/fumadocs/public/r; then
-            echo "::error::apps/fumadocs/public/r is out of date. Run bun run registry:build and commit the result."
+          if ! git diff --exit-code -- apps/docs/public/r; then
+            echo "::error::apps/docs/public/r is out of date. Run bun run registry:build and commit the result."
             exit 1
           fi
-          if [[ -n "$(git ls-files --others --exclude-standard -- apps/fumadocs/public/r)" ]]; then
+          if [[ -n "$(git ls-files --others --exclude-standard -- apps/docs/public/r)" ]]; then
             echo "::error::registry:build produced files that are not committed. Run bun run registry:build and commit them."
             exit 1
           fi
+      - run: bun run --filter @domain-sdk/docs check:snippets
+      - run: bun run --filter @domain-sdk/docs validate
+      - run: bun run --filter @domain-sdk/docs build
+      - run: bun apps/docs/scripts/assert-vercel-patch.ts
+      - run: bun run --filter @domain-sdk/docs audit

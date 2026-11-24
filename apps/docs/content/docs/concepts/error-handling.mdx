@@ -1,0 +1,33 @@
+---
+title: Error handling
+description: "Handle DomainSdkError codes for auth, conflicts, rate limits, timeouts, and provider outages, with retryable flags, retryAfter, and redacted details."
+---
+
+```ts title="handle-domain-error.ts"
+import { DomainSdkError } from "@opencoredev/domain-sdk";
+import { domains } from "./domains";
+
+try {
+  await domains.add("app.customer.com");
+} catch (error) {
+  if (error instanceof DomainSdkError) {
+    console.error(error.code, error.retryable, error.retryAfter);
+  }
+}
+```
+
+Errors normalize authentication, permission, conflict, not-found, rate-limit, provider availability, timeout, and cancellation states. Response details are bounded and recursively redact credential-shaped fields.
+
+Every async client method returns a promise and reports failures by rejecting it, including invalid input, so `await` with `try`/`catch` or `.catch()` handles every case. Creating a client and the synchronous `SubdomainClient.toHostname()` / `fromHostname()` helpers throw synchronously.
+
+| Code                    | When                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `INVALID_CONFIGURATION` | A caller mistake in options: a missing provider, a `list()` limit outside 1 to 100, invalid `waitUntilActive()` polling or `retry` options, or creating a client in a browser. |
+| `INVALID_HOSTNAME`      | A hostname, subdomain label, or DNS record name that cannot be used.                                                                                                           |
+| `VERIFICATION_FAILED`   | `waitUntilActive()` stopped because `shouldStop` matched, by default when the domain reached `failed`. `details` holds the status and issues.                                  |
+| `REQUEST_FAILED`        | The provider rejected the request or returned something the SDK cannot use: malformed JSON, a body over the size cap, or DNS records missing or mismatched after a write.      |
+| `TIMEOUT`               | `waitUntilActive()` reached `timeoutMs` while the domain was still pending.                                                                                                    |
+
+When a DNS replacement, a whole-zone write, or a per-record add-only write throws (or a whole-zone post-write verification fails), the SDK rolls back automatically, preserves the underlying error code (such as `REQUEST_FAILED`, `RATE_LIMITED`, or `PROVIDER_UNAVAILABLE`), and attaches `details.restored`, `details.replaced`, `details.externalChange` (when records outside the SDK's own writes changed concurrently, or on whole-zone hosts when an unrequested record appeared at a target key; concurrent foreign additions and whole-zone pre-commit external deletions are left intact and veto automatic retries, and a missing replaced record after an ambiguous whole-zone replacement failure reports `restored: false` without resurrecting it), and `details.unexpected` (when unrequested records remain at target keys after rollback). On per-record hosts, an accepted add-only write that fails post-write verification throws the verification error (`details.missing` / `details.remaining`) directly without rollback. On whole-zone hosts, core post-write verification (and adapters such as Namecheap on committed retention errors) also reports dropped unrelated existing records (editable or locked) in `details.collateralMissing`. Whole-zone adapters set `details.committed: true` on write errors when the remote zone already accepted the mutation so rollback restores all dropped pre-write editable records (including pre-existing wanted records) and also flags unrequested same-key records in `details.unexpected` with `restored: false` (in addition to `details.externalChange: true`).
+
+Read next: [`DomainSdkError`](../api-reference/domain-sdk-error.mdx).

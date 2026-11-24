@@ -1,0 +1,67 @@
+---
+title: "Render custom domain: DNS records, verification, and the API"
+description: "Add a custom domain to Render: CNAME to your onrender.com subdomain, ALIAS or A 216.24.57.1 for a root domain, then Verify. Plan limits, SSL, and the API."
+---
+
+To add a custom domain to a Render service by hand, open the service's **Settings**, click **+ Add Custom Domain** under **Custom Domains**, add the DNS records Render shows at your DNS provider, then click **Verify**. Render issues and renews the TLS certificate automatically. To do the same from code, `POST` the hostname to the Render API's `/v1/services/{serviceId}/custom-domains` endpoint, then call its `/verify` endpoint once DNS is in place. This adapter wraps both calls and returns the DNS records your customer needs.
+
+These are the records Render asks for at your DNS provider ([custom domains](https://render.com/docs/custom-domains) and [other DNS providers](https://render.com/docs/configure-other-dns), checked 2026-11-15). Remove any `AAAA` records for the hostname first: Render uses IPv4, and an `AAAA` record can send visitors somewhere else.
+
+| Hostname                                        | Record                                                       | Value                                                                                                                                 |
+| ----------------------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| `www` or any subdomain                          | `CNAME`                                                      | Your service's `onrender.com` subdomain, like `example.onrender.com`                                                                  |
+| Root domain, like `example.com`                 | `ALIAS`, `ANAME` or flattened `CNAME`                        | Your service's `onrender.com` subdomain                                                                                               |
+| Root domain, if your DNS host has none of those | `A`                                                          | `216.24.57.1` (Render's load balancer)                                                                                                |
+| Wildcard, like `*.example.com`                  | `CNAME` for `*`, `_acme-challenge` and `_cf-custom-hostname` | `example.onrender.com`, `example.verify.renderdns.com` and `example.hostname.renderdns.com`; the root domain must point to Render too |
+
+If you use Cloudflare DNS, Render asks for a `CNAME` instead of an `A` record, including at the root. Adding `www.example.com` also adds `example.com` as a redirect to it, and the other way round. Each workspace plan includes some custom domains (Hobby 2, Pro 15, Scale 25), and each one past that costs $0.25 a month.
+
+## Scope and credentials
+
+The adapter creates, retrieves, lists, verifies, and removes custom domains for one Render service. Set `RENDER_API_KEY` and `RENDER_SERVICE_ID`. The service must be a web service or static site, and the API key must have access to it.
+
+```ts title="domains.ts"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { render } from "@opencoredev/domain-sdk/render";
+
+export const domains = createDomainClient({
+  provider: render({
+    apiKey: process.env.RENDER_API_KEY!,
+    serviceId: process.env.RENDER_SERVICE_ID!,
+  }),
+});
+
+const domain = await domains.add("app.customer.com");
+```
+
+## DNS, verification, and certificates
+
+Subdomains return a CNAME pointing to the service's `onrender.com` hostname. Apex domains return Render's `216.24.57.1` load-balancer address and explain the preferred ALIAS, ANAME, or flattened-CNAME alternative. If Render publishes a different address, pass it as `apexAddress` instead of waiting for an SDK release. [Apex domains: A records, ALIAS, and CNAME flattening](/blog/apex-domain) compares the two for customer DNS hosts. Wildcards also return Render's certificate and hostname-validation CNAME records.
+
+Call `verify()` after the customer configures DNS. Render also verifies new domains automatically, so polling with `waitUntilActive()` remains useful. A verified domain becomes active; Render manages its TLS certificate but does not expose certificate metadata through the custom-domain response.
+
+## Errors and limitations
+
+Adding a root or `www` hostname can cause Render to create its companion hostname automatically. The adapter returns the hostname you requested, while `list()` includes every domain Render created. Domain limits and charges depend on the Render workspace plan.
+
+Official references: [Custom Domain API](https://api-docs.render.com/reference/create-custom-domain), [custom domains](https://render.com/docs/custom-domains), and [external DNS](https://render.com/docs/configure-other-dns).
+
+## Common questions
+
+### How do I connect a domain to Render?
+
+Add the domain under **Settings → Custom Domains** on a web service or static site, create the `CNAME` (subdomain) or `ALIAS`/`A` record (root domain) shown above at your DNS provider, then click **Verify**. Through the API, `POST` the hostname to `/v1/services/{serviceId}/custom-domains` and call `/verify` once DNS resolves.
+
+### Does Render issue SSL certificates for custom domains?
+
+Yes. Render issues and renews TLS certificates for every custom domain, wildcards included, and redirects HTTP to HTTPS. If your domain has `CAA` records, they must allow `letsencrypt.org` and `pki.goog`, with `issuewild` entries for a wildcard.
+
+### Why does my Render custom domain show a 502 after verification?
+
+Render can take a few minutes to update routing after it verifies a domain. Wait and reload. If verification itself fails, DNS may not have propagated yet; Render suggests flushing the Google, Cloudflare and OpenDNS public resolver caches.
+
+### Can I turn off the onrender.com subdomain?
+
+Yes, once the service has at least one custom domain. Toggle **Render Subdomain** off in the service settings, set `renderSubdomainPolicy: disabled` in `render.yaml`, or set `serviceDetails.renderSubdomainPolicy` to `disabled` with the Update service API. Requests to the `onrender.com` address then get a 404.
+
+Read next: [Poll until active](../guides/poll-until-active.mdx).
