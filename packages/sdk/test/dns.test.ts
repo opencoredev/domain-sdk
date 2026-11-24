@@ -409,3 +409,411 @@ describe("createDnsClient", () => {
     });
   });
 });
+
+describe("ensureRecords write verification", () => {
+  test("fails when the DNS host silently drops a created record", async () => {
+    const provider = memoryDnsProvider();
+    const { createRecords } = provider;
+    // Accept the request but only keep the first record, as a lossy host might.
+    provider.createRecords = (input, context) =>
+      createRecords({ ...input, records: input.records.slice(0, 1) }, context);
+    const dns = createDnsClient({ provider });
+    const error = await dns
+      .ensureRecords([
+        { type: "A", name: "app.example.com", value: "192.0.2.1" },
+        { type: "TXT", name: "_verify.example.com", value: "token" },
+      ])
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DomainSdkError);
+    expect(error).toMatchObject({
+      code: "REQUEST_FAILED",
+      retryable: false,
+      details: { missing: [{ type: "TXT", name: "_verify.example.com", value: "token" }] },
+    });
+  });
+
+  test("fails when the DNS host rewrites a value after accepting it", async () => {
+    const provider = memoryDnsProvider();
+    const { createRecords } = provider;
+    provider.createRecords = (input, context) =>
+      createRecords(
+        { ...input, records: input.records.map((record) => ({ ...record, value: "192.0.2.99" })) },
+        context,
+      );
+    const dns = createDnsClient({ provider });
+    await expect(
+      dns.ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.1" }]),
+    ).rejects.toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { missing: [{ type: "A", name: "app.example.com", value: "192.0.2.1" }] },
+    });
+  });
+
+  test("rolls back replaced conflicts when a replacement write is silently dropped", async () => {
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
+        ],
+      },
+    });
+    const { createRecords } = provider;
+    let dropFirst = true;
+    provider.createRecords = (input, context) => {
+      if (dropFirst) {
+        dropFirst = false;
+        return Promise.resolve();
+      }
+      return createRecords(input, context);
+    };
+    const dns = createDnsClient({ provider });
+    const error = await dns
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DomainSdkError);
+    expect(error).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        restored: true,
+        missing: [{ type: "A", name: "app.example.com", value: "192.0.2.20" }],
+        replaced: [{ type: "A", name: "app.example.com", value: "192.0.2.10" }],
+      },
+    });
+    expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.10"]);
+  });
+
+  test("fails and rolls back newly created records when conflict deletion was ignored", async () => {
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
+        ],
+      },
+    });
+    const { deleteRecords } = provider;
+    let ignoreFirstDelete = true;
+    provider.deleteRecords = (input, context) => {
+      if (ignoreFirstDelete) {
+        ignoreFirstDelete = false;
+        return Promise.resolve();
+      }
+      return deleteRecords(input, context);
+    };
+    const dns = createDnsClient({ provider });
+    const error = await dns
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DomainSdkError);
+    expect(error).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        restored: true,
+        remaining: [{ type: "A", name: "app.example.com", value: "192.0.2.10" }],
+      },
+    });
+    expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.10"]);
+  });
+
+  test("reports restored: false when recovery createRecords also silently drops writes", async () => {
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
+        ],
+      },
+    });
+    provider.createRecords = () => Promise.resolve();
+    const dns = createDnsClient({ provider });
+    const error = await dns
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DomainSdkError);
+    expect(error).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { restored: false },
+    });
+    expect(provider.records("example.com")).toEqual([]);
+  });
+
+  test("detects conflicting records that appear during post-write read even without initial conflicts", async () => {
+    const provider = memoryDnsProvider();
+    const { createRecords } = provider;
+    provider.createRecords = async (input, ctx) => {
+      await createRecords(input, ctx);
+      await createRecords(
+        {
+          zone: input.zone,
+          records: [{ type: "A", name: "app.example.com", value: "192.0.2.99" }],
+        },
+        ctx,
+      );
+    };
+    const dns = createDnsClient({ provider });
+    await expect(
+      dns.ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }]),
+    ).rejects.toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { remaining: [{ type: "A", name: "app.example.com", value: "192.0.2.99" }] },
+    });
+  });
+
+  test("rolls back replacement when post-write verification read fails", async () => {
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
+        ],
+      },
+    });
+    const { listRecords } = provider;
+    let reads = 0;
+    provider.listRecords = (input, ctx) => {
+      reads += 1;
+      if (reads === 2)
+        return Promise.reject(new DomainSdkError("REQUEST_FAILED", "verification read failed"));
+      return listRecords(input, ctx);
+    };
+    const dns = createDnsClient({ provider });
+    const error = await dns
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(DomainSdkError);
+    expect(error).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: { restored: true },
+    });
+    expect(provider.records("example.com").map((record) => record.value)).toEqual(["192.0.2.10"]);
+  });
+
+  test("rollback keeps unrequested same-key records and reports restored: false on both whole-zone and per-record hosts", async () => {
+    // 1. Whole-zone provider rewrites replacement value to 192.0.2.99; rollback restores 192.0.2.10,
+    // keeps the unrequested 192.0.2.99 (indistinguishable from a concurrent writer), and reports restored: false.
+    const baseWholeZone = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
+        ],
+      },
+    });
+    const wholeZoneProvider = {
+      ...baseWholeZone,
+      capabilities: { ...baseWholeZone.capabilities, wholeZoneWrites: true },
+    };
+    const baseCreate = baseWholeZone.createRecords.bind(baseWholeZone);
+    let createCalls = 0;
+    wholeZoneProvider.createRecords = (input, ctx) =>
+      baseCreate(
+        {
+          ...input,
+          records:
+            ++createCalls === 1
+              ? input.records.map((record) => ({ ...record, value: "192.0.2.99" }))
+              : input.records,
+        },
+        ctx,
+      );
+    const dns = createDnsClient({ provider: wholeZoneProvider });
+    const rewrittenErr = await dns
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(rewrittenErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        restored: false,
+        externalChange: true,
+        unexpected: [expect.objectContaining({ value: "192.0.2.99" })],
+      },
+    });
+    expect(
+      baseWholeZone
+        .records("example.com")
+        .map((record) => record.value)
+        .sort(),
+    ).toEqual(["192.0.2.10", "192.0.2.99"]);
+
+    // 1b. Per-record provider: concurrent writer adds a same-(name, type) record mid-operation.
+    // Rollback must NOT delete the foreign record and must report restored: false + details.unexpected.
+    const perRecord = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old", type: "A", name: "app.example.com", value: "192.0.2.10", editable: true },
+        ],
+      },
+    });
+    const perRecordCreate = perRecord.createRecords.bind(perRecord);
+    let perRecordCalls = 0;
+    perRecord.createRecords = (input, ctx) =>
+      perRecordCreate(
+        {
+          ...input,
+          records:
+            ++perRecordCalls === 1
+              ? input.records.map((record) => ({ ...record, value: "192.0.2.99" }))
+              : input.records,
+        },
+        ctx,
+      );
+    const perRecordDns = createDnsClient({ provider: perRecord });
+    const foreignErr = await perRecordDns
+      .ensureRecords([{ type: "A", name: "app.example.com", value: "192.0.2.20" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(foreignErr).toMatchObject({
+      code: "REQUEST_FAILED",
+      details: {
+        restored: false,
+        unexpected: [{ type: "A", name: "app.example.com", value: "192.0.2.99" }],
+      },
+    });
+    expect(
+      perRecord
+        .records("example.com")
+        .map((record) => record.value)
+        .sort(),
+    ).toEqual(["192.0.2.10", "192.0.2.99"]);
+
+    // 2. Whole-zone provider drops an unrelated pre-existing editable TXT record and refuses to recreate it.
+    const lossy = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "old-a", type: "A", name: "example.com", value: "1.1.1.1", editable: true },
+          { id: "old-txt", type: "TXT", name: "_v.example.com", value: "tok", editable: true },
+        ],
+      },
+    });
+    const lossyProvider = {
+      ...lossy,
+      capabilities: { ...lossy.capabilities, wholeZoneWrites: true },
+    };
+    const lossyCreate = lossy.createRecords.bind(lossy);
+    const lossyDelete = lossy.deleteRecords.bind(lossy);
+    lossyProvider.createRecords = async (input, ctx) => {
+      // Drop pre-existing TXT during the replacement write and ignore TXT recreations during rollback.
+      const existingTxt = lossy.records("example.com").filter((r) => r.type === "TXT");
+      if (existingTxt.length) await lossyDelete({ zone: input.zone, records: existingTxt }, ctx);
+      const nonTxt = input.records.filter((r) => r.type !== "TXT");
+      if (nonTxt.length) await lossyCreate({ zone: input.zone, records: nonTxt }, ctx);
+    };
+    const lossyDns = createDnsClient({ provider: lossyProvider });
+    const droppedErr = await lossyDns
+      .ensureRecords(
+        [
+          { type: "A", name: "example.com", value: "2.2.2.2" },
+          { type: "TXT", name: "_v.example.com", value: "tok" },
+        ],
+        { onConflict: "replace" },
+      )
+      .catch((caught: unknown) => caught);
+    expect(droppedErr).toMatchObject({ code: "REQUEST_FAILED", details: { restored: false } });
+  });
+
+  test("handles lowercase ZoneRecord.type during conflict replacement", async () => {
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "lower", type: "a", name: "app.example.com", value: "192.0.2.1", editable: true },
+        ],
+      },
+    });
+    const dns = createDnsClient({ provider });
+    const records = await dns.ensureRecords(
+      [{ type: "A", name: "app.example.com", value: "192.0.2.2" }],
+      { onConflict: "replace" },
+    );
+    expect(records.map((r) => r.value)).toEqual(["192.0.2.2"]);
+  });
+
+  test("rolls back cleanly when zones or requests contain underscore or wildcard names and detects uppercase conflicts", async () => {
+    // 1. Unrelated _dmarc bystander + _vercel requested record during failed create rollback.
+    const provider = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "a1", type: "A", name: "example.com", value: "1.1.1.1", editable: true },
+          {
+            id: "dmarc",
+            type: "TXT",
+            name: "_dmarc.example.com",
+            value: "v=DMARC1; p=none",
+            editable: true,
+          },
+        ],
+      },
+    });
+    const origCreate = provider.createRecords.bind(provider);
+    let calls = 0;
+    provider.createRecords = async (input, ctx) => {
+      if (++calls === 1)
+        throw new DomainSdkError("PROVIDER_UNAVAILABLE", "down", { provider: provider.id });
+      return origCreate(input, ctx);
+    };
+    const dns = createDnsClient({ provider });
+    const err = await dns
+      .ensureRecords(
+        [
+          { type: "A", name: "example.com", value: "2.2.2.2" },
+          { type: "TXT", name: "_vercel.example.com", value: "vc-verify=123" },
+        ],
+        { onConflict: "replace" },
+      )
+      .catch((caught: unknown) => caught);
+    expect(err).toMatchObject({ code: "PROVIDER_UNAVAILABLE", details: { restored: true } });
+    expect(provider.records("example.com").map((r) => `${r.type}:${r.name}:${r.value}`)).toEqual([
+      "TXT:_dmarc.example.com:v=DMARC1; p=none",
+      "A:example.com:1.1.1.1",
+    ]);
+
+    // 2. Wildcard CNAME conflict rollback.
+    const wild = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          {
+            id: "w1",
+            type: "CNAME",
+            name: "*.example.com",
+            value: "old.example.net",
+            editable: true,
+          },
+        ],
+      },
+    });
+    const wildOrigCreate = wild.createRecords.bind(wild);
+    let wildCalls = 0;
+    wild.createRecords = async (input, ctx) => {
+      if (++wildCalls === 1)
+        throw new DomainSdkError("PROVIDER_UNAVAILABLE", "down", { provider: wild.id });
+      return wildOrigCreate(input, ctx);
+    };
+    const wildErr = await createDnsClient({ provider: wild })
+      .ensureRecords([{ type: "CNAME", name: "*.example.com", value: "new.example.net" }], {
+        onConflict: "replace",
+      })
+      .catch((caught: unknown) => caught);
+    expect(wildErr).toMatchObject({ code: "PROVIDER_UNAVAILABLE", details: { restored: true } });
+    expect(wild.records("example.com").map((r) => r.value)).toEqual(["old.example.net"]);
+
+    // 3. Case-insensitive owner conflict detection.
+    const mixed = memoryDnsProvider({
+      zones: {
+        "example.com": [
+          { id: "up", type: "A", name: "APP.example.com", value: "1.1.1.1", editable: true },
+        ],
+      },
+    });
+    await expect(
+      createDnsClient({ provider: mixed }).ensureRecords([
+        { type: "A", name: "app.example.com", value: "2.2.2.2" },
+      ]),
+    ).rejects.toMatchObject({ code: "DOMAIN_CONFLICT" });
+  });
+});

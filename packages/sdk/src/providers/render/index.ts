@@ -1,5 +1,5 @@
 import { DomainSdkError } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import { httpError, isAbortError, readJson, requireString, type Fetch } from "../../core/http";
 import type {
   DomainProvider,
   ProviderContext,
@@ -12,8 +12,17 @@ import type { DnsRecord, Domain, DomainPage } from "../../core/types";
 export interface RenderOptions {
   apiKey: string;
   serviceId: string;
+  /**
+   * IPv4 address returned in the A record for apex domains. Defaults to `216.24.57.1`, Render's
+   * documented load balancer; override it if Render publishes a different address.
+   */
+  apexAddress?: string;
   fetch?: Fetch;
 }
+
+/** Render's documented load-balancer address for apex domains. */
+export const RENDER_APEX_ADDRESS = "216.24.57.1";
+const IPV4 = /^(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)$/;
 
 export interface RenderProvider extends DomainProvider {
   readonly id: "render";
@@ -58,6 +67,15 @@ function onrenderSubdomain(serviceHostname: string): string {
 export function render(options: RenderOptions): RenderProvider {
   const apiKey = requireString(options.apiKey, "apiKey", "render");
   const serviceId = requireString(options.serviceId, "serviceId", "render");
+  const apexAddress = options.apexAddress ?? RENDER_APEX_ADDRESS;
+  if (!IPV4.test(apexAddress))
+    throw new DomainSdkError(
+      "INVALID_CONFIGURATION",
+      "render apexAddress must be an IPv4 address.",
+      {
+        provider: "render",
+      },
+    );
   const doFetch = options.fetch ?? globalThis.fetch;
   if (!doFetch)
     throw new DomainSdkError("INVALID_CONFIGURATION", "render requires a fetch implementation.", {
@@ -83,7 +101,7 @@ export function render(options: RenderOptions): RenderProvider {
         },
       });
     } catch (error) {
-      if (context.signal?.aborted)
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The Render request was cancelled.", {
           provider: "render",
           cause: error,
@@ -95,7 +113,7 @@ export function render(options: RenderOptions): RenderProvider {
       });
     }
 
-    const body = await readJson(response);
+    const body = await readJson(response, undefined, "render", context.signal);
     if (!response.ok) {
       if (notFoundOkay && response.status === 404) return undefined;
       throw httpError("render", response, body, "Render rejected the request.");
@@ -164,7 +182,7 @@ export function render(options: RenderOptions): RenderProvider {
         ? {
             type: "A",
             name: raw.name,
-            value: "216.24.57.1",
+            value: apexAddress,
             purpose: "routing",
             required: true,
             status: recordStatus,

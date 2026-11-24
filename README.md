@@ -18,6 +18,7 @@ One TypeScript client for customer domains. Add a hostname to the platform you a
 - Idempotent add and remove operations with normalized, retry-aware errors
 - Sequential polling with timeouts, cancellation, callbacks, and provider backoff
 - An isolated testing adapter that never calls a real provider
+- A `domain-sdk` CLI for adding, checking, and removing domains from a terminal or script
 
 ## Install
 
@@ -49,27 +50,7 @@ for (const record of domain.records.filter((record) => record.required)) {
 const active = await domains.waitUntilActive(domain.hostname);
 ```
 
-For tenant-chosen subdomains under a parent domain you own, scope the client to that namespace:
-
-```ts
-import { createSubdomainClient } from "@opencoredev/domain-sdk";
-
-const subdomains = createSubdomainClient({
-  domainClient: domains,
-  baseDomain: "mydomain.com",
-  reservedLabels: ["www", "api", "admin"],
-});
-
-subdomains.toHostname("customer"); // customer.mydomain.com
-```
-
-Use `provisionWildcard()` once when the provider supports wildcards, or `add("customer")` for per-hostname provisioning. Your application remains responsible for tenant ownership and unique label storage.
-
-## Providers
-
-Vercel, Cloudflare for SaaS, Railway, Render, Netlify, bunny.net, and an in-memory testing adapter. Each provider lives behind its own entry point and preserves the platform-specific DNS and verification details your UI needs.
-
-When the zone is at Porkbun, Namecheap, or Spaceship, a DNS adapter can write those records for you. `createDnsClient()` reads the zone first and refuses to overwrite conflicting records unless you pass `onConflict: "replace"`.
+The [package README](./packages/sdk/README.md) covers tenant subdomains, every hosting and DNS adapter, the `domain-sdk` CLI, error handling, and testing without network access.
 
 ## Documentation
 

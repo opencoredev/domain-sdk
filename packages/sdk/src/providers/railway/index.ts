@@ -1,5 +1,5 @@
 import { DomainSdkError } from "../../core/errors";
-import { httpError, readJson, requireString, type Fetch } from "../../core/http";
+import { httpError, isAbortError, readJson, requireString, type Fetch } from "../../core/http";
 import type { DomainProvider, ProviderContext, ProviderListInput } from "../../core/provider";
 import { deduplicateRecords, fullRecordName } from "../../core/records";
 import type { DnsRecord, Domain, DomainPage } from "../../core/types";
@@ -91,7 +91,7 @@ export function railway(options: RailwayOptions): RailwayProvider {
         body: JSON.stringify({ query, variables }),
       });
     } catch (error) {
-      if (context.signal?.aborted)
+      if (context.signal?.aborted || isAbortError(error))
         throw new DomainSdkError("ABORTED", "The Railway request was cancelled.", {
           provider: "railway",
           cause: error,
@@ -102,7 +102,7 @@ export function railway(options: RailwayOptions): RailwayProvider {
         cause: error,
       });
     }
-    const body = await readJson(response);
+    const body = await readJson(response, undefined, "railway", context.signal);
     if (!response.ok) throw httpError("railway", response, body, "Railway rejected the request.");
     const envelope = body as GraphqlEnvelope<T>;
     if (envelope.errors?.length) {
@@ -310,8 +310,9 @@ export function railway(options: RailwayOptions): RailwayProvider {
       return getById(existing.id, context);
     },
     async list(input: ProviderListInput, context: ProviderContext): Promise<DomainPage> {
-      const offset = input.cursor ? Number.parseInt(input.cursor, 10) : 0;
-      if (!Number.isInteger(offset) || offset < 0)
+      const cursor = input.cursor;
+      const offset = cursor === undefined ? 0 : Number(cursor);
+      if (cursor !== undefined && (!/^\d+$/.test(cursor) || !Number.isSafeInteger(offset)))
         throw new DomainSdkError("REQUEST_FAILED", "Invalid Railway list cursor.", {
           provider: "railway",
         });

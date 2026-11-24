@@ -1,19 +1,87 @@
 import { describe, expect, test } from "bun:test";
-import { createDomainClient, DomainSdkError } from "../../src";
-import { createMockDnsRecord, memoryProvider } from "../../src/testing";
+import { createDnsClient, createDomainClient, DomainSdkError } from "../../src";
+import { createMockDnsRecord, memoryDnsProvider, memoryProvider } from "../../src/testing";
+
+/** Run `task` with a browser-like `window` global defined. */
+function inBrowser(task: () => void) {
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { value: {}, configurable: true });
+  try {
+    task();
+  } finally {
+    if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
+    else Reflect.deleteProperty(globalThis, "window");
+  }
+}
 
 describe("domain client and memory provider", () => {
-  test("rejects initialization in a browser environment", () => {
-    const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, "window");
-    Object.defineProperty(globalThis, "window", { value: {}, configurable: true });
+  test("rejects initialization in a browser environment with a DomainSdkError", () => {
+    for (const create of [
+      () => createDomainClient({ provider: memoryProvider() }),
+      () => createDnsClient({ provider: memoryDnsProvider() }),
+    ])
+      inBrowser(() => {
+        let caught: unknown;
+        try {
+          create();
+        } catch (error) {
+          caught = error;
+        }
+        expect(caught).toBeInstanceOf(DomainSdkError);
+        expect(caught).toMatchObject({
+          code: "INVALID_CONFIGURATION",
+          message: expect.stringContaining("Domain SDK is server-side only"),
+        });
+      });
+  });
 
-    try {
-      expect(() => createDomainClient({ provider: memoryProvider() })).toThrow(
-        "Domain SDK is server-side only",
-      );
-    } finally {
-      if (windowDescriptor) Object.defineProperty(globalThis, "window", windowDescriptor);
-      else Reflect.deleteProperty(globalThis, "window");
+  test("add honors the signal in the options argument for the object form", async () => {
+    const client = createDomainClient({ provider: memoryProvider() });
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      client.add({ hostname: "app.customer.com" }, { signal: controller.signal }),
+    ).rejects.toMatchObject({ code: "ABORTED" });
+    await expect(
+      client.add({ hostname: "app.customer.com", signal: controller.signal }),
+    ).rejects.toMatchObject({ code: "ABORTED" });
+    await expect(client.get("app.customer.com")).rejects.toMatchObject({
+      code: "DOMAIN_NOT_FOUND",
+    });
+  });
+
+  test("reports caller option mistakes as INVALID_CONFIGURATION", async () => {
+    const client = createDomainClient({ provider: memoryProvider() });
+    for (const limit of [0, 101, 1.5])
+      await expect(client.list({ limit })).rejects.toMatchObject({
+        code: "INVALID_CONFIGURATION",
+      });
+    await expect(
+      client.waitUntilActive("app.customer.com", { intervalMs: 10 }),
+    ).rejects.toMatchObject({ code: "INVALID_CONFIGURATION" });
+  });
+
+  test("returns rejected promises instead of throwing synchronously", async () => {
+    const client = createDomainClient({ provider: memoryProvider() });
+    const dns = createDnsClient({
+      provider: { ...memoryDnsProvider(), getZone: undefined },
+    });
+    const calls: (() => Promise<unknown>)[] = [
+      () => client.add("not a hostname"),
+      () => client.get("not a hostname"),
+      () => client.remove("not a hostname"),
+      () => client.list({ limit: 0 }),
+      () => dns.getZone("example.com"),
+      () => dns.listRecords("not a zone"),
+      () => dns.ensureRecords([{ type: "A", name: "nope", value: "192.0.2.1" }]),
+      () => dns.removeRecords([{ type: "A", name: "nope", value: "192.0.2.1" }]),
+    ];
+    for (const call of calls) {
+      let promise: Promise<unknown> | undefined;
+      expect(() => {
+        promise = call();
+      }).not.toThrow();
+      await expect(promise).rejects.toBeInstanceOf(DomainSdkError);
     }
   });
 
@@ -76,7 +144,9 @@ describe("domain client and memory provider", () => {
       verify: undefined,
     };
     const client = createDomainClient({ provider });
-    expect(() => client.verify("app.customer.com")).toThrow(DomainSdkError);
+    await expect(client.verify("app.customer.com")).rejects.toMatchObject({
+      code: "UNSUPPORTED_OPERATION",
+    });
   });
 
   test("logs only safe operational context", async () => {

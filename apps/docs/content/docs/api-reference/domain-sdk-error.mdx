@@ -5,6 +5,8 @@ description: Structured, sanitized failures shared by the core and provider adap
 
 Fields are `code`, optional `provider`, optional `statusCode`, `retryable`, optional `retryAfter` in milliseconds, bounded sanitized `details`, and optional safe `cause`.
 
+SDK fields (`name`, `message`, `code`, `provider`, `statusCode`, `retryable`, `retryAfter`, `details`, and `cause`) are locked as non-writable and non-configurable so `onOperation` hooks cannot alter thrown errors. `details` and non-Error object causes are deep-frozen redacted copies, and `Error` causes are frozen redacted copies with `name`, `code`, and redacted `message`/`stack`. The `DomainSdkError` instance itself remains extensible for framework annotations such as `err.digest`.
+
 Codes: `AUTHENTICATION_FAILED`, `PERMISSION_DENIED`, `INVALID_CONFIGURATION`, `INVALID_HOSTNAME`, `DOMAIN_CONFLICT`, `DOMAIN_NOT_FOUND`, `UNSUPPORTED_OPERATION`, `VERIFICATION_FAILED`, `RATE_LIMITED`, `PROVIDER_UNAVAILABLE`, `REQUEST_FAILED`, `TIMEOUT`, `ABORTED`, and `UNKNOWN_ERROR`.
 
 Read next: [Error handling](../concepts/error-handling.mdx).

@@ -86,4 +86,76 @@ describe("Netlify adapter", () => {
       code: "REQUEST_FAILED",
     });
   });
+
+  test("concurrent adds and removes on one site keep every alias", async () => {
+    const mock = setup(["existing.customer.com", "old.customer.com"]);
+    // Delay every response so unserialized calls would all read the same alias list first.
+    const slowFetch: typeof mock.fetch = async (input, init) => {
+      await new Promise((resolve) => setTimeout(resolve, 2));
+      return mock.fetch(input, init);
+    };
+    const client = createDomainClient({
+      provider: netlify({ accessToken: "token", siteId: "site_123", fetch: slowFetch }),
+    });
+    await Promise.all([
+      client.add("a.customer.com"),
+      client.add("b.customer.com"),
+      client.remove("old.customer.com"),
+      client.add("c.customer.com"),
+    ]);
+    expect(mock.aliases()).toEqual([
+      "existing.customer.com",
+      "a.customer.com",
+      "b.customer.com",
+      "c.customer.com",
+    ]);
+  });
+
+  test("a queued call that aborts is released at once and never runs", async () => {
+    const mock = setup();
+    let releaseFirst: (() => void) | undefined;
+    let held = false;
+    const gatedFetch: typeof mock.fetch = async (input, init) => {
+      if (init?.method === "PATCH" && !held) {
+        held = true;
+        await new Promise<void>((resolve) => (releaseFirst = resolve));
+      }
+      return mock.fetch(input, init);
+    };
+    const client = createDomainClient({
+      provider: netlify({ accessToken: "token", siteId: "site_123", fetch: gatedFetch }),
+    });
+    const first = client.add("a.customer.com");
+    while (!releaseFirst) await new Promise((resolve) => setTimeout(resolve, 1));
+    const controller = new AbortController();
+    const second = client.add("b.customer.com", { signal: controller.signal });
+    controller.abort();
+    await expect(second).rejects.toMatchObject({ code: "ABORTED" });
+    releaseFirst();
+    await first;
+    await client.add("c.customer.com");
+    expect(mock.aliases()).toEqual(["existing.customer.com", "a.customer.com", "c.customer.com"]);
+  });
+
+  test("a failed alias update does not block later calls", async () => {
+    const mock = setup();
+    let failNextPatch = true;
+    const flakyFetch: typeof mock.fetch = async (input, init) => {
+      if (init?.method === "PATCH" && failNextPatch) {
+        failNextPatch = false;
+        return new Response(JSON.stringify({ message: "nope" }), { status: 422 });
+      }
+      return mock.fetch(input, init);
+    };
+    const client = createDomainClient({
+      provider: netlify({ accessToken: "token", siteId: "site_123", fetch: flakyFetch }),
+    });
+    const [first, second] = await Promise.allSettled([
+      client.add("a.customer.com"),
+      client.add("b.customer.com"),
+    ]);
+    expect(first.status).toBe("rejected");
+    expect(second.status).toBe("fulfilled");
+    expect(mock.aliases()).toEqual(["existing.customer.com", "b.customer.com"]);
+  });
 });

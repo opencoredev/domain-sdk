@@ -7,11 +7,17 @@ description: Sequential polling with timeout, cancellation, callback, and retry 
 waitUntilActive(hostname: string, options?: {
   timeoutMs?: number;       // default 300000
   intervalMs?: number;      // default 5000, minimum 250
+  backoffFactor?: number;   // default 1.5
+  maxIntervalMs?: number;   // default 30000
+  jitter?: boolean;         // default false
   signal?: AbortSignal;
   onStatus?(domain: Domain): void;
+  shouldStop?(domain: Domain): boolean; // default: domain.status === "failed"
 }): Promise<Domain>
 ```
 
 The first check runs immediately. Retryable errors continue with the larger of interval and `retryAfter`; permanent errors stop. The deadline throws retryable `TIMEOUT`.
+
+A domain the provider marks `failed` will not become active by waiting, so polling stops and rejects with `VERIFICATION_FAILED`; `details` holds the hostname, status, and issues. Pass `shouldStop` to change that: `(domain) => ["failed", "misconfigured"].includes(domain.status)` also stops on `misconfigured`, and `() => false` keeps polling until the timeout. `misconfigured` keeps polling by default because Vercel reports it for a verified domain until the customer's routing records point at Vercel, which is a normal step during setup.
 
 Read next: [Poll until active](../guides/poll-until-active.mdx).

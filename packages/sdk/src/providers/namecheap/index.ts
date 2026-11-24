@@ -8,8 +8,14 @@ import {
   type DnsProviderContext,
   type ZoneRecord,
 } from "../../core/dns";
-import { DomainSdkError, parseRetryAfter, type DomainSdkErrorCode } from "../../core/errors";
-import { requireString, type Fetch } from "../../core/http";
+import {
+  DomainSdkError,
+  normalizeUnknownError,
+  parseRetryAfter,
+  safeInstanceOf,
+  type DomainSdkErrorCode,
+} from "../../core/errors";
+import { isAbortError, requireString, type Fetch } from "../../core/http";
 import { MAX_XML_BYTES, parseXml, type XmlElement } from "./xml";
 
 export interface NamecheapOptions {
@@ -82,12 +88,20 @@ function result(root: XmlElement, name: string): XmlElement {
   );
 }
 
+function safeCanonicalValue(type: string, value: string): string {
+  try {
+    return canonicalRecordValue(type, value);
+  } catch {
+    return value;
+  }
+}
+
 function zoneRecord(host: Host, zone: string): ZoneRecord {
   return {
     id: host.id,
     type: host.type,
     name: absoluteRecordName(host.name, zone),
-    value: host.type === "CAA" ? canonicalRecordValue("CAA", host.address) : host.address,
+    value: host.type === "CAA" ? safeCanonicalValue("CAA", host.address) : host.address,
     ttl: Number(host.ttl),
     priority: host.mxPref === undefined ? undefined : Number(host.mxPref),
     editable: true,
@@ -100,7 +114,7 @@ function hostKey(host: Host, zone: string): string {
     record.type,
     record.name,
     ["A", "AAAA", "ALIAS", "CAA", "CNAME", "MX", "NS"].includes(record.type)
-      ? canonicalRecordValue(record.type, record.value)
+      ? safeCanonicalValue(record.type, record.value)
       : record.value,
     record.ttl,
     host.type === "MX" || host.type === "MXE" ? (record.priority ?? 10) : undefined,
@@ -167,13 +181,12 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
         body: body.toString(),
         signal: context.signal,
       });
-    } catch {
+    } catch (error) {
+      const aborted = context.signal?.aborted || isAbortError(error);
       throw new DomainSdkError(
-        context.signal?.aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",
-        context.signal?.aborted
-          ? "The Namecheap request was cancelled."
-          : "Could not reach Namecheap.",
-        { provider: "namecheap", retryable: !context.signal?.aborted },
+        aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",
+        aborted ? "The Namecheap request was cancelled." : "Could not reach Namecheap.",
+        { provider: "namecheap", retryable: !aborted },
       );
     }
     const failure = (code: DomainSdkErrorCode, message: string, providerCode?: string): never => {
@@ -198,13 +211,12 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
     try {
       text = await readXmlResponse(response);
     } catch (error) {
-      if (error instanceof DomainSdkError) throw error;
+      if (safeInstanceOf(error, DomainSdkError)) throw error;
+      const aborted = context.signal?.aborted || isAbortError(error);
       throw new DomainSdkError(
-        context.signal?.aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",
-        context.signal?.aborted
-          ? "The Namecheap request was cancelled."
-          : "Could not read the Namecheap response.",
-        { provider: "namecheap", retryable: !context.signal?.aborted },
+        aborted ? "ABORTED" : "PROVIDER_UNAVAILABLE",
+        aborted ? "The Namecheap request was cancelled." : "Could not read the Namecheap response.",
+        { provider: "namecheap", retryable: !aborted },
       );
     }
     const root = parseXml(text);
@@ -284,6 +296,8 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
       .catch(() => {})
       .then(async () => {
         const snapshot = await readHosts(zone, context);
+        // Let the DNS client check the result against the zone this write is built from.
+        context.onWriteBase?.(snapshot.hosts.map((host) => zoneRecord(host, zone)));
         const hosts = change(snapshot.hosts);
         const parameters: Record<string, string> = {};
         if (snapshot.emailType !== undefined) parameters.EmailType = snapshot.emailType;
@@ -300,18 +314,59 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
           "DomainDNSSetHostsResult",
         );
         if (payload.attributes.IsSuccess !== "true") malformed();
-        const after = await readHosts(zone, context);
+        let after: Awaited<ReturnType<typeof readHosts>>;
+        try {
+          after = await readHosts(zone, context);
+        } catch (error) {
+          // setHosts already succeeded, so the zone changed even though it could not be re-read.
+          const cause = normalizeUnknownError(error, "namecheap");
+          throw new DomainSdkError(cause.code, cause.message, {
+            provider: "namecheap",
+            statusCode: cause.statusCode,
+            retryable: cause.retryable,
+            retryAfter: cause.retryAfter,
+            cause,
+            details: { ...cause.details, committed: true },
+          });
+        }
         const expected = hosts.map((host) => hostKey(host, zone)).sort();
         const actual = after.hosts.map((host) => hostKey(host, zone)).sort();
         if (
           JSON.stringify(expected) !== JSON.stringify(actual) ||
           (snapshot.emailType !== undefined && snapshot.emailType !== after.emailType)
-        )
+        ) {
+          const expectedPool = hosts.map((host) => hostKey(host, zone));
+          const keptBefore: Host[] = [];
+          for (const host of snapshot.hosts) {
+            const idx = expectedPool.indexOf(hostKey(host, zone));
+            if (idx >= 0) {
+              expectedPool.splice(idx, 1);
+              keptBefore.push(host);
+            }
+          }
+          const actualPool = after.hosts.map((host) => hostKey(host, zone));
+          const collateralMissing: Array<{ type: string; name: string; value: string }> = [];
+          for (const host of keptBefore) {
+            const idx = actualPool.indexOf(hostKey(host, zone));
+            if (idx >= 0) {
+              actualPool.splice(idx, 1);
+            } else {
+              const rec = zoneRecord(host, zone);
+              collateralMissing.push({ type: rec.type, name: rec.name, value: rec.value });
+            }
+          }
           throw new DomainSdkError(
             "REQUEST_FAILED",
             "Namecheap did not retain the expected DNS records. Re-read the zone before retrying.",
-            { provider: "namecheap" },
+            {
+              provider: "namecheap",
+              details: {
+                committed: true,
+                ...(collateralMissing.length ? { collateralMissing } : {}),
+              },
+            },
           );
+        }
       });
     queues.set(zone, pending);
     void pending
@@ -357,7 +412,6 @@ export function namecheap(options: NamecheapOptions): DnsProvider {
           const current = zoneRecord(host, zone);
           const index = pending.findIndex(
             (record) =>
-              record.id === current.id &&
               record.type === current.type &&
               record.name === current.name &&
               record.value === current.value &&

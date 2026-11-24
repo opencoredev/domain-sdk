@@ -3,6 +3,29 @@ title: Changelog
 description: User-visible Domain SDK releases and compatibility changes.
 ---
 
+## Unreleased
+
+- Added the `domain-sdk` CLI (`add`, `get`, `list`, `verify`, `remove`, `wait`) with `--provider` and `--json` output.
+- Added `onOperation` hooks on `createDomainClient()` and `createDnsClient()`, `SubdomainClient.list()`, `shouldStop` on `waitUntilActive()` (which now rejects with `VERIFICATION_FAILED` when a domain reaches `failed`), `render({ apexAddress })`, and exported DNS record helpers.
+- `createSubdomainClient()` now reserves `www`, `api`, `admin`, and `mail` by default (`DEFAULT_RESERVED_LABELS`).
+- Async client methods now reject their promise instead of throwing synchronously (including invalid input and out-of-range `list()` limits, which reject with `INVALID_CONFIGURATION`).
+- `ensureRecords()` and `applyDomainRecords()` re-read the zone after writing, roll back failed replacements, whole-zone writes, and per-record add-only throws while preserving foreign concurrent records and pre-commit external deletions (accepted per-record add-only verification failures throw directly without rollback), report `details.restored`, `details.externalChange`, `details.unexpected`, and `details.collateralMissing`, and preserve `details.committed` from whole-zone adapters.
+- Provider JSON responses are capped at 8 MiB by default (16 MiB for Porkbun and Spaceship responses); Namecheap XML responses are capped at 1 MiB.
+- Fixed Netlify concurrent alias serialization and Spaceship `listRecords()` pagination drift.
+
+## 0.3.0
+
+- Added the bunny.net adapter for custom hostnames on a bunny.net pull zone, with apex and wildcard support and `verify()` as a certificate request.
+- Added `createDnsClient()` for writing a domain's records into a DNS zone, with the Porkbun, Namecheap, and Spaceship adapters. It only creates missing records and refuses to overwrite conflicting ones unless you pass `onConflict: "replace"`.
+- Both clients retry rate limits and transient outages up to 3 attempts, honoring `Retry-After`. Configure it with `retry`.
+- `waitUntilActive()` backs off between polls (`backoffFactor`, `maxIntervalMs`, `jitter`).
+- `createDnsClient({ lock })` accepts a shared per-zone lock for several workers.
+- Responses over 16 KB parse correctly, and the SDK no longer imports any `node:*` module.
+
+## 0.2.0
+
+- Added `createSubdomainClient()` for tenant subdomains under a parent domain you own, with reserved labels, direct-child validation, and wildcard provisioning where the provider supports it.
+
 ## 0.1.0
 
 - Added the core client, normalized model, hostname validation, errors, polling, and logging contract.

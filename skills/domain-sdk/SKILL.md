@@ -1,7 +1,7 @@
 ---
 name: domain-sdk
 description: This skill should be used when the user asks to "add custom domains", "manage customer domains", "integrate Domain SDK", "set up Vercel domains", "set up Cloudflare custom hostnames", "set up Railway domains", "set up Render domains", "set up Netlify domain aliases", "set up bunny.net pull zone hostnames", "write DNS records to Porkbun, Namecheap, or Spaceship", "show DNS records", "verify a customer domain", or "test domain flows without network calls" in a TypeScript application.
-version: 0.1.0
+version: 0.3.0
 ---
 
 # Domain SDK
@@ -125,6 +125,16 @@ memory.activate("app.customer.com");
 ```
 
 Test tenant authorization in the application layer separately from provider behavior. Cover duplicate adds, required DNS records, pending-to-active transitions, timeouts, cancellation, provider errors, and idempotent removal.
+
+## Inspect domains from a terminal
+
+For one-off checks while building or debugging, use the bundled CLI instead of writing a script. It reads the same environment variables as the adapters:
+
+```bash
+npx @opencoredev/domain-sdk get app.customer.com --provider vercel --json
+```
+
+Commands are `add`, `get`, `list`, `verify`, `remove`, and `wait`. Exit code 1 means the operation failed or a configured environment variable value was invalid and prints the `DomainSdkError` code; exit code 2 means the command line was invalid, the provider was unknown, or required environment variables were missing. Do not use the CLI for tenant-facing flows: it does no tenant authorization.
 
 ## Validate the integration
 

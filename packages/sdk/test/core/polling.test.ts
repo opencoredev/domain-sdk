@@ -29,3 +29,30 @@ test("waitUntilActive polls sequentially and reports each status", async () => {
   expect(sleeps).toBe(1);
   expect(memory.calls.filter((call) => call.operation === "get")).toHaveLength(2);
 });
+
+test("waitUntilActive warns and continues when onStatus throws", async () => {
+  const memory = memoryProvider();
+  let now = 0;
+  const warnings: string[] = [];
+  const client = createDomainClient({
+    provider: memory,
+    logger: { warn: (message) => warnings.push(message) },
+    clock: {
+      now: () => now,
+      async sleep(ms) {
+        now += ms;
+        memory.activate("app.customer.com");
+      },
+    },
+  });
+  await client.add("app.customer.com");
+  const active = await client.waitUntilActive("app.customer.com", {
+    timeoutMs: 10_000,
+    intervalMs: 500,
+    onStatus: () => {
+      throw new Error("observer bug");
+    },
+  });
+  expect(active.status).toBe("active");
+  expect(warnings).toContain("Domain onStatus hook threw.");
+});
