@@ -172,6 +172,12 @@ export const domains = createDomainClient({
     ssl: { method: "txt" },
   }),
 });
+```
+
+Add the customer's hostname and read back the records to show them in a separate file, so modules that only need the client (like the polling job below) don't create a hostname when they load:
+
+```ts title="provision.ts"
+import { domains } from "./domains";
 
 await domains.add("app.customer.com");
 
@@ -185,9 +191,9 @@ for (const record of domain.records) {
 }
 ```
 
-`domain.status` folds the two Cloudflare checks into one value: `pending_verification` while the hostname isn't active yet, including Cloudflare's `blocked` state (or `pending_dns` when there is no ownership TXT record to show), `pending_certificate` once the hostname is active but `ssl.status` isn't, and `active` only when both are. Cloudflare's `moved` and `deleted` hostname statuses, and an `ssl.status` of `failed`, `validation_timed_out`, `issuance_timed_out`, or `deploying_timed_out`, become `failed`. Messages from `verification_errors` and `ssl.validation_errors` land in `domain.issues`. The [`Domain`](/docs/api-reference/domain) and [`DnsRecord`](/docs/api-reference/dns-record) references list every field.
+`domain.status` folds the two Cloudflare checks into one value. Cloudflare's `moved` and `deleted` hostname statuses, and an `ssl.status` of `failed`, `validation_timed_out`, `issuance_timed_out`, or `deploying_timed_out`, always become `failed`. Otherwise it is `pending_verification` while the hostname isn't active yet, including Cloudflare's `blocked` state (or `pending_dns` when there is no ownership TXT record to show), `pending_certificate` once the hostname is active but `ssl.status` isn't, and `active` only when both are. Messages from `verification_errors` and `ssl.validation_errors` land in `domain.issues`. The [`Domain`](/docs/api-reference/domain) and [`DnsRecord`](/docs/api-reference/dns-record) references list every field.
 
-To wait for a hostname, run `waitUntilActive` in a background job. It polls with backoff and resolves once the hostname is `active`. After a check that doesn't find the hostname active, it rejects with `TIMEOUT` once the deadline has passed, and by default with `VERIFICATION_FAILED` on the first check that sees `failed`, since waiting won't fix that:
+To wait for a hostname, run `waitUntilActive` in a background job. It polls with backoff and resolves once the hostname is `active`. By default it rejects with `VERIFICATION_FAILED` on the first check that sees `failed`, since waiting won't fix that. Otherwise, a check that finds the hostname still pending after the deadline rejects with `TIMEOUT`:
 
 ```ts title="wait.ts"
 import { domains } from "./domains";
@@ -203,12 +209,14 @@ const active = await domains.waitUntilActive("app.customer.com", {
 console.log(active.certificate.status, active.certificate.expiresAt);
 ```
 
-When the customer leaves, delete the hostname so it stops counting toward your bill:
+When the customer leaves, delete the hostname so it stops counting toward your bill. Pass in the client from `domains.ts`:
 
 ```ts title="offboard.ts"
-import { domains } from "./domains";
+import type { DomainClient } from "@opencoredev/domain-sdk";
 
-await domains.remove("app.customer.com");
+export async function offboardCustomerDomain(domains: DomainClient, hostname: string) {
+  await domains.remove(hostname);
+}
 ```
 
 The adapter covers custom hostnames only. It doesn't set the fallback origin, create your zone's DNS records, or edit the customer's DNS, and it doesn't do wildcard custom hostnames or apex proxying. The [Cloudflare provider page](/docs/providers/cloudflare) lists the options, and [Poll until active](/docs/guides/poll-until-active) covers the polling settings. If you manage the customer's DNS at Porkbun, Namecheap, or Spaceship, a [DNS adapter](/docs/providers) can write the records for them.

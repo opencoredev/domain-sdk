@@ -15,7 +15,7 @@ const active = await domains.waitUntilActive("app.customer.com", {
 });
 ```
 
-The first check runs immediately and checks never overlap. Delays start at five seconds and back off by 1.5x up to 30 seconds, the default timeout is five minutes, and a longer `Retry-After` from the provider wins. Permanent errors stop polling at once. After a check that doesn't return an active domain, it rejects with `TIMEOUT` once the deadline has passed (or early, when a `Retry-After` would run past it). It rejects with `ABORTED` when the signal fires, and with `VERIFICATION_FAILED` when `shouldStop` matches a domain that isn't active. By default that is the first check that sees `failed`, since waiting won't fix it; pass your own `shouldStop(domain)` to change the rule. It does not guarantee DNS propagation time.
+The first check runs immediately and checks never overlap. Delays start at five seconds and back off by 1.5x up to 30 seconds, the default timeout is five minutes, and a longer `Retry-After` from the provider wins. Permanent errors stop polling at once. When a check returns a domain that isn't active, polling calls `shouldStop` before it checks the deadline: a match rejects with `VERIFICATION_FAILED`, and by default it matches `failed`, since waiting won't fix that (pass your own `shouldStop(domain)` to change the rule). Otherwise polling rejects with `TIMEOUT` once the deadline has passed, or early when a `Retry-After` would run past it. It rejects with `ABORTED` when the signal fires. It does not guarantee DNS propagation time.
 
 If a domain never becomes active because its certificate stays pending, see [Troubleshoot custom domain SSL certificates](./troubleshoot-certificates.mdx).
 
