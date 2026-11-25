@@ -172,6 +172,12 @@ export const domains = createDomainClient({
     ssl: { method: "txt" },
   }),
 });
+```
+
+Add the customer's hostname and read back the records to show them in a separate file, so modules that only need the client (like the polling job below) don't create a hostname when they load:
+
+```ts title="provision.ts"
+import { domains } from "./domains";
 
 await domains.add("app.customer.com");
 
@@ -185,9 +191,9 @@ for (const record of domain.records) {
 }
 ```
 
-`domain.status` folds the two Cloudflare checks into one value: `pending_verification` while hostname validation is pending (or `pending_dns` when there is no TXT record to show), `pending_certificate` once the hostname is active but `ssl.status` isn't, and `active` only when both are. Cloudflare's `moved` and `deleted` statuses, and certificate timeouts, become `failed`. Messages from `verification_errors` and `ssl.validation_errors` land in `domain.issues`. The [`Domain`](/docs/api-reference/domain) and [`DnsRecord`](/docs/api-reference/dns-record) references list every field.
+`domain.status` folds the two Cloudflare checks into one value. Cloudflare's `moved` and `deleted` hostname statuses, and an `ssl.status` of `failed`, `validation_timed_out`, `issuance_timed_out`, or `deploying_timed_out`, always become `failed`. Otherwise it is `pending_verification` while the hostname isn't active yet, including Cloudflare's `blocked` state (or `pending_dns` when there is no ownership TXT record to show), `pending_certificate` once the hostname is active but `ssl.status` isn't, and `active` only when both are. Messages from `verification_errors` and `ssl.validation_errors` land in `domain.issues`. The [`Domain`](/docs/api-reference/domain) and [`DnsRecord`](/docs/api-reference/dns-record) references list every field.
 
-To wait for a hostname, run `waitUntilActive` in a background job. It polls with backoff and stops at `active` or when it times out:
+To wait for a hostname, run `waitUntilActive` in a background job. It polls with backoff and resolves once the hostname is `active`. By default it rejects with `VERIFICATION_FAILED` on the first check that sees `failed`, since waiting won't fix that. Otherwise, a check that finds the hostname still pending after the deadline rejects with `TIMEOUT`:
 
 ```ts title="wait.ts"
 import { domains } from "./domains";
@@ -201,9 +207,16 @@ const active = await domains.waitUntilActive("app.customer.com", {
     ),
 });
 console.log(active.certificate.status, active.certificate.expiresAt);
+```
 
-// When the customer leaves, delete the hostname so it stops counting toward your bill.
-await domains.remove("app.customer.com");
+When the customer leaves, delete the hostname so it stops counting toward your bill. Pass in the client from `domains.ts`:
+
+```ts title="offboard.ts"
+import type { DomainClient } from "@opencoredev/domain-sdk";
+
+export async function offboardCustomerDomain(domains: DomainClient, hostname: string) {
+  await domains.remove(hostname);
+}
 ```
 
 The adapter covers custom hostnames only. It doesn't set the fallback origin, create your zone's DNS records, or edit the customer's DNS, and it doesn't do wildcard custom hostnames or apex proxying. The [Cloudflare provider page](/docs/providers/cloudflare) lists the options, and [Poll until active](/docs/guides/poll-until-active) covers the polling settings. If you manage the customer's DNS at Porkbun, Namecheap, or Spaceship, a [DNS adapter](/docs/providers) can write the records for them.
@@ -212,7 +225,7 @@ The adapter covers custom hostnames only. It doesn't set the fallback origin, cr
 
 It fits when your app already runs behind Cloudflare, or you want Cloudflare's edge (caching, WAF, DDoS protection) in front of every customer domain. It's also cheap at small scale, since the first 100 hostnames are included.
 
-It's more than you need when your host has its own custom domains API. Vercel, Netlify, Render, and Railway all attach customer domains to a project directly, with their own certificates, and Domain SDK covers each of them with the same calls as above. Cloudflare for SaaS routes customers with a CNAME, and most DNS providers don't allow a CNAME at the apex, so apex domains like `customer.com` need a DNS provider that flattens CNAMEs (Cloudflare's own DNS does), Enterprise apex proxying, or a host that accepts A or ALIAS records. [Apex domains: A records, ALIAS, and CNAME flattening](/blog/apex-domain) compares the options. Hosted custom-domain services such as Approximated and SaaS Custom Domains run the proxy and certificates for you with no Cloudflare account, which suits teams that would rather not run any of this themselves.
+It's more than you need when your host has its own custom domains API. Vercel, Netlify, Render, and Railway all attach customer domains to a project directly and automatically provision TLS certificates for them ([Vercel](https://vercel.com/docs/domains/working-with-ssl), [Netlify](https://docs.netlify.com/manage/domains/secure-domains-with-https/https-ssl/), [Render](https://render.com/docs/custom-domains), [Railway](https://docs.railway.com/networking/public-networking), checked 2026-11-25), and Domain SDK covers each of them with the same calls as above. Cloudflare for SaaS routes customers with a CNAME, and most DNS providers don't allow a CNAME at the apex, so apex domains like `customer.com` need a DNS provider that flattens CNAMEs (Cloudflare's own DNS does), Enterprise apex proxying, or a host that accepts A or ALIAS records. [Apex domains: A records, ALIAS, and CNAME flattening](/blog/apex-domain) compares the options. Hosted custom-domain services such as [Approximated](https://approximated.app/) and [SaaS Custom Domains](https://saascustomdomains.com/) run the proxy and certificates for you (per their own sites, checked 2026-11-25), which suits teams that would rather not run any of this themselves.
 
 ## Common questions
 
@@ -234,7 +247,7 @@ Delete their custom hostname yourself, with a `DELETE` call or `domains.remove()
 
 ### Do I need Cloudflare for SaaS if my app runs on Vercel or Netlify?
 
-No. Those platforms issue certificates for customer domains themselves. Use their domains API, or Domain SDK's [Vercel](/docs/providers/vercel) or [Netlify](/docs/providers/netlify) adapter. Cloudflare for SaaS earns its place when Cloudflare is your edge.
+No. Those platforms provision certificates for customer domains automatically (see [Is Cloudflare for SaaS the right choice?](#is-cloudflare-for-saas-the-right-choice)). Use their domains API, or Domain SDK's [Vercel](/docs/providers/vercel) or [Netlify](/docs/providers/netlify) adapter. Cloudflare for SaaS earns its place when Cloudflare is your edge.
 
 ## Next steps
 
