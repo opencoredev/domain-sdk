@@ -1,17 +1,17 @@
 ---
-title: "Apex domains: A records, ALIAS, and CNAME flattening"
-description: "What an apex domain is, why it can't use a CNAME, how ALIAS, ANAME, and CNAME flattening work around that, and the exact records Vercel, Netlify, Render, Railway, bunny.net, and Cloudflare for SaaS ask for."
+title: "What is an apex domain? Apex DNS records explained"
+description: "An apex domain is the root of a DNS zone, like customer.com. Why it can't hold a CNAME, and which apex record (A, ALIAS, or flattened CNAME) each host asks for."
 date: 2026-11-02
 type: blog
 ---
 
-An **apex domain** is the bare name of a DNS zone, such as `customer.com`, with no subdomain in front. It's also called the root domain, naked domain, or zone apex. The apex is the one name in a zone that can't hold a CNAME record. So when a customer wants `customer.com` (not `app.customer.com`) to point at your app, they need either an **A record** with an IP address your host publishes, or an **ALIAS**, **ANAME**, or **flattened CNAME** record, which their DNS provider resolves to IP addresses for them.
+An **apex domain** is the name of a DNS zone itself. For most customers that's the registered domain, such as `customer.com`, with no subdomain in front. It's also called the root domain, naked domain, or zone apex. The apex is the one name in a zone that can't hold a CNAME record. So when a customer wants `customer.com` (not `app.customer.com`) to point at your app, they need either an **A record** with an IP address your host publishes, or an **ALIAS**, **ANAME**, or **flattened CNAME** record, which their DNS provider resolves to IP addresses for them.
 
-Which of those works depends on two things: what your hosting platform accepts, and what the customer's DNS provider supports. This post covers both, with the records each platform asks for as of 2026-11-02, and how to handle apex domains in code with [Domain SDK](/docs).
+Which of those works depends on two things: what your hosting platform accepts, and what the customer's DNS provider supports. This post covers both, with the records [supported hosting platforms](/docs/providers) ask for as of 2026-11-02, and how to handle apex domains in code with [Domain SDK](/docs).
 
 ## Why the apex can't use a CNAME
 
-Every zone has an `SOA` record and `NS` records at its apex. Those say who is authoritative for the zone. A CNAME says "this name is really that other name", so it can't sit next to any other record at the same name. [RFC 1912, section 2.4](https://www.rfc-editor.org/rfc/rfc1912#section-2.4) puts it plainly: "A CNAME record is not allowed to coexist with any other data." The apex always has other data, so a CNAME there is invalid. A name like `www` or `app` has no records of its own, so a CNAME is fine.
+Every zone has an `SOA` record and `NS` records at its apex. Those say who is authoritative for the zone. A CNAME says "this name is really that other name", so it can't sit next to any other record at the same name. [RFC 1912, section 2.4](https://www.rfc-editor.org/rfc/rfc1912#section-2.4) puts it plainly: "A CNAME record is not allowed to coexist with any other data." The apex always has other data, so a CNAME there is invalid. A name like `www` or `app` usually has no other records and isn't a zone of its own, so a CNAME is fine there.
 
 The same rule bites in a second way at the apex: MX and TXT records for email and domain verification live there too. Even a DNS host that let you put a real CNAME at the apex would break the customer's email.
 
@@ -35,14 +35,14 @@ ALIAS, ANAME, and CNAME flattening are the same idea with different names. You g
 
 The records below come from each platform's docs and from what Domain SDK's adapters return, both checked on 2026-11-02.
 
-| Platform            | Apex record                                                             | Fallback if the DNS host has no ALIAS           | Source                                                                                                                                 |
-| ------------------- | ----------------------------------------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Vercel              | `A` to the IP on the project's domain card, often `76.76.21.21`         | Not needed: Vercel uses an A record             | [Vercel A record guide](https://vercel.com/kb/guide/a-record-and-caa-with-vercel)                                                      |
-| Netlify             | `ALIAS`, `ANAME`, or flattened CNAME to `apex-loadbalancer.netlify.com` | `A` to `75.2.60.5`                              | [Netlify external DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/)                              |
-| Render              | `ALIAS` or `ANAME` to the service's `onrender.com` hostname             | `A` to `216.24.57.1`                            | [Render DNS providers](https://render.com/docs/configure-other-dns)                                                                    |
-| Railway             | CNAME flattening or a dynamic `ALIAS` to the target Railway shows       | None: Railway publishes no static IP            | [Railway domains](https://docs.railway.com/networking/domains/working-with-domains)                                                    |
-| bunny.net           | `ALIAS`, `ANAME`, or flattened CNAME to the pull zone hostname          | None: no fixed A record for pull zones          | [Domain SDK bunny.net adapter](/docs/providers/bunny)                                                                                  |
-| Cloudflare for SaaS | A CNAME to your CNAME target, so the customer's DNS must flatten it     | Apex proxying or BYOIP, paid Enterprise add-ons | [Apex proxying](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/advanced-settings/apex-proxying/) |
+| Platform            | Apex record                                                             | Fallback if the DNS host has no ALIAS           | Source                                                                                                                                                                  |
+| ------------------- | ----------------------------------------------------------------------- | ----------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vercel              | `A` to the IP on the project's domain card, often `76.76.21.21`         | Not needed: Vercel uses an A record             | [Vercel A record guide](https://vercel.com/kb/guide/a-record-and-caa-with-vercel)                                                                                       |
+| Netlify             | `ALIAS`, `ANAME`, or flattened CNAME to `apex-loadbalancer.netlify.com` | `A` to `75.2.60.5`                              | [Netlify external DNS](https://docs.netlify.com/manage/domains/configure-domains/configure-external-dns/)                                                               |
+| Render              | `ALIAS` or `ANAME` to the service's `onrender.com` hostname             | `A` to `216.24.57.1`                            | [Render DNS providers](https://render.com/docs/configure-other-dns)                                                                                                     |
+| Railway             | CNAME flattening or a dynamic `ALIAS` to the target Railway shows       | None: Railway publishes no static IP            | [Railway domains](https://docs.railway.com/networking/domains/working-with-domains)                                                                                     |
+| bunny.net           | `ALIAS`, `ANAME`, or flattened CNAME to the pull zone hostname          | None: no fixed A record for pull zones          | [bunny.net root domains](https://bunny.net/docs/cdn/custom-hostname#root-domains), [migration guide](https://bunny.net/docs/cdn/seamless-migration), checked 2026-11-26 |
+| Cloudflare for SaaS | A CNAME to your CNAME target, so the customer's DNS must flatten it     | Apex proxying or BYOIP, paid Enterprise add-ons | [Apex proxying](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/start/advanced-settings/apex-proxying/)                                  |
 
 A few details that matter in practice:
 
@@ -50,7 +50,7 @@ A few details that matter in practice:
 - **Render** asks you to remove AAAA records too, because it serves over IPv4. And if the customer's DNS is on Cloudflare, Render says to use a CNAME (which Cloudflare flattens) rather than the A record.
 - **Netlify** sites on its High-Performance Edge use a different load balancer, shown in the site's DNS settings.
 - **Railway and bunny.net** have no A-record fallback at all. A customer whose DNS host can't flatten has to move DNS, or use a subdomain.
-- **Cloudflare for SaaS** routes every custom hostname with a CNAME. Apex customers work when their own DNS is on Cloudflare (it flattens) or another host with ALIAS support; otherwise you need the Enterprise add-ons. Our [Cloudflare for SaaS guide](/blog/cloudflare-for-saas) covers the rest of that setup.
+- **Cloudflare for SaaS** routes custom hostnames with a CNAME in its standard setup; apex proxying, a [paid Enterprise add-on](https://developers.cloudflare.com/cloudflare-for-platforms/cloudflare-for-saas/plans/) (checked 2026-11-26), gives customers A records instead. Apex customers work when their own DNS is on Cloudflare (it flattens) or another host with ALIAS support; otherwise you need the Enterprise add-ons. Our [Cloudflare for SaaS guide](/blog/cloudflare-for-saas) covers the rest of that setup.
 
 ## A record vs ALIAS: which to give customers
 
@@ -94,7 +94,7 @@ for (const hostname of ["customer.com", "www.customer.com"]) {
 
 Each adapter returns the record its platform documents for the apex: the A records Vercel's domain config recommends, Render's `216.24.57.1`, and an ALIAS for Netlify, Railway, and bunny.net. Where the platform documents an alternative, the record's `description` names it: Netlify's `75.2.60.5` A record, or Render's ALIAS to the service hostname. Show it to customers whose DNS host can't create the main record.
 
-If you manage the customer's zone yourself, at Porkbun, Namecheap, or Spaceship, a [DNS adapter](/docs/providers) can write the record. Check that the DNS host takes the record type first. An old A record left at the apex by a previous host is a conflict, and by default the write stops with `DOMAIN_CONFLICT` instead of deleting it:
+If you manage the customer's zone yourself, at Porkbun, Namecheap, or Spaceship, a DNS adapter can write the record. Check that the DNS host takes the record type first. An old A record left at the apex by a previous host is a conflict, and by default the write stops with `DOMAIN_CONFLICT` instead of deleting it:
 
 ```ts title="write-apex.ts"
 import { createDnsClient, createDomainClient } from "@opencoredev/domain-sdk";
@@ -127,9 +127,15 @@ The [Apex domains and subdomains](/docs/guides/apex-and-subdomains) guide covers
 
 ## Common questions
 
-### What is an apex domain?
+<span id="what-is-an-apex-domain"></span>
 
-The domain at the top of a DNS zone, with no subdomain: `customer.com` rather than `www.customer.com` or `app.customer.com`. Root domain, naked domain, bare domain, and zone apex all mean the same thing.
+### Is an apex domain the same as a root domain?
+
+Usually, yes. Root domain, naked domain, bare domain, and zone apex all name `customer.com` rather than `www.customer.com`. Strictly, the apex is the top of whichever DNS zone you're looking at, so if `app.customer.com` is delegated to its own zone, `app.customer.com` is that zone's apex and has the same no-CNAME rule.
+
+### What is an apex record?
+
+Any DNS record set on the apex itself, written as `@` or the bare domain in most DNS dashboards. For a custom domain that's usually an A record with the host's IP address, or an ALIAS, ANAME, or flattened CNAME that points at the host's hostname.
 
 ### Can I put a CNAME on my root domain?
 
