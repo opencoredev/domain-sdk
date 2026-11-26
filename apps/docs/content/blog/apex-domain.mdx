@@ -5,7 +5,7 @@ date: 2026-11-02
 type: blog
 ---
 
-An **apex domain** is the name of a DNS zone itself, such as `customer.com`, with no subdomain in front. It's also called the root domain, naked domain, or zone apex. The apex is the one name in a zone that can't hold a CNAME record. So when a customer wants `customer.com` (not `app.customer.com`) to point at your app, they need either an **A record** with an IP address your host publishes, or an **ALIAS**, **ANAME**, or **flattened CNAME** record, which their DNS provider resolves to IP addresses for them.
+An **apex domain** is the name of a DNS zone itself. For most customers that's the registered domain, such as `customer.com`, with no subdomain in front. It's also called the root domain, naked domain, or zone apex. The apex is the one name in a zone that can't hold a CNAME record. So when a customer wants `customer.com` (not `app.customer.com`) to point at your app, they need either an **A record** with an IP address your host publishes, or an **ALIAS**, **ANAME**, or **flattened CNAME** record, which their DNS provider resolves to IP addresses for them.
 
 Which of those works depends on two things: what your hosting platform accepts, and what the customer's DNS provider supports. This post covers both, with the records [supported hosting platforms](/docs/providers) ask for as of 2026-11-02, and how to handle apex domains in code with [Domain SDK](/docs).
 
