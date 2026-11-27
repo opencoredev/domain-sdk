@@ -76,6 +76,8 @@ Responses always carry a `status` of `SUCCESS` or `ERROR`. Errors also have a st
 
 ## Create a DNS record with fetch
 
+Before the first write, confirm Porkbun's nameservers answer for the domain (see [writes that succeed but don't resolve](#writes-that-succeed-but-dont-resolve)).
+
 This creates a TXT record at `_verify.example.com` and prints the new record's ID:
 
 ```ts title="create-record.ts"
