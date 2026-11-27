@@ -3,7 +3,7 @@ title: Give tenants managed subdomains
 description: "Give each tenant a subdomain like acme.mydomain.com with createSubdomainClient: reserved labels, a single wildcard, or one hostname per tenant."
 ---
 
-Use `createSubdomainClient` when tenants choose hostnames such as `acme.mydomain.com` under a parent domain controlled by your application. It accepts direct-child labels only, normalizes them, enforces the parent-domain boundary, and blocks labels you reserve.
+Use [`createSubdomainClient`](../api-reference/create-subdomain-client.mdx) when tenants choose hostnames such as `acme.mydomain.com` under a parent domain controlled by your application. It accepts direct-child labels only, normalizes them, enforces the parent-domain boundary, and blocks labels you reserve.
 
 ```ts title="server/subdomains.ts"
 import { createDomainClient, createSubdomainClient } from "@opencoredev/domain-sdk";
