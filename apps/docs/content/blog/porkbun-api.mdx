@@ -131,7 +131,7 @@ for (const record of records.records) {
 
 Porkbun keeps a DNS zone for every domain in the account, even when the domain's nameservers point somewhere else, such as Cloudflare. A write to that zone still returns `SUCCESS`, but nothing changes in public DNS. Porkbun adds a `warnings` entry to the response when this happens, so log it, as the example above does.
 
-The safer habit is to check delegation before writing. `POST /domain/getNs/{domain}` lists the nameservers set at the registry; if they don't end in `porkbun.com`, make the change at the DNS host the domain really uses. Porkbun also offers `GET /dns/preflight/{domain}`: run it before the first write and look for the `nameservers-ours` entry in its `checks`, which reports whether the nameservers actually answering for the domain are Porkbun's. That catches mixed delegation, which a registry nameserver list can miss. If the domain was moved to a Cloudflare account with Porkbun's Cloudflare connect, edit its records through the `/cloudflare/*` endpoints instead ([DNS reference](https://porkbun.com/llms/dns), checked 2026-11-27). Domain SDK's adapter uses the registry list from `/domain/getNs` instead (every nameserver must end in `.porkbun.com`) and doesn't call the preflight or Cloudflare endpoints.
+The safer habit is to check delegation before writing. `POST /domain/getNs/{domain}` lists the nameservers set at the registry; if they don't end in `porkbun.com`, make the change at the DNS host the domain really uses. Porkbun also offers `GET /dns/preflight/{domain}`: run it before the first write and look for the `nameservers-ours` entry in its `checks`, which reports whether the nameservers actually answering for the domain are Porkbun's. If the domain was moved to a Cloudflare account with Porkbun's Cloudflare connect, edit its records through the `/cloudflare/*` endpoints instead ([DNS reference](https://porkbun.com/llms/dns), checked 2026-11-27). Domain SDK's adapter uses the registry list from `/domain/getNs` instead (every nameserver must end in `.porkbun.com`) and doesn't call the preflight or Cloudflare endpoints.
 
 ## Use the Porkbun API through Domain SDK
 
@@ -172,7 +172,7 @@ The adapter creates A, AAAA, CNAME, ALIAS, TXT, and CAA records with a TTL from 
 
 ### Point a customer domain at your SaaS app
 
-The DNS client pays off when you onboard customer custom domains. Add the domain at your hosting platform, then write the records that platform asks for straight into the customer's Porkbun zone. Run `dns.getZone("customer.com")` first and stop if it isn't authoritative, as the previous example does for `example.com`, so you don't write to a zone that doesn't serve public DNS:
+The DNS client pays off when you onboard customer custom domains. Add the domain at your hosting platform, then write the records that platform asks for straight into the customer's Porkbun zone. The `getZone()` check stops before any write if the customer's zone isn't served by Porkbun:
 
 ```ts title="onboard-domain.ts"
 import { createDnsClient, createDomainClient } from "@opencoredev/domain-sdk";
@@ -191,6 +191,11 @@ const dns = createDnsClient({
     secretApiKey: process.env.PORKBUN_SECRET_API_KEY!,
   }),
 });
+
+const zone = await dns.getZone("customer.com");
+if (!zone.authoritative) {
+  throw new Error(`customer.com uses ${zone.nameservers.join(", ")}, not Porkbun DNS.`);
+}
 
 const domain = await domains.add("app.customer.com");
 await dns.applyDomainRecords(domain, { zone: "customer.com" });
