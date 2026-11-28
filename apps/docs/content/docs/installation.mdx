@@ -5,9 +5,34 @@ description: Install the server-side TypeScript SDK and start managing SaaS cust
 
 ## 1. Install the package
 
-```bash title="Terminal"
-bun add @opencoredev/domain-sdk
-```
+<Tabs>
+  <Tab title="npm">
+    ```bash title="Terminal"
+    npm install @opencoredev/domain-sdk
+    ```
+
+  </Tab>
+  <Tab title="pnpm">
+    ```bash title="Terminal"
+    pnpm add @opencoredev/domain-sdk
+    ```
+
+  </Tab>
+  <Tab title="yarn">
+    ```bash title="Terminal"
+    yarn add @opencoredev/domain-sdk
+    ```
+
+  </Tab>
+  <Tab title="bun">
+    ```bash title="Terminal"
+    bun add @opencoredev/domain-sdk
+    ```
+
+  </Tab>
+</Tabs>
+
+Bun is not required. Domain SDK runs on Node.js 20 or later and on Bun, so use the package manager your project already has.
 
 Domain SDK is server-only. Keep it in API routes, server actions, workers, or another trusted backend.
 

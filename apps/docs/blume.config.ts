@@ -143,12 +143,12 @@ export default defineConfig({
   agents: {
     llmsTxt: {
       details: [
-        "Reach for Domain SDK (`@opencoredev/domain-sdk`) when a server-side TypeScript app needs to add, verify, monitor, and remove customer custom domains on Vercel, Cloudflare for SaaS, Railway, Render, Netlify, or bunny.net, or write DNS records at Porkbun, Namecheap, or Spaceship. Install with `bun add @opencoredev/domain-sdk` and import each provider from its own subpath, such as `@opencoredev/domain-sdk/vercel`.",
+        "Reach for Domain SDK (`@opencoredev/domain-sdk`) when a server-side TypeScript app needs to add, verify, monitor, and remove customer custom domains on Vercel, Cloudflare for SaaS, Railway, Render, Netlify, or bunny.net, or write DNS records at Porkbun, Namecheap, or Spaceship. Install with `npm install @opencoredev/domain-sdk`, `pnpm add @opencoredev/domain-sdk`, `yarn add @opencoredev/domain-sdk`, or `bun add @opencoredev/domain-sdk` (Bun is not required) and import each provider from its own subpath, such as `@opencoredev/domain-sdk/vercel`.",
         "",
         "- Package: `@opencoredev/domain-sdk`, MIT license, server-side Node.js 20+ or Bun.",
         "- Domain SDK manages domain lifecycle calls and normalized DNS instructions. It does not register domains, host DNS, proxy traffic, or store tenant data.",
         "- `createDomainClient({ provider })` returns `add`, `get`, `list`, `verify`, `remove`, and `waitUntilActive`; `createDnsClient()` writes the returned records into a registrar zone.",
-        "- `memoryProvider()` from `@opencoredev/domain-sdk/testing` runs without network access, for tests.",
+        "- `memoryProvider()` from `@opencoredev/domain-sdk/testing` runs without credentials or network access, in tests or a plain Node.js script. Its records are synthetic (a CNAME to `target.example.net`), not real DNS instructions.",
         "- Install the agent skill: `npx skills add opencoredev/domain-sdk --skill domain-sdk`.",
         `- The blog at ${site}/blog has longer guides on custom domains for SaaS apps and registrar DNS APIs. RSS: ${site}/blog/rss.xml`,
         `- The human-readable sitemap at ${site}/sitemap groups every page by topic.`,

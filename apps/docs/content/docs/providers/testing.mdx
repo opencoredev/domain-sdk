@@ -18,4 +18,59 @@ expect((await domains.refresh("app.customer.com")).status).toBe("active");
 
 `createMockDomain`, `createMockDnsRecord`, and `createFailingProvider` are also available only from the testing subpath.
 
+## Default records and status
+
+With no options, the first `add()` of a hostname returns a domain in this state:
+
+| Field          | Value                                                                                                                                    |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`       | `"pending_dns"`                                                                                                                          |
+| `records`      | One `CNAME` record: `name` is the hostname, `value` is `target.example.net`, `purpose: "routing"`, `required: true`, `status: "pending"` |
+| `verification` | `{ status: "pending", records: [] }`                                                                                                     |
+| `certificate`  | `{ status: "pending" }`                                                                                                                  |
+| `issues`       | `[]`                                                                                                                                     |
+
+These records are synthetic. `target.example.net` is a placeholder, not a real CNAME target, so never show these records to a customer as DNS instructions. Real records come from the adapter for your platform, such as [Vercel](./vercel.mdx).
+
+Adding the same hostname again returns its stored state. The domain stays pending until `memory.activate(hostname)`, `memory.transition(hostname, "active")` or `domains.verify(hostname)` runs, or until the `activationDelayMs` option elapses. Then `status` becomes `"active"`, `verification.status` becomes `"verified"`, `certificate.status` becomes `"active"`, and each entry in `domain.records` becomes `"valid"`. [Testing utilities](../api-reference/testing-utilities.mdx) lists every option.
+
+## Try it without a test runner
+
+This script needs no credentials, and it makes no network calls once the package is installed:
+
+```js title="try-domain-sdk.mjs"
+import { createDomainClient } from "@opencoredev/domain-sdk";
+import { memoryProvider } from "@opencoredev/domain-sdk/testing";
+
+const memory = memoryProvider();
+const domains = createDomainClient({ provider: memory });
+
+const domain = await domains.add("app.customer.com");
+console.log(domain.status);
+console.log(domain.records);
+console.log(domain.verification);
+
+memory.activate(domain.hostname);
+const latest = await domains.refresh(domain.hostname);
+console.log(latest.status, latest.verification.status, latest.certificate.status);
+```
+
+Run it with `node try-domain-sdk.mjs` on Node.js 20 or later, or with `bun try-domain-sdk.mjs`. Node prints:
+
+```text title="Output"
+pending_dns
+[
+  {
+    type: 'CNAME',
+    name: 'app.customer.com',
+    value: 'target.example.net',
+    purpose: 'routing',
+    required: true,
+    status: 'pending'
+  }
+]
+{ status: 'pending', records: [] }
+active verified active
+```
+
 Read next: [Test without external API calls](../guides/test-without-network.mdx).
