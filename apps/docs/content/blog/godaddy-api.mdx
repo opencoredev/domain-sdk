@@ -1,6 +1,6 @@
 ---
 title: "GoDaddy API guide: API keys, PATs, and the DNS API"
-description: "How to use the GoDaddy API today: Personal Access Tokens vs sso-key API keys, the one-domain access rule, and the v3 DNS records endpoints, in TypeScript."
+description: "How to use the GoDaddy API today: Personal Access Tokens vs sso-key API keys, who can use the DNS API, and the v3 DNS records endpoints, in TypeScript."
 date: 2026-10-31
 type: blog
 ---
@@ -38,7 +38,7 @@ GoDaddy's current docs say a valid token isn't always enough on its own:
 
 Read operations, including DNS reads, work on any account with a valid credential. An ineligible account gets `403 Forbidden`, and so does a token without the right scope, so check the `code` field in the response body to tell them apart.
 
-Older rules were stricter. GoDaddy's API terms as archived in [March 2025](https://web.archive.org/web/20250306194813/https://developer.godaddy.com/getstarted) limited the Management and DNS APIs to accounts with 10 or more domains or a Discount Domain Club Premier membership, and the availability API to accounts with 50 or more domains. That rule is why so many developers reported their DNS scripts and ACME clients failing with 403 in 2024. The new portal's account requirements don't mention a domain count, but if your account gets a 403 on DNS calls with the right scopes, eligibility is the first thing to check.
+Older rules were stricter. GoDaddy's API terms as archived in [March 2025](https://web.archive.org/web/20250306194813/https://developer.godaddy.com/getstarted) limited the Management and DNS APIs to accounts with 10 or more domains or a Discount Domain Club Premier membership, and the availability API to accounts with 50 or more domains. That rule is why so many developers reported their DNS scripts and ACME clients failing with 403 in 2024. GoDaddy dropped the DNS and domain management threshold from 10 domains to 1 in April 2026 ([GoDaddy's announcement](https://www.godaddy.com/resources/news/godaddy-dns-api-now-works-with-a-single-domain), checked 2026-11-27). If your account gets a 403 on DNS writes with the right scopes, eligibility is still the first thing to check.
 
 ## Rate limits and the test environment
 
@@ -107,7 +107,7 @@ The rules worth knowing before you write code:
 - **CNAME targets end with a dot.** Send `cname.vercel-dns.com.`, not `cname.vercel-dns.com`, or the API rejects the value with `400`.
 - **No CNAME at the apex.** It returns `422`. GoDaddy's DNS has no ALIAS or ANAME record either, so point an apex domain at a platform with its A or AAAA records.
 - **Retries can duplicate records.** Replaying a `POST` after a `5xx` may create the record twice, so read the zone before you retry a failed create.
-- **Records only resolve on GoDaddy's nameservers.** If the domain is delegated to Cloudflare or another DNS host, records you write here are saved but nobody sees them.
+- **The API only manages DNS on GoDaddy's nameservers.** Once the domain is delegated to Cloudflare or another DNS host, GoDaddy's DNS API can no longer manage its records ([GoDaddy's Domains docs](https://developer.godaddy.com/docs/api-users/domains), checked 2026-11-27), so write them with that provider's API instead.
 
 GoDaddy's [DNS records guide](https://developer.godaddy.com/docs/api-users/domains/manage/dns) has samples in curl, Python, and Go, and the [troubleshooting page](https://developer.godaddy.com/docs/api-users/troubleshoot/dns) explains the common 400, 403, 404, and 422 errors.
 
