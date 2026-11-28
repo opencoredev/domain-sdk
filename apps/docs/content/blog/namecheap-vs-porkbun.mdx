@@ -7,7 +7,7 @@ type: blog
 
 If you only need to buy a domain and point it somewhere, Namecheap and Porkbun are both fine, and the choice mostly comes down to the price of your TLD. Compare current prices on [Namecheap's pricing page](https://www.namecheap.com/domains/) and [Porkbun's pricing page](https://porkbun.com/products/domains) rather than trusting a blog post, since both change often.
 
-If you want to manage DNS from code, the two are far apart. **Porkbun's API is open to every account, uses JSON, and edits one record at a time. Namecheap's API needs an account that meets a spend or domain-count bar, requires a whitelisted IPv4 address on every call, speaks XML, and replaces a domain's whole record list on each write.** Both work, and both have sandboxes, but Porkbun is less work to automate.
+If you want to manage DNS from code, the two are far apart. **Porkbun's API is open to every account, uses JSON, and can edit individual records by ID. Namecheap's API needs an account that meets a spend or domain-count bar, requires a whitelisted IPv4 address on every call, speaks XML, and replaces a domain's whole record list on each write.** Both work, and both have sandboxes, but Porkbun is less work to automate.
 
 This comparison only covers the developer side: API access, DNS automation, and testing. The facts come from [Namecheap's API docs](https://www.namecheap.com/support/api/intro/) and [API FAQ](https://www.namecheap.com/support/knowledgebase/article.aspx/9739/63/api-faq/), checked on 2026-10-30, and [Porkbun's API documentation](https://porkbun.com/api/json/v3/documentation) (version 3.65), checked on 2026-10-29 and 2026-10-30.
 
