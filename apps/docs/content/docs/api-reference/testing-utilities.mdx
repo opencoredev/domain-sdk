@@ -27,9 +27,9 @@ type MemoryOperation = "add" | "get" | "list" | "verify" | "remove";
 
 The returned provider also has:
 
-- `calls`, the live call log: one `{ operation, hostname?, at }` entry per provider call, in order. TypeScript types it as a readonly array, but it is not a snapshot.
+- `calls`, the live call log: one `{ operation, hostname?, at }` entry per `add`, `get`, `list`, `verify`, or `remove` call, in order. `activate()`, `transition()`, and `reset()` add no entries. TypeScript types it as a readonly array, but it is not a snapshot.
 - `activate(hostname)`, which sets `status` to `active`, `verification.status` to `verified`, `certificate.status` to `active`, and every entry in `domain.records` to `valid`. Entries in `verification.records` keep their original status. `domains.verify(hostname)` does the same.
-- `transition(hostname, status, certificateStatus?)`, which sets any `DomainStatus`. Passing `"active"` also sets `verification.status` to `verified` and every entry in `domain.records` to `valid`.
+- `transition(hostname, status, certificateStatus?)`, which sets any `DomainStatus`. Passing `"active"` also sets `verification.status` to `verified` and every entry in `domain.records` to `valid`. `certificateStatus` sets `certificate.status` when given; otherwise the certificate becomes `active` for `"active"` and keeps its status for any other value.
 - `reset()`, which clears domains, calls, and pending activation timers.
 
 `createMockDomain`, `createMockDnsRecord`, and `createFailingProvider` generate focused test values. Import all of them from `@opencoredev/domain-sdk/testing`; production root imports remain unaffected.
