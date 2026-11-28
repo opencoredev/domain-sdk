@@ -1,13 +1,13 @@
 ---
-title: "Namecheap vs Porkbun for developers: API access, DNS, and automation"
-description: "A developer's comparison of Namecheap and Porkbun: who can use each API, IP whitelisting, sandboxes, JSON vs XML, per-record vs whole-zone DNS writes, and rate limits."
+title: "Porkbun vs Namecheap for developers: which API is better?"
+description: "Porkbun or Namecheap for DNS automation? Porkbun's API is open to every account and speaks JSON. Namecheap's has an eligibility bar, an IP whitelist, and XML."
 date: 2026-10-30
 type: blog
 ---
 
 If you only need to buy a domain and point it somewhere, Namecheap and Porkbun are both fine, and the choice mostly comes down to the price of your TLD. Compare current prices on [Namecheap's pricing page](https://www.namecheap.com/domains/) and [Porkbun's pricing page](https://porkbun.com/products/domains) rather than trusting a blog post, since both change often.
 
-If you want to manage DNS from code, the two are far apart. **Porkbun's API is open to every account, uses JSON, and edits one record at a time. Namecheap's API needs an account that meets a spend or domain-count bar, requires a whitelisted IPv4 address on every call, speaks XML, and replaces a domain's whole record list on each write.** Both work, and both have sandboxes, but Porkbun is less work to automate.
+If you want to manage DNS from code, the two are far apart. **Porkbun's API is open to every account, uses JSON, and can edit individual records by ID. Namecheap's API needs an account that meets a spend or domain-count bar, requires a whitelisted IPv4 address on every call, speaks XML, and replaces a domain's whole record list on each write.** Both work, and both have sandboxes, but Porkbun is less work to automate.
 
 This comparison only covers the developer side: API access, DNS automation, and testing. The facts come from [Namecheap's API docs](https://www.namecheap.com/support/api/intro/) and [API FAQ](https://www.namecheap.com/support/knowledgebase/article.aspx/9739/63/api-faq/), checked on 2026-10-30, and [Porkbun's API documentation](https://porkbun.com/api/json/v3/documentation) (version 3.65), checked on 2026-10-29 and 2026-10-30.
 
@@ -18,19 +18,19 @@ This comparison only covers the developer side: API access, DNS automation, and 
 | Who can use the API      | Accounts with 20+ domains, a $50+ balance, or $50+ spent in 2 years | Any account                                                                        |
 | Credentials              | API user and API key                                                | API key (`pk1_…`) and secret key (`sk1_…`)                                         |
 | IP whitelist             | Required, IPv4 only                                                 | Optional, per key (CIDR ranges)                                                    |
-| Per-domain switch        | No                                                                  | Yes, **API Access** must be on for each domain                                     |
+| Per-domain switch        | No                                                                  | Yes, **API Access** per domain, or **Opt In All Domains** for every domain         |
 | Key permissions          | One key per account, no documented scopes                           | Full, read-only, no-purchase, or custom scopes, optionally per domain              |
 | Format                   | XML responses, form or query-string requests                        | JSON in, JSON out                                                                  |
-| DNS writes               | `setHosts` replaces the whole host list                             | Create, edit, and delete single records by ID or by name and type                  |
+| DNS writes               | `setHosts` replaces the whole host list                             | Create single records; edit or delete one by ID, or all matching a name and type   |
 | DNS on other nameservers | Not manageable (BasicDNS only)                                      | Writes succeed with a warning, but don't affect public DNS                         |
-| Rate limits              | 50 a minute, 700 an hour, 8,000 a day per key                       | Not published; rate-limited endpoints return `X-RateLimit-*` headers               |
+| Rate limits              | 50 a minute, 700 an hour, 8,000 a day per key                       | Vary by operation; rate-limited endpoints return `X-RateLimit-*` headers           |
 | Testing                  | Separate sandbox site and accounts                                  | Sandbox keys (`pk1_sb_…`) on the same base URL, plus a credential-free mock server |
 | Retries                  | No idempotency support documented                                   | `Idempotency-Key` header replays the first response for 24 hours                   |
 | TTL range                | 60 to 60,000 seconds, default 1,800                                 | Account minimum, usually 600 seconds                                               |
 
 ## Getting API access
 
-**Porkbun** lets any account create a key under **Account** → **API Access**. You choose its permissions, and you can restrict it to some domains or source IP ranges. Then you switch on **API Access** for each domain the key should touch. Forgetting that switch is a common reason a valid key gets refused. The account also has one [monthly API spending limit](https://porkbun.com/llms/guides/spend-limits) shared by all its keys, covering purchases such as registrations, renewals, and transfers, and credit added through the API. It defaults to $100 a month until the account holder sets one. DNS changes don't count against it.
+**Porkbun** lets any account create a key under **Account** → **API Access**. You choose its permissions, and you can restrict it to some domains or source IP ranges. Then you switch on **API Access** for each domain the key should touch, or turn on **Opt In All Domains** on the [API settings page](https://porkbun.com/account/api) to cover every domain, including ones you add later ([Porkbun's getting-started guide](https://porkbun.com/llms/guides/getting-started), checked 2026-11-27). Forgetting that switch is a common reason a valid key gets refused. The account also has one [monthly API spending limit](https://porkbun.com/llms/guides/spend-limits) shared by all its keys. It caps purchases such as registrations, renewals, and transfers and, separately, credit added through the API, each at the same figure. Until the account holder sets one, the default is $100 a month for each, except that accounts already buying over the API before 2026-10-03 have no default cap on purchases (checked 2026-11-27). DNS changes don't count against it.
 
 **Namecheap** gates production access. The account must have at least 20 domains, at least $50 in its balance, or at least $50 spent in the last two years, or you have to ask support. Once on, you get one API key for the account (the docs describe no scopes), and no call works until you whitelist an IPv4 address on the same screen. Every request also sends that address as `ClientIp`. IPv6 isn't accepted.
 
@@ -40,7 +40,7 @@ The whitelist is the bigger practical difference. Serverless functions often don
 
 This is where the APIs differ most.
 
-**Porkbun** works per record. `POST /dns/create/{domain}` adds one record and returns its ID. `/dns/edit` and `/dns/delete` change one record by ID, and the `ByNameType` variants work by name and type. Adding a TXT record never touches the domain's other records. The [Porkbun API guide](/blog/porkbun-api) has working `fetch` code.
+**Porkbun** works per record. `POST /dns/create/{domain}` adds one record and returns its ID. `/dns/edit` and `/dns/delete` change one record by ID, and the `ByNameType` variants change every record that matches a name and type ([Porkbun's DNS reference](https://porkbun.com/llms/dns), checked 2026-11-27). Adding a TXT record never touches the domain's other records. The [Porkbun API guide](/blog/porkbun-api) has working `fetch` code.
 
 **Namecheap** works per zone. `namecheap.domains.dns.setHosts` takes the full list of host records, and every record you leave out is deleted. To add a TXT record you read the list with `getHosts`, append the record, send everything back, and preferably read again to check. Two scripts writing the same domain at once can wipe each other's changes. The [Namecheap API guide](/blog/namecheap-api) walks through that cycle.
 
