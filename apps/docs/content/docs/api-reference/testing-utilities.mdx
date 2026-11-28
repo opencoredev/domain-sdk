@@ -3,7 +3,34 @@ title: Testing utilities
 description: "Test custom-domain code without network calls using memoryProvider, createMockDomain, createMockDnsRecord, and createFailingProvider from the testing subpath."
 ---
 
-`memoryProvider(options?)` supports initial status, records, certificate state, activation delay, latency, and per-operation failures. Instances expose `activate`, `transition`, `reset`, and immutable call inspection.
+`memoryProvider(options?)` returns an in-memory provider for tests and local scripts. Each instance keeps its own domains and makes no network calls. Every option is optional:
+
+```ts title="Type"
+interface MemoryProviderOptions {
+  initialStatus?: DomainStatus;
+  records?: DnsRecord[] | ((hostname: string) => DnsRecord[]);
+  certificateStatus?: CertificateStatus;
+  activationDelayMs?: number;
+  latencyMs?: number;
+  failures?: Partial<Record<MemoryOperation, DomainSdkError | (() => DomainSdkError)>>;
+}
+
+type MemoryOperation = "add" | "get" | "list" | "verify" | "remove";
+```
+
+- `initialStatus` sets the status of each added domain. It defaults to `"pending_dns"`. With `"active"`, records start `valid`, verification `verified`, and the certificate `active` unless `certificateStatus` is set.
+- `records` replaces the default record, one `CNAME` from the hostname to the placeholder `target.example.net`. Pass a function to build records per hostname. Records with `purpose: "ownership"` are also copied into `verification.records`.
+- `certificateStatus` sets the initial `certificate.status`. It defaults to `"pending"`, or `"active"` when `initialStatus` is `"active"`.
+- `activationDelayMs` marks each domain active this many milliseconds after `add()`. Without it, a domain keeps its initial status until you change it.
+- `latencyMs` waits before every operation. Aborting the request's signal during the wait rejects with `ABORTED`.
+- `failures` makes an operation throw the given `DomainSdkError`, or call the function and throw what it returns.
+
+The returned provider also has:
+
+- `calls`, the live call log: one `{ operation, hostname?, at }` entry per provider call, in order. TypeScript types it as a readonly array, but it is not a snapshot.
+- `activate(hostname)`, which sets `status` to `active`, `verification.status` to `verified`, `certificate.status` to `active`, and every entry in `domain.records` to `valid`. Entries in `verification.records` keep their original status. `domains.verify(hostname)` does the same.
+- `transition(hostname, status, certificateStatus?)`, which sets any `DomainStatus`. Passing `"active"` also sets `verification.status` to `verified` and every entry in `domain.records` to `valid`.
+- `reset()`, which clears domains, calls, and pending activation timers.
 
 `createMockDomain`, `createMockDnsRecord`, and `createFailingProvider` generate focused test values. Import all of them from `@opencoredev/domain-sdk/testing`; production root imports remain unaffected.
 

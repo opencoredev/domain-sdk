@@ -17,4 +17,18 @@ description: "Domain type reference: the provider-independent state every lifecy
 
 Raw provider bodies and credentials are never included.
 
+## `verification`
+
+```ts title="Type"
+interface DomainVerification {
+  status: "pending" | "verified" | "failed" | "unknown";
+  records: DnsRecord[];
+  message?: string;
+}
+```
+
+`status` is the adapter's reading of the platform's ownership state. Adding a hostname does not verify ownership. Each adapter decides from what the platform reports when to return `verified` or `failed`, and some infer it from TLS: Netlify and bunny.net report `verified` once the hostname's certificate is issued. A verified domain can still be waiting on its certificate, so use `domain.status` for readiness.
+
+`records` lists the ownership records (`purpose: "ownership"`), which the adapter also includes in `domain.records`. It is empty when the platform has no separate ownership record, as on Netlify and bunny.net, and for `memoryProvider()` by default. `message` is an optional note from the adapter.
+
 Read next: [`DnsRecord`](./dns-record.mdx).
